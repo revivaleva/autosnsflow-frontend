@@ -29,9 +29,11 @@
     }
   },
   "include": [
-    "next-env.d.ts",
     "**/*.ts",
     "**/*.tsx",
+    "next-env.d.ts",
+    "node_modules",
+    "src/types/**/*.d.ts",
     ".next/types/**/*.ts"
   ],
   "exclude": [
