@@ -1,0 +1,5 @@
+type LoginForm @model @auth(rules: [{allow: public}]) {
+  id: ID!
+  username: String
+  password: String
+} 
