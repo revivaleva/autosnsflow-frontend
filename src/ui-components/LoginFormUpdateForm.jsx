@@ -9,11 +9,13 @@ import * as React from "react";
 import { Button, Flex, Grid, TextField } from "@aws-amplify/ui-react";
 import { fetchByPath, getOverrideProps, validateField } from "./utils";
 import { generateClient } from "aws-amplify/api";
-import { createLoginForm } from "../graphql/mutations";
+import { getLoginForm } from "../graphql/queries";
+import { updateLoginForm } from "../graphql/mutations";
 const client = generateClient();
-export default function LoginFormCreateForm(props) {
+export default function LoginFormUpdateForm(props) {
   const {
-    clearOnSuccess = true,
+    id: idProp,
+    loginForm: loginFormModelProp,
     onSuccess,
     onError,
     onSubmit,
@@ -30,10 +32,30 @@ export default function LoginFormCreateForm(props) {
   const [password, setPassword] = React.useState(initialValues.password);
   const [errors, setErrors] = React.useState({});
   const resetStateValues = () => {
-    setUsername(initialValues.username);
-    setPassword(initialValues.password);
+    const cleanValues = loginFormRecord
+      ? { ...initialValues, ...loginFormRecord }
+      : initialValues;
+    setUsername(cleanValues.username);
+    setPassword(cleanValues.password);
     setErrors({});
   };
+  const [loginFormRecord, setLoginFormRecord] =
+    React.useState(loginFormModelProp);
+  React.useEffect(() => {
+    const queryData = async () => {
+      const record = idProp
+        ? (
+            await client.graphql({
+              query: getLoginForm.replaceAll("__typename", ""),
+              variables: { id: idProp },
+            })
+          )?.data?.getLoginForm
+        : loginFormModelProp;
+      setLoginFormRecord(record);
+    };
+    queryData();
+  }, [idProp, loginFormModelProp]);
+  React.useEffect(resetStateValues, [loginFormRecord]);
   const validations = {
     username: [],
     password: [],
@@ -64,8 +86,8 @@ export default function LoginFormCreateForm(props) {
       onSubmit={async (event) => {
         event.preventDefault();
         let modelFields = {
-          username,
-          password,
+          username: username ?? null,
+          password: password ?? null,
         };
         const validationResponses = await Promise.all(
           Object.keys(validations).reduce((promises, fieldName) => {
@@ -96,18 +118,16 @@ export default function LoginFormCreateForm(props) {
             }
           });
           await client.graphql({
-            query: createLoginForm.replaceAll("__typename", ""),
+            query: updateLoginForm.replaceAll("__typename", ""),
             variables: {
               input: {
+                id: loginFormRecord.id,
                 ...modelFields,
               },
             },
           });
           if (onSuccess) {
             onSuccess(modelFields);
-          }
-          if (clearOnSuccess) {
-            resetStateValues();
           }
         } catch (err) {
           if (onError) {
@@ -116,7 +136,7 @@ export default function LoginFormCreateForm(props) {
           }
         }
       }}
-      {...getOverrideProps(overrides, "LoginFormCreateForm")}
+      {...getOverrideProps(overrides, "LoginFormUpdateForm")}
       {...rest}
     >
       <TextField
@@ -174,13 +194,14 @@ export default function LoginFormCreateForm(props) {
         {...getOverrideProps(overrides, "CTAFlex")}
       >
         <Button
-          children="Clear"
+          children="Reset"
           type="reset"
           onClick={(event) => {
             event.preventDefault();
             resetStateValues();
           }}
-          {...getOverrideProps(overrides, "ClearButton")}
+          isDisabled={!(idProp || loginFormModelProp)}
+          {...getOverrideProps(overrides, "ResetButton")}
         ></Button>
         <Flex
           gap="15px"
@@ -190,7 +211,10 @@ export default function LoginFormCreateForm(props) {
             children="Submit"
             type="submit"
             variation="primary"
-            isDisabled={Object.values(errors).some((e) => e?.hasError)}
+            isDisabled={
+              !(idProp || loginFormModelProp) ||
+              Object.values(errors).some((e) => e?.hasError)
+            }
             {...getOverrideProps(overrides, "SubmitButton")}
           ></Button>
         </Flex>

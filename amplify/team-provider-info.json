@@ -10,6 +10,14 @@
       "StackName": "amplify-autosnsflow-dev-e3be3",
       "StackId": "arn:aws:cloudformation:ap-northeast-1:605822313174:stack/amplify-autosnsflow-dev-e3be3/bef06ad0-7035-11f0-b516-06b335319023",
       "AmplifyAppId": "dhckm3uhs8j8j"
+    },
+    "categories": {
+      "auth": {
+        "autosnsflow8b06e5a0": {}
+      },
+      "api": {
+        "AutoSNSFlow": {}
+      }
     }
   }
 }

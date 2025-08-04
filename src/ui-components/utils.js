@@ -6,15 +6,9 @@
 
 /* eslint-disable */
 import * as React from "react";
-// src/ui-components/utils.js
-import { Auth, Hub }       from "aws-amplify";
-import { DataStore }       from "@aws-amplify/datastore";
-
-// 既存の fetchUserAttributes ⇒ Auth.currentUserInfo にマッピング
-export const fetchUserAttributes = Auth.currentUserInfo.bind(Auth);
-// 既存の signOut ⇒ Auth.signOut にマッピング
-export const signOut = Auth.signOut.bind(Auth);
-
+import { fetchUserAttributes, signOut } from "aws-amplify/auth";
+import { DataStore } from "aws-amplify/datastore";
+import { Hub } from "aws-amplify/utils";
 export const UI_CHANNEL = "ui";
 export const UI_EVENT_TYPE_ACTIONS = "actions";
 export const CATEGORY_AUTH = "auth";

@@ -2,4 +2,15 @@ type LoginForm @model @auth(rules: [{allow: public}]) {
   id: ID!
   username: String
   password: String
-} 
+}
+
+type SNSAccount @model @auth(rules: [{ allow: owner }]) {
+  id: ID!
+  platform: String!        # twitter / threads など
+  displayName: String!     # アカウントの表示名
+  accountId: String!       # （必須）アカウントID
+  createdAt: AWSDateTime!  # 連携日時
+  autoPost: Boolean!       # 自動投稿オンオフ
+  autoGenerate: Boolean!   # 自動投稿生成オンオフ
+  autoReply: Boolean!      # 自動リプ返信オンオフ
+}
