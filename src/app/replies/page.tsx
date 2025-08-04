@@ -1,12 +1,11 @@
 "use client";
-
-import SNSAccountsTable from "@/ui-components/SNSAccountsTable";
+import RepliesList from "@/ui-components/RepliesList";
 import AppLayout from "@/components/AppLayout";
 
 export default function AccountsPage() {
   return (
     <AppLayout>
-       <SNSAccountsTable />
+       <RepliesList  />
     </AppLayout>
   );
 }

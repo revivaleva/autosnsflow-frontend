@@ -1,12 +1,12 @@
 "use client";
 
-import SNSAccountsTable from "@/ui-components/SNSAccountsTable";
+import AutoPostGroupsEditor from "@/ui-components/AutoPostGroupsEditor";
 import AppLayout from "@/components/AppLayout";
 
 export default function AccountsPage() {
   return (
     <AppLayout>
-       <SNSAccountsTable />
+       <AutoPostGroupsEditor />
     </AppLayout>
   );
 }

@@ -1,0 +1,264 @@
+"use client";
+
+import React, { useState } from "react";
+
+// サンプル自動投稿グループデータ
+const groups = [
+  {
+    groupId: "group1",
+    groupName: "朝昼夕グループ",
+  },
+  {
+    groupId: "group2",
+    groupName: "テストグループ",
+  },
+];
+
+// サンプルの予約投稿データ
+const initialPosts = [
+  {
+    id: "post1",
+    accountId: "accountA",
+    platform: "Threads",
+    scheduledAt: "2025/08/05 10:00",
+    groupId: "group1",
+    groupOrder: 0, // 0:自動投稿1
+    theme: "おはよう",
+    content: "今日も一日頑張ろう！",
+    threadsPostedAt: "2025/08/05 10:05",
+    twitterPostedAt: "",
+    threadsPostId: "th12345",
+    twitterPostId: "",
+    replies: [
+      { id: "r1", content: "返信ありがとう", status: "replied" },
+      { id: "r2", content: "未返信です", status: "unreplied" },
+      { id: "r3", content: "未返信その2", status: "unreplied" },
+    ],
+    status: "posted",
+  },
+  {
+    id: "post2",
+    accountId: "accountB",
+    platform: "X(Twitter)",
+    scheduledAt: "2025/08/05 12:00",
+    groupId: "group2",
+    groupOrder: 1, // 1:自動投稿2
+    theme: "ランチ",
+    content: "今日のランチはカレー！",
+    threadsPostedAt: "",
+    twitterPostedAt: "2025/08/05 12:03",
+    threadsPostId: "",
+    twitterPostId: "tw54321",
+    replies: [
+      { id: "r1", content: "美味しそう", status: "replied" },
+      { id: "r2", content: "今度食べたい", status: "replied" },
+      { id: "r3", content: "何カレー？", status: "replied" },
+    ],
+    status: "pending",
+  },
+];
+
+// ステータスフィルタ用
+const statusOptions = [
+  { value: "", label: "すべて" },
+  { value: "pending", label: "未投稿" },
+  { value: "posted", label: "投稿済み" },
+];
+
+function RepliesModal({ open, onClose, replies, postId }) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-30 flex justify-center items-center z-50">
+      <div className="bg-white rounded-xl shadow-xl p-6 w-96">
+        <h3 className="text-lg font-bold mb-2">リプライ一覧（{postId}）</h3>
+        <ul>
+          {replies.map((r) => (
+            <li key={r.id} className="mb-1 flex items-center">
+              <span className="flex-1">{r.content}</span>
+              <span className={`text-xs rounded px-2 py-0.5 ${r.status === "replied" ? "bg-green-200 text-green-800" : "bg-gray-200 text-gray-800"}`}>
+                {r.status === "replied" ? "返信済" : "未返信"}
+              </span>
+            </li>
+          ))}
+        </ul>
+        <div className="mt-3 flex justify-end">
+          <button className="bg-blue-500 text-white px-4 py-1 rounded hover:bg-blue-600" onClick={onClose}>閉じる</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function ScheduledPostsTable() {
+  const [posts, setPosts] = useState(initialPosts);
+  const [sortKey, setSortKey] = useState("scheduledAt");
+  const [sortAsc, setSortAsc] = useState(true);
+  const [filterStatus, setFilterStatus] = useState("");
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalReplies, setModalReplies] = useState([]);
+  const [modalTarget, setModalTarget] = useState(null);
+
+  // グループ名取得
+  const getGroupName = (groupId) => {
+    const group = groups.find(g => g.groupId === groupId);
+    return group ? group.groupName : "";
+  };
+
+  // ソート＋フィルタ
+  const sortedPosts = posts
+    .filter((post) => !filterStatus || post.status === filterStatus)
+    .sort((a, b) => {
+      if (sortKey === "scheduledAt") {
+        return sortAsc
+          ? a.scheduledAt.localeCompare(b.scheduledAt)
+          : b.scheduledAt.localeCompare(a.scheduledAt);
+      }
+      if (sortKey === "status") {
+        return sortAsc
+          ? a.status.localeCompare(b.status)
+          : b.status.localeCompare(a.status);
+      }
+      return 0;
+    });
+
+  // アクション
+  const handleManualRun = (id) => alert(`手動実行: ${id}`);
+  const handleEdit = (id) => alert(`編集: ${id}`);
+  const handleDelete = (id) => window.confirm("削除しますか？") && setPosts(posts.filter((p) => p.id !== id));
+  const handleAdd = () => alert("予約投稿追加モーダルを表示（仮）");
+  const handleRepliesModal = (replies, postId) => {
+    setModalReplies(replies);
+    setModalTarget(postId);
+    setModalOpen(true);
+  };
+
+  return (
+    <div className="p-4">
+      <RepliesModal open={modalOpen} onClose={() => setModalOpen(false)} replies={modalReplies} postId={modalTarget} />
+
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="text-xl font-bold">予約投稿一覧</h2>
+        <button
+          onClick={handleAdd}
+          className="bg-blue-500 text-white rounded px-4 py-2 hover:bg-blue-600"
+        >
+          ＋予約投稿追加
+        </button>
+      </div>
+      <div className="flex space-x-2 mb-2">
+        <select
+          className="border rounded p-1"
+          value={filterStatus}
+          onChange={(e) => setFilterStatus(e.target.value)}
+        >
+          {statusOptions.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+        <button
+          className="border rounded px-2 py-1"
+          onClick={() => {
+            setSortKey("scheduledAt");
+            setSortAsc((prev) => !prev);
+          }}
+        >
+          日時順ソート
+        </button>
+        <button
+          className="border rounded px-2 py-1"
+          onClick={() => {
+            setSortKey("status");
+            setSortAsc((prev) => !prev);
+          }}
+        >
+          ステータス順ソート
+        </button>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-full bg-white border">
+          <thead>
+            <tr>
+              <th className="border p-1">アカウントID</th>
+              <th className="border p-1">投稿先</th>
+              <th className="border p-1">予約投稿日時</th>
+              <th className="border p-1">自動投稿</th>
+              <th className="border p-1">生成テーマ</th>
+              <th className="border p-1">本文テキスト</th>
+              <th className="border p-1">Threads投稿日時</th>
+              <th className="border p-1">X投稿日時</th>
+              <th className="border p-1">Threads投稿ID</th>
+              <th className="border p-1">X投稿ID</th>
+              <th className="border p-1">Threadsリプ状況</th>
+              <th className="border p-1">アクション</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sortedPosts.map((post) => {
+              // 「グループ名-自動投稿N」を表示
+              const groupName = getGroupName(post.groupId);
+              const autoPostLabel =
+                groupName && typeof post.groupOrder === "number"
+                  ? `${groupName}-自動投稿${post.groupOrder + 1}`
+                  : "";
+
+              // 返信済み/総数
+              const repliesNum = post.replies?.length || 0;
+              const repliesReplied = post.replies?.filter(r => r.status === "replied").length || 0;
+              const threadsRepliesStatus = `${repliesReplied}/${repliesNum}`;
+
+              return (
+                <tr key={post.id}>
+                  <td className="border p-1">{post.accountId}</td>
+                  <td className="border p-1">{post.platform}</td>
+                  <td className="border p-1">{post.scheduledAt}</td>
+                  <td className="border p-1">{autoPostLabel}</td>
+                  <td className="border p-1">{post.theme}</td>
+                  <td className="border p-1">{post.content}</td>
+                  <td className="border p-1">{post.threadsPostedAt}</td>
+                  <td className="border p-1">{post.twitterPostedAt}</td>
+                  <td className="border p-1">{post.threadsPostId}</td>
+                  <td className="border p-1">{post.twitterPostId}</td>
+                  <td className="border p-1">
+                    <button
+                      className="px-2 py-1 rounded text-xs bg-gray-200 text-gray-800 hover:bg-blue-200"
+                      onClick={() => handleRepliesModal(post.replies || [], post.id)}
+                    >
+                      {threadsRepliesStatus}
+                    </button>
+                  </td>
+                  <td className="border p-1 space-x-1">
+                    <button
+                      className="bg-green-500 text-white px-2 py-1 rounded hover:bg-green-600"
+                      onClick={() => handleManualRun(post.id)}
+                    >
+                      手動実行
+                    </button>
+                    <button
+                      className="bg-yellow-500 text-white px-2 py-1 rounded hover:bg-yellow-600"
+                      onClick={() => handleEdit(post.id)}
+                    >
+                      編集
+                    </button>
+                    <button
+                      className="bg-red-500 text-white px-2 py-1 rounded hover:bg-red-600"
+                      onClick={() => handleDelete(post.id)}
+                    >
+                      削除
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+            {sortedPosts.length === 0 && (
+              <tr>
+                <td colSpan={12} className="text-center text-gray-500 p-4">
+                  データがありません
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}

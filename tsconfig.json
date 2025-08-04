@@ -35,7 +35,7 @@
     "node_modules",
     "src/types/**/*.d.ts",
     ".next/types/**/*.ts"
-, "src/ui-components/SNSAccountModal.jsx"  ],
+, "src/components/NavMenu.jsx", "src/ui-components/SNSAccountModal.jsx"  ],
   "exclude": [
     "node_modules"
   ]

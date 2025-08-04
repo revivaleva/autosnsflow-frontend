@@ -1,12 +1,12 @@
-"use client";
+"use client";  // これを一行目に追加
 
-import SNSAccountsTable from "@/ui-components/SNSAccountsTable";
+import SettingsForm from "@/ui-components/SettingsForm";
 import AppLayout from "@/components/AppLayout";
 
 export default function AccountsPage() {
   return (
     <AppLayout>
-       <SNSAccountsTable />
+      <SettingsForm  />
     </AppLayout>
   );
 }
