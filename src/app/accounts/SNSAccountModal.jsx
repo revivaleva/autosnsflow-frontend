@@ -1,3 +1,6 @@
+
+"use client";
+
 // src/ui-components/SNSAccountModal.jsx
 import React, { useState, useEffect } from "react";
 

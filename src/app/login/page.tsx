@@ -1,9 +1,8 @@
 // frontend/src/app/login/page.tsx
 "use client";
 
-import LoginFormCreateForm from "../../ui-components/LoginFormCreateForm";  
+import LoginFormCreateForm from "./LoginFormCreateForm";  
 // もし index.js 経由でまとめてエクスポートしているなら
-// import { LoginFormCreateForm } from "../../ui-components";
 
 export default function LoginPage() {
   return (

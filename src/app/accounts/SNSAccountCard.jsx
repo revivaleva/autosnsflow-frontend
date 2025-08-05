@@ -1,7 +1,7 @@
 // ui-components/SNSAccountCard.jsx
 import React, { useState } from "react";
 import { DataStore } from "@aws-amplify/datastore";
-import { SNSAccount } from "../models";
+import { SNSAccount } from "../../models";
 
 const SNSAccountCard = ({ account }) => {
   const [isEditing, setIsEditing] = useState(false);

@@ -3,7 +3,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { ToggleSwitch } from "./ToggleSwitch";
+import { ToggleSwitch } from "@/components/ToggleSwitch";
 import SNSAccountModal from "./SNSAccountModal";
 
 // 状態（statusMessage）を追加したサンプルデータ

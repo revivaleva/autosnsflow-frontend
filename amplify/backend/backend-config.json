@@ -1,26 +1,12 @@
 {
   "api": {
     "AutoSNSFlow": {
-      "dependsOn": [
-        {
-          "attributes": [
-            "UserPoolId"
-          ],
-          "category": "auth",
-          "resourceName": "autosnsflow8b06e5a0"
-        }
-      ],
+      "dependsOn": [],
       "output": {
         "authConfig": {
           "additionalAuthenticationProviders": [
             {
               "authenticationType": "AWS_IAM"
-            },
-            {
-              "authenticationType": "AMAZON_COGNITO_USER_POOLS",
-              "userPoolConfig": {
-                "userPoolId": "authautosnsflow8b06e5a0"
-              }
             }
           ],
           "defaultAuthentication": {

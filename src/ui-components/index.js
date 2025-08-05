@@ -6,6 +6,4 @@
 
 export { default as LoginFormCreateForm } from "./LoginFormCreateForm";
 export { default as LoginFormUpdateForm } from "./LoginFormUpdateForm";
-export { default as SNSAccountCreateForm } from "./SNSAccountCreateForm";
-export { default as SNSAccountUpdateForm } from "./SNSAccountUpdateForm";
 export { default as studioTheme } from "./studioTheme";
