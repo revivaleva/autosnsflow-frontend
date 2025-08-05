@@ -1,12 +1,6 @@
 // src/ui-components/SNSAccountModal.jsx
 import React, { useState, useEffect } from "react";
 
-const platformOptions = [
-  { value: "twitter", label: "Twitter" },
-  { value: "threads", label: "Threads" },
-  { value: "both", label: "両方" },
-];
-
 // ダミー：グループ選択肢
 const dummyGroups = [
   { id: "g1", name: "朝投稿グループ" },
@@ -14,13 +8,14 @@ const dummyGroups = [
 ];
 
 export default function SNSAccountModal({ open, onClose, mode = "create", account }) {
-  const [platform, setPlatform] = useState("twitter");
-  const [twitterId, setTwitterId] = useState("");
-  const [threadsId, setThreadsId] = useState("");
-  const [twitterClientId, setTwitterClientId] = useState("");
-  const [twitterClientSecret, setTwitterClientSecret] = useState("");
-  const [threadsAccessToken, setThreadsAccessToken] = useState("");
-  const [personaTemplate, setPersonaTemplate] = useState(""); // テンプレ読込
+  // 新規追加：アカウント名
+  const [displayName, setDisplayName] = useState("");
+
+  const [accountId, setAccountId] = useState("");
+  const [accessToken, setAccessToken] = useState("");
+  const [characterImage, setCharacterImage] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+
   const [groupId, setGroupId] = useState(""); // 投稿グループ
 
   // ペルソナ
@@ -44,37 +39,65 @@ export default function SNSAccountModal({ open, onClose, mode = "create", accoun
   // 編集時は初期値セット
   useEffect(() => {
     if (mode === "edit" && account) {
-      setPlatform(account.platform === "両方" ? "both" : account.platform?.toLowerCase());
-      setTwitterId(account.twitterId || "");
-      setThreadsId(account.threadsId || "");
-      setTwitterClientId(account.twitterClientId || "");
-      setTwitterClientSecret(account.twitterClientSecret || "");
-      setThreadsAccessToken(account.threadsAccessToken || "");
+      setDisplayName(account.displayName || "");
+      setAccountId(account.accountId || "");
+      setAccessToken(account.accessToken || "");
       setGroupId(account.groupId || "");
       setPersona(account.persona || {});
+      setCharacterImage(account.characterImage || "");
+    } else if (mode === "create") {
+      setDisplayName("");
+      setAccountId("");
+      setAccessToken("");
+      setGroupId("");
+      setPersona({
+        name: "",
+        age: "",
+        gender: "",
+        job: "",
+        lifestyle: "",
+        character: "",
+        tone: "",
+        vocab: "",
+        emotion: "",
+        erotic: "",
+        target: "",
+        purpose: "",
+        distance: "",
+        ng: "",
+      });
+      setCharacterImage("");
     }
   }, [account, mode]);
-
-  // プラットフォーム選択
-  const handlePlatformChange = e => setPlatform(e.target.value);
 
   // ペルソナ入力
   const handlePersonaChange = e =>
     setPersona({ ...persona, [e.target.name]: e.target.value });
 
-  // テンプレ・複製用UIダミー
-  const handleLoadTemplate = () => {
-    setPersona({
-      ...persona,
-      name: "テンプレ名前",
-      job: "エンジニア",
-      // ...ほか適当な値
-    });
+  // 既存アカウント複製
+  const handleCopyAccount = () => {
+    if (!account) return;
+    setDisplayName(account.displayName || "");
+    setAccountId(account.accountId || "");
+    setAccessToken(account.accessToken || "");
+    setGroupId(account.groupId || "");
+    setPersona(account.persona || {});
+    setCharacterImage(account.characterImage || "");
+  };
+
+  // キャラクターイメージAI生成（ダミー実装）
+  const handleAIGenerate = async () => {
+    setAiLoading(true);
+    setTimeout(() => {
+      setCharacterImage("元気で明るい女性キャラクター（例）");
+      setAiLoading(false);
+    }, 1000);
   };
 
   // 登録・保存ダミー
   const handleSubmit = e => {
     e.preventDefault();
+    // ここでdisplayNameも含めて送信されるべき
     alert("登録/保存はダミー");
     onClose();
   };
@@ -90,73 +113,60 @@ export default function SNSAccountModal({ open, onClose, mode = "create", accoun
         <button type="button" className="absolute top-2 right-2 text-gray-400" onClick={onClose}>×</button>
         <h2 className="text-xl font-bold mb-4">{mode === "edit" ? "アカウント編集" : "新規アカウント追加"}</h2>
 
-        {/* プラットフォーム */}
-        <label className="block mb-2 font-semibold">プラットフォーム</label>
-        <select className="mb-4 border px-2 py-1 rounded w-full"
-          value={platform}
-          onChange={handlePlatformChange}
-        >
-          {platformOptions.map(opt =>
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
-          )}
-        </select>
+        {/* アカウント名（最上部に追加） */}
+        <label className="block">アカウント名</label>
+        <input
+          className="mb-2 border rounded px-2 py-1 w-full"
+          value={displayName}
+          onChange={e => setDisplayName(e.target.value)}
+          placeholder="例）営業用公式アカウント"
+        />
 
         {/* アカウントID */}
-        {(platform === "twitter" || platform === "both") && (
-          <>
-            <label className="block">TwitterアカウントID</label>
-            <input
-              className="mb-2 border rounded px-2 py-1 w-full"
-              value={twitterId}
-              onChange={e => setTwitterId(e.target.value)}
-            />
-          </>
-        )}
-        {(platform === "threads" || platform === "both") && (
-          <>
-            <label className="block">ThreadsアカウントID</label>
-            <input
-              className="mb-2 border rounded px-2 py-1 w-full"
-              value={threadsId}
-              onChange={e => setThreadsId(e.target.value)}
-            />
-          </>
-        )}
+        <label className="block">アカウントID</label>
+        <input
+          className="mb-2 border rounded px-2 py-1 w-full"
+          value={accountId}
+          onChange={e => setAccountId(e.target.value)}
+          placeholder="@account_id"
+        />
 
-        {/* 各プラットフォームごとの認証情報 */}
-        {platform !== "threads" && (
-          <>
-            <label className="block">Twitter Client ID</label>
-            <input className="mb-2 border rounded px-2 py-1 w-full"
-              value={twitterClientId}
-              onChange={e => setTwitterClientId(e.target.value)}
-            />
-            <label className="block">Twitter Client Secret</label>
-            <input className="mb-2 border rounded px-2 py-1 w-full"
-              value={twitterClientSecret}
-              onChange={e => setTwitterClientSecret(e.target.value)}
-            />
-          </>
-        )}
-        {platform !== "twitter" && (
-          <>
-            <label className="block">Threads アクセストークン</label>
-            <input className="mb-2 border rounded px-2 py-1 w-full"
-              value={threadsAccessToken}
-              onChange={e => setThreadsAccessToken(e.target.value)}
-            />
-          </>
-        )}
+        {/* アクセストークン */}
+        <label className="block">アクセストークン</label>
+        <input
+          className="mb-2 border rounded px-2 py-1 w-full"
+          value={accessToken}
+          onChange={e => setAccessToken(e.target.value)}
+        />
 
-        {/* ペルソナテンプレ・複製 */}
-        <div className="my-3 flex gap-2">
-          <button type="button" className="border px-2 py-1 rounded bg-gray-100" onClick={handleLoadTemplate}>
-            テンプレート読込
+        {/* キャラクターイメージ input+AI生成ボタン */}
+        <label className="block">キャラクターイメージ</label>
+        <div className="flex gap-2 mb-2">
+          <input
+            className="border rounded px-2 py-1 w-full"
+            type="text"
+            value={characterImage}
+            onChange={(e) => setCharacterImage(e.target.value)}
+            placeholder="キャラクターイメージ"
+          />
+          <button
+            type="button"
+            className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 disabled:bg-gray-400"
+            onClick={handleAIGenerate}
+            disabled={aiLoading}
+          >
+            {aiLoading ? "生成中..." : "AI生成"}
           </button>
-          <button type="button" className="border px-2 py-1 rounded bg-gray-100">
+        </div>
+
+        {/* 既存アカウント複製ボタン（維持） */}
+        <div className="my-3 flex gap-2">
+          <button type="button" className="border px-2 py-1 rounded bg-gray-100" onClick={handleCopyAccount}>
             既存アカウント複製
           </button>
         </div>
+
+        {/* ペルソナ詳細（完全維持） */}
         <div className="grid grid-cols-2 gap-x-3 gap-y-2 mb-3">
           <input className="border px-2 py-1 rounded" name="name" value={persona.name} onChange={handlePersonaChange} placeholder="名前" />
           <input className="border px-2 py-1 rounded" name="age" value={persona.age} onChange={handlePersonaChange} placeholder="年齢" />
@@ -174,7 +184,7 @@ export default function SNSAccountModal({ open, onClose, mode = "create", accoun
           <input className="border px-2 py-1 rounded" name="ng" value={persona.ng} onChange={handlePersonaChange} placeholder="NG要素" />
         </div>
 
-        {/* 自動投稿グループ */}
+        {/* 自動投稿グループ（維持） */}
         <label className="block">自動投稿グループ</label>
         <select className="mb-4 border px-2 py-1 rounded w-full" value={groupId} onChange={e => setGroupId(e.target.value)}>
           <option value="">選択してください</option>

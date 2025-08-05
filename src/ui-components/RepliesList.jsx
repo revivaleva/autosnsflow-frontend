@@ -34,10 +34,22 @@ const statusOptions = [
   { value: "unreplied", label: "未返信" },
 ];
 
-// 返信内容編集モーダル
+// 返信内容編集モーダル（自動生成ボタン付き）
 function EditModal({ open, onClose, onSave, value }) {
   const [text, setText] = useState(value);
+  const [aiLoading, setAiLoading] = useState(false);
+
   React.useEffect(() => { setText(value); }, [value]);
+
+  // 自動生成
+  const handleAIGenerate = () => {
+    setAiLoading(true);
+    setTimeout(() => {
+      setText("（AIで自動生成された返信内容サンプル）");
+      setAiLoading(false);
+    }, 800);
+  };
+
   if (!open) return null;
   return (
     <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
@@ -49,9 +61,19 @@ function EditModal({ open, onClose, onSave, value }) {
           value={text}
           onChange={(e) => setText(e.target.value)}
         />
-        <div className="flex justify-end space-x-2">
-          <button className="px-4 py-1 rounded bg-gray-300" onClick={onClose}>キャンセル</button>
-          <button className="px-4 py-1 rounded bg-blue-500 text-white" onClick={() => onSave(text)}>保存</button>
+        <div className="flex justify-between mb-2">
+          <button
+            className="px-4 py-1 rounded bg-blue-500 text-white disabled:bg-gray-400"
+            type="button"
+            onClick={handleAIGenerate}
+            disabled={aiLoading}
+          >
+            {aiLoading ? "生成中..." : "自動生成"}
+          </button>
+          <div className="flex gap-2">
+            <button className="px-4 py-1 rounded bg-gray-300" type="button" onClick={onClose}>キャンセル</button>
+            <button className="px-4 py-1 rounded bg-blue-500 text-white" type="button" onClick={() => onSave(text)}>保存</button>
+          </div>
         </div>
       </div>
     </div>
@@ -217,24 +239,29 @@ export default function RepliesList() {
                 <td className="border p-1">{r.responseContent}</td>
                 <td className="border p-1">{r.responseAt}</td>
                 <td className="border p-1 space-x-1">
-                  <button
-                    className="bg-green-500 text-white px-2 py-1 rounded hover:bg-green-600"
-                    onClick={() => handleReply(r.id)}
-                  >
-                    返信
-                  </button>
-                  <button
-                    className="bg-red-500 text-white px-2 py-1 rounded hover:bg-red-600"
-                    onClick={() => handleDelete(r.id)}
-                  >
-                    削除
-                  </button>
-                  <button
-                    className="bg-yellow-500 text-white px-2 py-1 rounded hover:bg-yellow-600"
-                    onClick={() => handleEdit(r)}
-                  >
-                    編集
-                  </button>
+                  {/* 返信済みの行はボタン非表示 */}
+                  {r.status !== "replied" && (
+                    <>
+                      <button
+                        className="bg-green-500 text-white px-2 py-1 rounded hover:bg-green-600"
+                        onClick={() => handleReply(r.id)}
+                      >
+                        即時返信
+                      </button>
+                      <button
+                        className="bg-red-500 text-white px-2 py-1 rounded hover:bg-red-600"
+                        onClick={() => handleDelete(r.id)}
+                      >
+                        削除
+                      </button>
+                      <button
+                        className="bg-yellow-500 text-white px-2 py-1 rounded hover:bg-yellow-600"
+                        onClick={() => handleEdit(r)}
+                      >
+                        編集
+                      </button>
+                    </>
+                  )}
                 </td>
               </tr>
             ))}

@@ -4,25 +4,20 @@ import React, { useState } from "react";
 
 // サンプル自動投稿グループデータ
 const groups = [
-  {
-    groupId: "group1",
-    groupName: "朝昼夕グループ",
-  },
-  {
-    groupId: "group2",
-    groupName: "テストグループ",
-  },
+  { groupId: "group1", groupName: "朝昼夕グループ" },
+  { groupId: "group2", groupName: "テストグループ" },
 ];
 
 // サンプルの予約投稿データ
 const initialPosts = [
   {
     id: "post1",
+    accountName: "営業アカウント",
     accountId: "accountA",
     platform: "Threads",
     scheduledAt: "2025/08/05 10:00",
     groupId: "group1",
-    groupOrder: 0, // 0:自動投稿1
+    groupOrder: 0,
     theme: "おはよう",
     content: "今日も一日頑張ろう！",
     threadsPostedAt: "2025/08/05 10:05",
@@ -38,11 +33,12 @@ const initialPosts = [
   },
   {
     id: "post2",
+    accountName: "副業アカウント",
     accountId: "accountB",
     platform: "X(Twitter)",
     scheduledAt: "2025/08/05 12:00",
     groupId: "group2",
-    groupOrder: 1, // 1:自動投稿2
+    groupOrder: 1,
     theme: "ランチ",
     content: "今日のランチはカレー！",
     threadsPostedAt: "",
@@ -89,6 +85,97 @@ function RepliesModal({ open, onClose, replies, postId }) {
   );
 }
 
+// 編集モーダル
+function EditPostModal({ open, onClose, post, onSave }) {
+  const [scheduledAt, setScheduledAt] = useState(post?.scheduledAt || "");
+  const [content, setContent] = useState(post?.content || "");
+  const [regenLoading, setRegenLoading] = useState(false);
+
+  // 本文再生成（ダミーでテキスト変更）
+  const handleRegenerate = () => {
+    setRegenLoading(true);
+    setTimeout(() => {
+      setContent("（AIで再生成されたサンプルテキスト）");
+      setRegenLoading(false);
+    }, 800);
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    onSave({
+      ...post,
+      scheduledAt,
+      content,
+    });
+  };
+
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-30 flex justify-center items-center z-50">
+      <form
+        className="bg-white rounded-xl shadow-xl p-6 w-[400px]"
+        onSubmit={handleSubmit}
+      >
+        <h3 className="text-lg font-bold mb-3">予約投稿編集</h3>
+        <div className="mb-2">
+          <label className="block text-xs text-gray-600 mb-1">アカウント名</label>
+          <input
+            className="w-full border rounded px-2 py-1 bg-gray-100"
+            value={post?.accountName ?? ""}
+            disabled
+          />
+        </div>
+        <div className="mb-2">
+          <label className="block text-xs text-gray-600 mb-1">アカウントID</label>
+          <input
+            className="w-full border rounded px-2 py-1 bg-gray-100"
+            value={post?.accountId ?? ""}
+            disabled
+          />
+        </div>
+        <div className="mb-2">
+          <label className="block text-xs text-gray-600 mb-1">予約投稿日時</label>
+          <input
+            className="w-full border rounded px-2 py-1"
+            value={scheduledAt}
+            onChange={e => setScheduledAt(e.target.value)}
+          />
+        </div>
+        <div className="mb-2">
+          <label className="block text-xs text-gray-600 mb-1">本文テキスト</label>
+          <textarea
+            className="w-full border rounded px-2 py-1"
+            rows={3}
+            value={content}
+            onChange={e => setContent(e.target.value)}
+          />
+        </div>
+        <div className="mb-3">
+          <button
+            type="button"
+            className="bg-blue-500 text-white rounded px-3 py-1 hover:bg-blue-600 disabled:bg-gray-400 mr-2"
+            onClick={handleRegenerate}
+            disabled={regenLoading}
+          >
+            {regenLoading ? "生成中..." : "再生成"}
+          </button>
+        </div>
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            className="bg-gray-300 text-gray-800 rounded px-4 py-2"
+            onClick={onClose}
+          >キャンセル</button>
+          <button
+            type="submit"
+            className="bg-green-500 text-white rounded px-5 py-2 hover:bg-green-600"
+          >保存</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 export default function ScheduledPostsTable() {
   const [posts, setPosts] = useState(initialPosts);
   const [sortKey, setSortKey] = useState("scheduledAt");
@@ -97,6 +184,10 @@ export default function ScheduledPostsTable() {
   const [modalOpen, setModalOpen] = useState(false);
   const [modalReplies, setModalReplies] = useState([]);
   const [modalTarget, setModalTarget] = useState(null);
+
+  // 編集モーダル制御
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState(null);
 
   // グループ名取得
   const getGroupName = (groupId) => {
@@ -122,8 +213,18 @@ export default function ScheduledPostsTable() {
     });
 
   // アクション
-  const handleManualRun = (id) => alert(`手動実行: ${id}`);
-  const handleEdit = (id) => alert(`編集: ${id}`);
+  const handleManualRun = (id) => alert(`即時投稿: ${id}`);
+  const handleEdit = (id) => {
+    const post = posts.find((p) => p.id === id);
+    setEditTarget(post);
+    setEditModalOpen(true);
+  };
+  const handleEditSave = (edited) => {
+    setPosts((prev) =>
+      prev.map((p) => (p.id === edited.id ? { ...p, ...edited } : p))
+    );
+    setEditModalOpen(false);
+  };
   const handleDelete = (id) => window.confirm("削除しますか？") && setPosts(posts.filter((p) => p.id !== id));
   const handleAdd = () => alert("予約投稿追加モーダルを表示（仮）");
   const handleRepliesModal = (replies, postId) => {
@@ -135,6 +236,12 @@ export default function ScheduledPostsTable() {
   return (
     <div className="p-4">
       <RepliesModal open={modalOpen} onClose={() => setModalOpen(false)} replies={modalReplies} postId={modalTarget} />
+      <EditPostModal
+        open={editModalOpen}
+        onClose={() => setEditModalOpen(false)}
+        post={editTarget}
+        onSave={handleEditSave}
+      />
 
       <div className="flex justify-between items-center mb-4">
         <h2 className="text-xl font-bold">予約投稿一覧</h2>
@@ -178,52 +285,46 @@ export default function ScheduledPostsTable() {
         <table className="min-w-full bg-white border">
           <thead>
             <tr>
+              <th className="border p-1">アカウント名</th>
               <th className="border p-1">アカウントID</th>
-              <th className="border p-1">投稿先</th>
               <th className="border p-1">予約投稿日時</th>
               <th className="border p-1">自動投稿</th>
               <th className="border p-1">生成テーマ</th>
               <th className="border p-1">本文テキスト</th>
-              <th className="border p-1">Threads投稿日時</th>
-              <th className="border p-1">X投稿日時</th>
-              <th className="border p-1">Threads投稿ID</th>
-              <th className="border p-1">X投稿ID</th>
-              <th className="border p-1">Threadsリプ状況</th>
+              <th className="border p-1">投稿日時</th>
+              <th className="border p-1">投稿ID</th>
+              <th className="border p-1">リプ状況</th>
               <th className="border p-1">アクション</th>
             </tr>
           </thead>
           <tbody>
             {sortedPosts.map((post) => {
-              // 「グループ名-自動投稿N」を表示
               const groupName = getGroupName(post.groupId);
               const autoPostLabel =
                 groupName && typeof post.groupOrder === "number"
                   ? `${groupName}-自動投稿${post.groupOrder + 1}`
                   : "";
 
-              // 返信済み/総数
               const repliesNum = post.replies?.length || 0;
               const repliesReplied = post.replies?.filter(r => r.status === "replied").length || 0;
-              const threadsRepliesStatus = `${repliesReplied}/${repliesNum}`;
+              const repliesStatus = `${repliesReplied}/${repliesNum}`;
 
               return (
                 <tr key={post.id}>
+                  <td className="border p-1">{post.accountName}</td>
                   <td className="border p-1">{post.accountId}</td>
-                  <td className="border p-1">{post.platform}</td>
                   <td className="border p-1">{post.scheduledAt}</td>
                   <td className="border p-1">{autoPostLabel}</td>
                   <td className="border p-1">{post.theme}</td>
                   <td className="border p-1">{post.content}</td>
                   <td className="border p-1">{post.threadsPostedAt}</td>
-                  <td className="border p-1">{post.twitterPostedAt}</td>
                   <td className="border p-1">{post.threadsPostId}</td>
-                  <td className="border p-1">{post.twitterPostId}</td>
                   <td className="border p-1">
                     <button
                       className="px-2 py-1 rounded text-xs bg-gray-200 text-gray-800 hover:bg-blue-200"
                       onClick={() => handleRepliesModal(post.replies || [], post.id)}
                     >
-                      {threadsRepliesStatus}
+                      {repliesStatus}
                     </button>
                   </td>
                   <td className="border p-1 space-x-1">
@@ -231,14 +332,17 @@ export default function ScheduledPostsTable() {
                       className="bg-green-500 text-white px-2 py-1 rounded hover:bg-green-600"
                       onClick={() => handleManualRun(post.id)}
                     >
-                      手動実行
+                      即時投稿
                     </button>
-                    <button
-                      className="bg-yellow-500 text-white px-2 py-1 rounded hover:bg-yellow-600"
-                      onClick={() => handleEdit(post.id)}
-                    >
-                      編集
-                    </button>
+                    {/* 投稿済みでなければ編集ボタンを表示 */}
+                    {post.status !== "posted" && (
+                      <button
+                        className="bg-yellow-500 text-white px-2 py-1 rounded hover:bg-yellow-600"
+                        onClick={() => handleEdit(post.id)}
+                      >
+                        編集
+                      </button>
+                    )}
                     <button
                       className="bg-red-500 text-white px-2 py-1 rounded hover:bg-red-600"
                       onClick={() => handleDelete(post.id)}
@@ -251,7 +355,7 @@ export default function ScheduledPostsTable() {
             })}
             {sortedPosts.length === 0 && (
               <tr>
-                <td colSpan={12} className="text-center text-gray-500 p-4">
+                <td colSpan={10} className="text-center text-gray-500 p-4">
                   データがありません
                 </td>
               </tr>

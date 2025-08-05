@@ -1,29 +1,34 @@
+// /src/ui-components/SNSAccountsTable.jsx
+
 "use client";
 
 import React, { useState } from "react";
 import { ToggleSwitch } from "./ToggleSwitch";
 import SNSAccountModal from "./SNSAccountModal";
 
+// 状態（statusMessage）を追加したサンプルデータ
 const initialAccounts = [
   {
     id: "1",
     displayName: "メインアカウント",
-    platform: "Twitter",
     accountId: "@main_account",
+    platform: "Twitter", // ← プラットフォーム列は削除するため後で出力から除外
     createdAt: "2025/8/4 16:25",
     autoPost: true,
     autoGenerate: true,
     autoReply: false,
+    statusMessage: "自動稼働中", // 追加
   },
   {
     id: "2",
     displayName: "副業アカウント",
-    platform: "Threads",
     accountId: "@sub_account",
+    platform: "Threads",
     createdAt: "2025/8/4 16:25",
     autoPost: false,
     autoGenerate: false,
     autoReply: true,
+    statusMessage: "エラー停止中", // 追加
   }
 ];
 
@@ -78,12 +83,12 @@ export default function SNSAccountsTable() {
         <thead className="bg-gray-100">
           <tr>
             <th className="py-2 px-3 w-32">アカウント名</th>
-            <th className="py-2 px-3 w-24">プラットフォーム</th>
             <th className="py-2 px-3 w-44">アカウントID</th>
             <th className="py-2 px-3 w-36">作成日</th>
             <th className="py-2 px-3 w-28">自動投稿</th>
             <th className="py-2 px-3 w-28">本文生成</th>
             <th className="py-2 px-3 w-28">リプ返信</th>
+            <th className="py-2 px-3 w-36">状態</th> {/* 状態カラム追加 */}
             <th className="py-2 px-3 w-20"></th>
           </tr>
         </thead>
@@ -91,7 +96,6 @@ export default function SNSAccountsTable() {
           {accounts.map(acc => (
             <tr key={acc.id} className="text-center border-t">
               <td className="py-2 px-3">{acc.displayName}</td>
-              <td className="py-2 px-3">{acc.platform}</td>
               <td className="py-2 px-3">{acc.accountId}</td>
               <td className="py-2 px-3">{acc.createdAt}</td>
               <td className="py-2 px-3">
@@ -103,6 +107,7 @@ export default function SNSAccountsTable() {
               <td className="py-2 px-3">
                 <ToggleSwitch checked={acc.autoReply} onChange={() => handleToggle(acc.id, "autoReply")} />
               </td>
+              <td className="py-2 px-3">{acc.statusMessage}</td>
               <td className="py-2 px-3">
                 <button
                   className="bg-blue-500 text-white rounded px-3 py-1 hover:bg-blue-600"
