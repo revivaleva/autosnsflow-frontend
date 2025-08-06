@@ -1,72 +1,108 @@
-// /src/ui-components/SNSAccountsTable.jsx
+// /src/app/accounts/SNSAccountsTable.jsx
 
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { ToggleSwitch } from "@/components/ToggleSwitch";
 import SNSAccountModal from "./SNSAccountModal";
 
-// 状態（statusMessage）を追加したサンプルデータ
-const initialAccounts = [
-  {
-    id: "1",
-    displayName: "メインアカウント",
-    accountId: "@main_account",
-    platform: "Twitter", // ← プラットフォーム列は削除するため後で出力から除外
-    createdAt: "2025/8/4 16:25",
-    autoPost: true,
-    autoGenerate: true,
-    autoReply: false,
-    statusMessage: "自動稼働中", // 追加
-  },
-  {
-    id: "2",
-    displayName: "副業アカウント",
-    accountId: "@sub_account",
-    platform: "Threads",
-    createdAt: "2025/8/4 16:25",
-    autoPost: false,
-    autoGenerate: false,
-    autoReply: true,
-    statusMessage: "エラー停止中", // 追加
-  }
-];
+// DynamoDBから取得する型（DB設計に合わせて調整）
+/*
+type ThreadsAccount = {
+  accountId: string;
+  displayName: string;
+  createdAt: number;
+  autoPost: boolean;
+  autoGenerate: boolean;
+  autoReply: boolean;
+  statusMessage: string;
+  personaMode: string;
+  personaSimple: string;
+  personaDetail: string;
+  autoPostGroupId: string;
+};
+*/
 
-export default function SNSAccountsTable() {
-  const [accounts, setAccounts] = useState(initialAccounts);
+export default function SNSAccountsTable({ userId }) {
+  const [accounts, setAccounts] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-  // モーダルの開閉と編集対象
+  // モーダル関連
   const [modalOpen, setModalOpen] = useState(false);
-  const [modalMode, setModalMode] = useState("create"); // "create" or "edit"
+  const [modalMode, setModalMode] = useState("create");
   const [selectedAccount, setSelectedAccount] = useState(null);
 
-  // トグル切替
-  const handleToggle = (id, key) => {
-    setAccounts(accounts =>
-      accounts.map(acc =>
-        acc.id === id ? { ...acc, [key]: !acc[key] } : acc
-      )
-    );
+  // 一覧取得処理を関数化
+  const loadAccounts = async () => {
+    setLoading(true);
+    const res = await fetch(`/api/threads-accounts?userId=${userId}`);
+    const data = await res.json();
+    setAccounts(data.accounts ?? []);
+    setLoading(false);
   };
 
-  // 新規追加ボタン押下
+  // 初回＆userId更新時にAPIから取得
+  useEffect(() => {
+    if (userId) loadAccounts();
+  }, [userId]);
+
+  const handleToggle = async (acc, field) => {
+    const newVal = !acc[field];
+    // 楽観的UI：即時見た目変更
+    setAccounts(prev =>
+      prev.map(a =>
+        a.accountId === acc.accountId ? { ...a, [field]: newVal } : a
+      )
+    );
+
+    // サーバーに即時反映
+    await fetch("/api/threads-accounts", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        userId,
+        accountId: acc.accountId,
+        updateFields: { [field]: newVal }
+      }),
+    });
+  };
+
   const handleAddClick = () => {
     setModalMode("create");
     setSelectedAccount(null);
     setModalOpen(true);
   };
 
-  // 編集ボタン押下
   const handleEditClick = (account) => {
     setModalMode("edit");
     setSelectedAccount(account);
     setModalOpen(true);
   };
 
-  // モーダル閉じる
   const handleCloseModal = () => {
     setModalOpen(false);
   };
+
+  // 削除
+  const handleDelete = async (acc) => {
+    if (!window.confirm("本当に削除しますか？")) return;
+    const res = await fetch(`/api/threads-accounts`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        userId,
+        accountId: acc.accountId,
+      }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      loadAccounts(); // ← 一覧再取得
+    } else {
+      alert("削除失敗: " + (data.error || ""));
+    }
+  };
+
+  if (loading) return <div className="text-center py-8">読み込み中...</div>;
 
   return (
     <div className="max-w-5xl mx-auto mt-10">
@@ -88,32 +124,50 @@ export default function SNSAccountsTable() {
             <th className="py-2 px-3 w-28">自動投稿</th>
             <th className="py-2 px-3 w-28">本文生成</th>
             <th className="py-2 px-3 w-28">リプ返信</th>
-            <th className="py-2 px-3 w-36">状態</th> {/* 状態カラム追加 */}
+            <th className="py-2 px-3 w-36">状態</th>
             <th className="py-2 px-3 w-20"></th>
           </tr>
         </thead>
         <tbody>
           {accounts.map(acc => (
-            <tr key={acc.id} className="text-center border-t">
+            <tr key={acc.accountId} className="text-center border-t">
               <td className="py-2 px-3">{acc.displayName}</td>
               <td className="py-2 px-3">{acc.accountId}</td>
-              <td className="py-2 px-3">{acc.createdAt}</td>
-              <td className="py-2 px-3">
-                <ToggleSwitch checked={acc.autoPost} onChange={() => handleToggle(acc.id, "autoPost")} />
+              <td className="py-2 px-3">{acc.createdAt 
+                ? new Date(acc.createdAt * 1000).toLocaleString()
+                : ""}
               </td>
               <td className="py-2 px-3">
-                <ToggleSwitch checked={acc.autoGenerate} onChange={() => handleToggle(acc.id, "autoGenerate")} />
+                <ToggleSwitch
+                  checked={!!acc.autoPost}
+                  onChange={() => handleToggle(acc, "autoPost")}
+                />
               </td>
               <td className="py-2 px-3">
-                <ToggleSwitch checked={acc.autoReply} onChange={() => handleToggle(acc.id, "autoReply")} />
+                <ToggleSwitch
+                  checked={!!acc.autoGenerate}
+                  onChange={() => handleToggle(acc, "autoGenerate")}
+                />
               </td>
-              <td className="py-2 px-3">{acc.statusMessage}</td>
+              <td className="py-2 px-3">
+                <ToggleSwitch
+                  checked={!!acc.autoReply}
+                  onChange={() => handleToggle(acc, "autoReply")}
+                />
+              </td>
+              <td className="py-2 px-3">{acc.statusMessage || ""}</td>
               <td className="py-2 px-3">
                 <button
                   className="bg-blue-500 text-white rounded px-3 py-1 hover:bg-blue-600"
                   onClick={() => handleEditClick(acc)}
                 >
                   編集
+                </button>
+                <button
+                  className="bg-red-500 text-white rounded px-3 py-1 hover:bg-red-600"
+                  onClick={() => handleDelete(acc)}
+                >
+                  削除
                 </button>
               </td>
             </tr>
@@ -122,11 +176,13 @@ export default function SNSAccountsTable() {
       </table>
 
       {/* モーダル表示 */}
+      
       <SNSAccountModal
         open={modalOpen}
         onClose={handleCloseModal}
         mode={modalMode}
         account={selectedAccount}
+        reloadAccounts={loadAccounts}
       />
     </div>
   );

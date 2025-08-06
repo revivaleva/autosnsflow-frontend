@@ -3,7 +3,7 @@
 import SettingsForm from "./SettingsForm";
 import AppLayout from "@/components/AppLayout";
 
-export default function AccountsPage() {
+export default function SettingsPage() {
   return (
     <AppLayout>
       <SettingsForm  />

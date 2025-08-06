@@ -1,7 +1,10 @@
+// /src/components/AppLayout.jsx
+
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect } from "react";
 
 const menu = [
   { label: "ダッシュボード", href: "/dashboard" },
@@ -14,6 +17,15 @@ const menu = [
 
 export default function AppLayout({ children }) {
   const pathname = usePathname();
+  const router = useRouter();
+
+  useEffect(() => {
+    // /loginページ自身ではリダイレクトしない
+    if (pathname !== "/login" && !localStorage.getItem("userId")) {
+      router.push("/login");
+    }
+  }, [pathname, router]);
+
   return (
     <div className="flex min-h-screen">
       <nav className="w-56 bg-gray-900 text-white flex flex-col py-6 px-4">

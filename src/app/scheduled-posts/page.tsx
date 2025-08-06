@@ -3,7 +3,7 @@
 import ScheduledPostsTable from "./ScheduledPostsTable"
 import AppLayout from "@/components/AppLayout";
 
-export default function AccountsPage() {
+export default function ScheduledPostsPage() {
   return (
     <AppLayout>
       <ScheduledPostsTable />

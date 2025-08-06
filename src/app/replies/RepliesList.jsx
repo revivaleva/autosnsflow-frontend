@@ -1,31 +1,7 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import dayjs from "dayjs";
-
-// 仮サンプルデータ
-const initialReplies = [
-  {
-    id: "rep1",
-    accountId: "accountA",
-    threadsPostedAt: "2025/08/05 10:05",
-    postContent: "今日は海に行きました",
-    replyContent: "楽しそうですね！",
-    responseContent: "ありがとうございます！",
-    responseAt: "2025/08/05 11:00",
-    status: "replied",
-  },
-  {
-    id: "rep2",
-    accountId: "accountB",
-    threadsPostedAt: "2025/08/06 09:30",
-    postContent: "おはようございます",
-    replyContent: "Good morning!",
-    responseContent: "",
-    responseAt: "",
-    status: "unreplied",
-  },
-];
 
 // ステータスフィルタ用
 const statusOptions = [
@@ -81,13 +57,48 @@ function EditModal({ open, onClose, onSave, value }) {
 }
 
 export default function RepliesList() {
-  const [replies, setReplies] = useState(initialReplies);
+  const [replies, setReplies] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("");
   const [accountFilter, setAccountFilter] = useState("");
   const [sortKey, setSortKey] = useState("threadsPostedAt");
   const [sortAsc, setSortAsc] = useState(true);
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
+
+  // APIからデータ取得
+  useEffect(() => {
+    const userId = localStorage.getItem("userId");
+    if (!userId) return;
+    setLoading(true);
+    fetch(`/api/replies?userId=${userId}`)
+      .then(res => res.json())
+      .then(data => {
+        // APIのレスポンス形式に合わせてkey変換
+        setReplies(
+          (data.replies || []).map(r => ({
+            id: r.id,
+            accountId: r.accountId,                             // ここはAPIレスポンスのプロパティ名
+            threadsPostedAt: r.scheduledAt
+              ? dayjs(r.scheduledAt * 1000).format("YYYY/MM/DD HH:mm")
+              : "",
+            postContent: r.content,                             // 本文テキスト
+            replyContent: r.replyContent || "",                 // リプ内容
+            responseContent: r.responseContent || "",           // 返信内容
+            responseAt: r.replyAt
+              ? dayjs(r.replyAt * 1000).format("YYYY/MM/DD HH:mm")
+              : "",
+            status: r.status,
+          }))
+        );
+
+        setLoading(false);
+      })
+      .catch(e => {
+        setReplies([]);
+        setLoading(false);
+      });
+  }, []);
 
   // フィルタ
   const filteredReplies = replies.filter(r => {
@@ -155,6 +166,8 @@ export default function RepliesList() {
 
   // アカウントID一覧（フィルタ用）
   const accountIds = Array.from(new Set(replies.map(r => r.accountId)));
+
+  if (loading) return <div className="p-6 text-center">読み込み中...</div>;
 
   return (
     <div className="p-4">
