@@ -1,8 +1,49 @@
-// src/app/scheduled-posts/ScheduledPostsTable.jsx
+// src/app/scheduled-posts/ScheduledPostsTable.tsx
 
 "use client";
 
 import React, { useEffect, useState } from "react";
+
+// 型定義
+type ScheduledPostStatus = "" | "pending" | "posted";
+type ScheduledPostType = {
+  scheduledPostId: string;
+  accountName: string;
+  accountId: string;
+  scheduledAt: string | number;
+  content: string;
+  theme?: string;
+  autoPostGroupId?: string;
+  status?: ScheduledPostStatus;
+  postedAt?: string | number;
+  threadsPostId?: string;
+  isDeleted?: boolean;
+  replyCount?: number;
+  replies?: ReplyType[];
+};
+type ReplyType = {
+  id: string;
+  replyContent: string;
+  status: "replied" | "unreplied";
+};
+
+type AddPostModalProps = {
+  open: boolean;
+  onClose: () => void;
+  onSave: (data: ScheduledPostType) => void;
+};
+type RepliesModalProps = {
+  open: boolean;
+  onClose: () => void;
+  replies: ReplyType[];
+  postId: string;
+};
+type EditPostModalProps = {
+  open: boolean;
+  onClose: () => void;
+  post: ScheduledPostType | null;
+  onSave: (data: ScheduledPostType) => void;
+};
 
 const statusOptions = [
   { value: "", label: "すべて" },
@@ -10,19 +51,19 @@ const statusOptions = [
   { value: "posted", label: "投稿済み" },
 ];
 
-function AddPostModal({ open, onClose, onSave }) {
-  const [accountName, setAccountName] = useState("");
-  const [accountId, setAccountId] = useState("");
-  const [scheduledAt, setScheduledAt] = useState("");
-  const [content, setContent] = useState("");
-  const [theme, setTheme] = useState("");
-  const [autoPostGroupId, setAutoPostGroupId] = useState("");
-  const [saving, setSaving] = useState(false);
+// ---------------- AddPostModal ----------------
+function AddPostModal({ open, onClose, onSave }: AddPostModalProps) {
+  const [accountName, setAccountName] = useState<string>("");
+  const [accountId, setAccountId] = useState<string>("");
+  const [scheduledAt, setScheduledAt] = useState<string>("");
+  const [content, setContent] = useState<string>("");
+  const [theme, setTheme] = useState<string>("");
+  const [autoPostGroupId, setAutoPostGroupId] = useState<string>("");
+  const [saving, setSaving] = useState<boolean>(false);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setSaving(true);
-    // scheduledPostIdはランダム生成
     const scheduledPostId = Math.random().toString(36).slice(2, 12);
     await onSave({
       scheduledPostId,
@@ -86,8 +127,8 @@ function AddPostModal({ open, onClose, onSave }) {
   );
 }
 
-// リプライ一覧モーダル
-function RepliesModal({ open, onClose, replies, postId }) {
+// ---------------- RepliesModal ----------------
+function RepliesModal({ open, onClose, replies, postId }: RepliesModalProps) {
   if (!open) return null;
   return (
     <div className="fixed inset-0 bg-black bg-opacity-30 flex justify-center items-center z-50">
@@ -111,13 +152,12 @@ function RepliesModal({ open, onClose, replies, postId }) {
   );
 }
 
-// 編集モーダル
-function EditPostModal({ open, onClose, post, onSave }) {
-  const [scheduledAt, setScheduledAt] = useState(post?.scheduledAt || "");
-  const [content, setContent] = useState(post?.content || "");
-  const [regenLoading, setRegenLoading] = useState(false);
+// ---------------- EditPostModal ----------------
+function EditPostModal({ open, onClose, post, onSave }: EditPostModalProps) {
+  const [scheduledAt, setScheduledAt] = useState<string | number>(post?.scheduledAt || "");
+  const [content, setContent] = useState<string>(post?.content || "");
+  const [regenLoading, setRegenLoading] = useState<boolean>(false);
 
-  // 本文再生成（ダミーでテキスト変更）
   const handleRegenerate = () => {
     setRegenLoading(true);
     setTimeout(() => {
@@ -128,6 +168,7 @@ function EditPostModal({ open, onClose, post, onSave }) {
 
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (!post) return;
     onSave({
       ...post,
       scheduledAt,
@@ -209,35 +250,28 @@ function EditPostModal({ open, onClose, post, onSave }) {
   );
 }
 
+// ---------------- ScheduledPostsTable本体 ----------------
 export default function ScheduledPostsTable() {
-  const [posts, setPosts] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [sortKey, setSortKey] = useState("scheduledAt");
-  const [sortAsc, setSortAsc] = useState(true);
-  const [filterStatus, setFilterStatus] = useState("");
-  const [modalOpen, setModalOpen] = useState(false);
-  const [modalReplies, setModalReplies] = useState([]);
-  const [modalTarget, setModalTarget] = useState(null);
-  // 追加モーダル制御
-  const [addModalOpen, setAddModalOpen] = useState(false);
+  const [posts, setPosts] = useState<ScheduledPostType[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [sortKey, setSortKey] = useState<"scheduledAt" | "status">("scheduledAt");
+  const [sortAsc, setSortAsc] = useState<boolean>(true);
+  const [filterStatus, setFilterStatus] = useState<ScheduledPostStatus>("");
+  const [modalOpen, setModalOpen] = useState<boolean>(false);
+  const [modalReplies, setModalReplies] = useState<ReplyType[]>([]);
+  const [modalTarget, setModalTarget] = useState<string | null>(null);
+  const [addModalOpen, setAddModalOpen] = useState<boolean>(false);
+  const [editModalOpen, setEditModalOpen] = useState<boolean>(false);
+  const [editTarget, setEditTarget] = useState<ScheduledPostType | null>(null);
 
-  // 追加ボタン押下時
-  const handleAdd = () => {
-    setAddModalOpen(true);
-  };
+  const handleAdd = () => setAddModalOpen(true);
 
-  // リプライ一覧モーダル制御
-  const handleRepliesModal = (replies, postId) => {
+  const handleRepliesModal = (replies: ReplyType[], postId: string) => {
     setModalReplies(replies || []);
     setModalTarget(postId);
     setModalOpen(true);
   };
 
-  // 編集モーダル制御
-  const [editModalOpen, setEditModalOpen] = useState(false);
-  const [editTarget, setEditTarget] = useState(null);
-
-  // 初期データ取得（API）
   useEffect(() => {
     const userId = localStorage.getItem("userId");
     if (!userId) return;
@@ -253,10 +287,9 @@ export default function ScheduledPostsTable() {
       });
   }, []);
 
-  // モーダル保存時（APIにPOST→画面にも反映）
-  const handleAddSave = async (newPost) => {
+  // モーダル保存時
+  const handleAddSave = async (newPost: ScheduledPostType) => {
     const userId = localStorage.getItem("userId");
-    // UNIX秒でなければ変換
     let scheduledAt = newPost.scheduledAt;
     if (scheduledAt && String(scheduledAt).length < 11) {
       scheduledAt = Number(scheduledAt);
@@ -266,7 +299,6 @@ export default function ScheduledPostsTable() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...newPost, scheduledAt }),
     });
-    // 画面上でも即時反映
     setPosts((prev) => [...prev, { ...newPost, scheduledAt }]);
   };
 
@@ -288,14 +320,13 @@ export default function ScheduledPostsTable() {
       return 0;
     });
 
-  // アクション（ID参照を scheduledPostId へ統一）
-  const handleManualRun = (id) => alert(`即時投稿: ${id}`);
-  const handleEdit = (id) => {
+  const handleManualRun = (id: string) => alert(`即時投稿: ${id}`);
+  const handleEdit = (id: string) => {
     const post = posts.find((p) => p.scheduledPostId === id);
-    setEditTarget(post);
+    setEditTarget(post || null);
     setEditModalOpen(true);
   };
-  const handleEditSave = (edited) => {
+  const handleEditSave = (edited: ScheduledPostType) => {
     setPosts((prev) =>
       prev.map((p) =>
         p.scheduledPostId === edited.scheduledPostId ? { ...p, ...edited } : p
@@ -303,9 +334,8 @@ export default function ScheduledPostsTable() {
     );
     setEditModalOpen(false);
   };
-  const handleDelete = async (id) => {
+  const handleDelete = async (id: string) => {
     if (!window.confirm("削除しますか？")) return;
-    // APIに論理削除リクエスト
     const userId = localStorage.getItem("userId");
     await fetch(`/api/scheduled-posts?userId=${userId}`, {
       method: "PATCH",
@@ -329,7 +359,7 @@ export default function ScheduledPostsTable() {
         onClose={() => setAddModalOpen(false)}
         onSave={handleAddSave}
       />
-      <RepliesModal open={modalOpen} onClose={() => setModalOpen(false)} replies={modalReplies} postId={modalTarget} />
+      <RepliesModal open={modalOpen} onClose={() => setModalOpen(false)} replies={modalReplies} postId={modalTarget || ""} />
       <EditPostModal
         open={editModalOpen}
         onClose={() => setEditModalOpen(false)}
@@ -350,7 +380,7 @@ export default function ScheduledPostsTable() {
         <select
           className="border rounded p-1"
           value={filterStatus}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFilterStatus(e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setFilterStatus(e.target.value as ScheduledPostStatus)}
         >
           {statusOptions.map((opt) => (
             <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -393,10 +423,7 @@ export default function ScheduledPostsTable() {
           </thead>
           <tbody>
             {sortedPosts.map((post) => {
-              // autoPostGroupIdをそのまま表示
               const autoPostLabel = post.autoPostGroupId || "";
-
-              // replies, replyCountで表示
               const repliesNum = Number(post.replyCount ?? (post.replies?.length ?? 0));
               const repliesReplied = post.replies?.filter(r => r.status === "replied").length ?? 0;
               const repliesStatus = repliesNum ? `${repliesReplied}/${repliesNum}` : "0/0";
@@ -432,7 +459,6 @@ export default function ScheduledPostsTable() {
                     </button>
                   </td>
                   <td className="border p-1 space-x-1">
-                    {/* 投稿済・論理削除済でなければ即時投稿ボタン表示 */}
                     {post.status !== "posted" && !post.isDeleted && (
                       <button
                         className="bg-green-500 text-white px-2 py-1 rounded hover:bg-green-600"
@@ -441,7 +467,6 @@ export default function ScheduledPostsTable() {
                         即時投稿
                       </button>
                     )}
-                    {/* 投稿済でなければ編集ボタン表示 */}
                     {post.status !== "posted" && !post.isDeleted && (
                       <button
                         className="bg-yellow-500 text-white px-2 py-1 rounded hover:bg-yellow-600"
@@ -450,7 +475,6 @@ export default function ScheduledPostsTable() {
                         編集
                       </button>
                     )}
-                    {/* 常に削除ボタンは表示 */}
                     {!post.isDeleted && (
                       <button
                         className="bg-red-500 text-white px-2 py-1 rounded hover:bg-red-600"

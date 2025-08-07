@@ -1,21 +1,50 @@
+// src/app/replies/RepliesList.tsx
+
 "use client";
 
 import React, { useState, useEffect } from "react";
 import dayjs from "dayjs";
 
+// ==========================
+// 型定義
+// ==========================
+
+type ReplyStatus = "" | "replied" | "unreplied";
+type ReplyType = {
+  id: string;
+  accountId: string;
+  threadsPostedAt: string;
+  postContent: string;
+  replyContent: string;
+  responseContent: string;
+  responseAt: string;
+  status: ReplyStatus;
+};
+
+type EditModalProps = {
+  open: boolean;
+  onClose: () => void;
+  onSave: (value: string) => void;
+  value: string;
+};
+
+// ==========================
 // ステータスフィルタ用
+// ==========================
 const statusOptions = [
   { value: "", label: "すべて" },
   { value: "replied", label: "返信済" },
   { value: "unreplied", label: "未返信" },
 ];
 
-// 返信内容編集モーダル（自動生成ボタン付き）
-function EditModal({ open, onClose, onSave, value }) {
-  const [text, setText] = useState(value);
-  const [aiLoading, setAiLoading] = useState(false);
+// ==========================
+// 返信内容編集モーダル
+// ==========================
+function EditModal({ open, onClose, onSave, value }: EditModalProps) {
+  const [text, setText] = useState<string>(value);
+  const [aiLoading, setAiLoading] = useState<boolean>(false);
 
-  React.useEffect(() => { setText(value); }, [value]);
+  useEffect(() => { setText(value); }, [value]);
 
   // 自動生成
   const handleAIGenerate = () => {
@@ -35,7 +64,7 @@ function EditModal({ open, onClose, onSave, value }) {
           className="border rounded w-full p-2 mb-4"
           rows={4}
           value={text}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setText(e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setText(e.target.value)}
         />
         <div className="flex justify-between mb-2">
           <button
@@ -56,15 +85,18 @@ function EditModal({ open, onClose, onSave, value }) {
   );
 }
 
+// ==========================
+// 本体
+// ==========================
 export default function RepliesList() {
-  const [replies, setReplies] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [statusFilter, setStatusFilter] = useState("");
-  const [accountFilter, setAccountFilter] = useState("");
-  const [sortKey, setSortKey] = useState("threadsPostedAt");
-  const [sortAsc, setSortAsc] = useState(true);
-  const [editModalOpen, setEditModalOpen] = useState(false);
-  const [editTarget, setEditTarget] = useState(null);
+  const [replies, setReplies] = useState<ReplyType[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [statusFilter, setStatusFilter] = useState<ReplyStatus>("");
+  const [accountFilter, setAccountFilter] = useState<string>("");
+  const [sortKey, setSortKey] = useState<"threadsPostedAt" | "responseAt">("threadsPostedAt");
+  const [sortAsc, setSortAsc] = useState<boolean>(true);
+  const [editModalOpen, setEditModalOpen] = useState<boolean>(false);
+  const [editTarget, setEditTarget] = useState<ReplyType | null>(null);
 
   // APIからデータ取得
   useEffect(() => {
@@ -74,27 +106,25 @@ export default function RepliesList() {
     fetch(`/api/replies?userId=${userId}`)
       .then(res => res.json())
       .then(data => {
-        // APIのレスポンス形式に合わせてkey変換
         setReplies(
-          (data.replies || []).map(r => ({
+          (data.replies || []).map((r: any): ReplyType => ({
             id: r.id,
-            accountId: r.accountId,                             // ここはAPIレスポンスのプロパティ名
+            accountId: r.accountId,
             threadsPostedAt: r.scheduledAt
               ? dayjs(r.scheduledAt * 1000).format("YYYY/MM/DD HH:mm")
               : "",
-            postContent: r.content,                             // 本文テキスト
-            replyContent: r.replyContent || "",                 // リプ内容
-            responseContent: r.responseContent || "",           // 返信内容
+            postContent: r.content,
+            replyContent: r.replyContent || "",
+            responseContent: r.responseContent || "",
             responseAt: r.replyAt
               ? dayjs(r.replyAt * 1000).format("YYYY/MM/DD HH:mm")
               : "",
-            status: r.status,
+            status: r.status as ReplyStatus,
           }))
         );
-
         setLoading(false);
       })
-      .catch(e => {
+      .catch(() => {
         setReplies([]);
         setLoading(false);
       });
@@ -109,7 +139,7 @@ export default function RepliesList() {
 
   // ソート
   const sortedReplies = [...filteredReplies].sort((a, b) => {
-    let vA, vB;
+    let vA: string, vB: string;
     if (sortKey === "threadsPostedAt") {
       vA = a.threadsPostedAt || "";
       vB = b.threadsPostedAt || "";
@@ -125,7 +155,7 @@ export default function RepliesList() {
   });
 
   // アクション
-  const handleReply = (id) => {
+  const handleReply = (id: string) => {
     alert(`即時返信: ${id}`);
     setReplies(replies =>
       replies.map(r =>
@@ -136,7 +166,7 @@ export default function RepliesList() {
     );
   };
 
-  const handleDelete = (id) => {
+  const handleDelete = (id: string) => {
     if (window.confirm("この返信内容を削除しますか？")) {
       setReplies(replies =>
         replies.map(r =>
@@ -148,12 +178,13 @@ export default function RepliesList() {
     }
   };
 
-  const handleEdit = (reply) => {
+  const handleEdit = (reply: ReplyType) => {
     setEditTarget(reply);
     setEditModalOpen(true);
   };
 
-  const handleEditSave = (newContent) => {
+  const handleEditSave = (newContent: string) => {
+    if (!editTarget) return;
     setReplies(replies =>
       replies.map(r =>
         r.id === editTarget.id
@@ -185,7 +216,7 @@ export default function RepliesList() {
         <select
           className="border rounded px-2 py-1"
           value={statusFilter}
-          onChange={e => setStatusFilter(e.target.value)}
+          onChange={e => setStatusFilter(e.target.value as ReplyStatus)}
         >
           {statusOptions.map(opt => (
             <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -252,7 +283,6 @@ export default function RepliesList() {
                 <td className="border p-1">{r.responseContent}</td>
                 <td className="border p-1">{r.responseAt}</td>
                 <td className="border p-1 space-x-1">
-                  {/* 返信済みの行はボタン非表示 */}
                   {r.status !== "replied" && (
                     <>
                       <button

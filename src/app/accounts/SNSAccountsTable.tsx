@@ -1,4 +1,4 @@
-// /src/app/accounts/SNSAccountsTable.jsx
+// /src/app/accounts/SNSAccountsTable.tsx
 
 "use client";
 
@@ -6,9 +6,8 @@ import React, { useEffect, useState } from "react";
 import { ToggleSwitch } from "@/components/ToggleSwitch";
 import SNSAccountModal from "./SNSAccountModal";
 
-// DynamoDBから取得する型（DB設計に合わせて調整）
-/*
-type ThreadsAccount = {
+// 型定義（共通型は types ディレクトリ等に分離してもOK）
+export type ThreadsAccount = {
   accountId: string;
   displayName: string;
   createdAt: number;
@@ -21,15 +20,15 @@ type ThreadsAccount = {
   personaDetail: string;
   autoPostGroupId: string;
 };
-*/
 
 export default function SNSAccountsTable() {
-  const [accounts, setAccounts] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [accounts, setAccounts] = useState<ThreadsAccount[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+
   // モーダル関連
-  const [modalOpen, setModalOpen] = useState(false);
-  const [modalMode, setModalMode] = useState("create");
-  const [selectedAccount, setSelectedAccount] = useState(null);
+  const [modalOpen, setModalOpen] = useState<boolean>(false);
+  const [modalMode, setModalMode] = useState<"create" | "edit">("create");
+  const [selectedAccount, setSelectedAccount] = useState<ThreadsAccount | null>(null);
 
   // 一覧取得処理を関数化
   const loadAccounts = async () => {
@@ -42,21 +41,21 @@ export default function SNSAccountsTable() {
     setLoading(false);
   };
 
-  // 初回＆userId更新時にAPIから取得
+  // 初回マウント時のみAPI取得
   useEffect(() => {
     loadAccounts();
   }, []);
 
-  const handleToggle = async (acc, field) => {
+  // 楽観的UIトグル
+  const handleToggle = async (acc: ThreadsAccount, field: keyof ThreadsAccount) => {
+    const userId = localStorage.getItem("userId");
+    if (!userId) return;
     const newVal = !acc[field];
-    // 楽観的UI：即時見た目変更
     setAccounts(prev =>
       prev.map(a =>
         a.accountId === acc.accountId ? { ...a, [field]: newVal } : a
       )
     );
-
-    // サーバーに即時反映
     await fetch("/api/threads-accounts", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -74,7 +73,7 @@ export default function SNSAccountsTable() {
     setModalOpen(true);
   };
 
-  const handleEditClick = (account) => {
+  const handleEditClick = (account: ThreadsAccount) => {
     setModalMode("edit");
     setSelectedAccount(account);
     setModalOpen(true);
@@ -85,7 +84,9 @@ export default function SNSAccountsTable() {
   };
 
   // 削除
-  const handleDelete = async (acc) => {
+  const handleDelete = async (acc: ThreadsAccount) => {
+    const userId = localStorage.getItem("userId");
+    if (!userId) return;
     if (!window.confirm("本当に削除しますか？")) return;
     const res = await fetch(`/api/threads-accounts`, {
       method: "DELETE",
@@ -97,7 +98,7 @@ export default function SNSAccountsTable() {
     });
     const data = await res.json();
     if (data.success) {
-      loadAccounts(); // ← 一覧再取得
+      loadAccounts();
     } else {
       alert("削除失敗: " + (data.error || ""));
     }
@@ -134,7 +135,7 @@ export default function SNSAccountsTable() {
             <tr key={acc.accountId} className="text-center border-t">
               <td className="py-2 px-3">{acc.displayName}</td>
               <td className="py-2 px-3">{acc.accountId}</td>
-              <td className="py-2 px-3">{acc.createdAt 
+              <td className="py-2 px-3">{acc.createdAt
                 ? new Date(acc.createdAt * 1000).toLocaleString()
                 : ""}
               </td>
@@ -177,7 +178,6 @@ export default function SNSAccountsTable() {
       </table>
 
       {/* モーダル表示 */}
-      
       <SNSAccountModal
         open={modalOpen}
         onClose={handleCloseModal}

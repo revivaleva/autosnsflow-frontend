@@ -1,10 +1,28 @@
-// src/ui-components/SettingsForm.jsx
+// src/ui-components/SettingsForm.tsx
 
 "use client";
 
 import React, { useEffect, useState } from "react";
 
-const modelOptions = [
+// 型定義
+type AutoPostStatus = "active" | "inactive";
+type ModelType =
+  | "gpt-3.5-turbo"
+  | "gpt-4o"
+  | "gpt-4-turbo"
+  | "gpt-4"
+  | "gpt-4o-mini";
+type SettingsType = {
+  discordWebhook: string;
+  errorDiscordWebhook: string;
+  openaiApiKey: string;
+  selectedModel: ModelType;
+  masterPrompt: string;
+  replyPrompt: string;
+  autoPost: AutoPostStatus;
+};
+
+const modelOptions: ModelType[] = [
   "gpt-3.5-turbo",
   "gpt-4o",
   "gpt-4-turbo",
@@ -12,21 +30,21 @@ const modelOptions = [
   "gpt-4o-mini",
 ];
 
-const autoPostOptions = [
+const autoPostOptions: { value: AutoPostStatus; label: string }[] = [
   { value: "active", label: "稼働" },
   { value: "inactive", label: "停止" },
 ];
 
 export default function SettingsForm() {
-  const [discordWebhook, setDiscordWebhook] = useState("");
-  const [errorDiscordWebhook, setErrorDiscordWebhook] = useState("");
-  const [openaiApiKey, setOpenAiApiKey] = useState("");
-  const [selectedModel, setSelectedModel] = useState(modelOptions[0]);
-  const [masterPrompt, setMasterPrompt] = useState("");
-  const [replyPrompt, setReplyPrompt] = useState("");
-  const [autoPost, setAutoPost] = useState("active");
-  const [saving, setSaving] = useState(false);
-  const [saveMessage, setSaveMessage] = useState("");
+  const [discordWebhook, setDiscordWebhook] = useState<string>("");
+  const [errorDiscordWebhook, setErrorDiscordWebhook] = useState<string>("");
+  const [openaiApiKey, setOpenAiApiKey] = useState<string>("");
+  const [selectedModel, setSelectedModel] = useState<ModelType>(modelOptions[0]);
+  const [masterPrompt, setMasterPrompt] = useState<string>("");
+  const [replyPrompt, setReplyPrompt] = useState<string>("");
+  const [autoPost, setAutoPost] = useState<AutoPostStatus>("active");
+  const [saving, setSaving] = useState<boolean>(false);
+  const [saveMessage, setSaveMessage] = useState<string>("");
 
   // 設定情報の取得
   useEffect(() => {
@@ -34,15 +52,17 @@ export default function SettingsForm() {
     if (!userId) return;
     fetch(`/api/user-settings?userId=${userId}`)
       .then(res => res.json())
-      .then(data => {
+      .then((data: Partial<SettingsType>) => {
         if (data) {
           setDiscordWebhook(data.discordWebhook || "");
           setErrorDiscordWebhook(data.errorDiscordWebhook || "");
           setOpenAiApiKey(data.openaiApiKey || "");
-          setSelectedModel(data.selectedModel || modelOptions[0]);
+          setSelectedModel(
+            (data.selectedModel as ModelType) || modelOptions[0]
+          );
           setMasterPrompt(data.masterPrompt || "");
           setReplyPrompt(data.replyPrompt || "");
-          setAutoPost(data.autoPost || "active");
+          setAutoPost((data.autoPost as AutoPostStatus) || "active");
         }
       });
   }, []);
@@ -125,7 +145,7 @@ export default function SettingsForm() {
             <select
               className="w-full border rounded p-2"
               value={selectedModel}
-              onChange={e => setSelectedModel(e.target.value)}
+              onChange={e => setSelectedModel(e.target.value as ModelType)}
               autoComplete="off"
             >
               {modelOptions.map(m => (
@@ -160,7 +180,7 @@ export default function SettingsForm() {
             <select
               className="w-full border rounded p-2"
               value={autoPost}
-              onChange={e => setAutoPost(e.target.value)}
+              onChange={e => setAutoPost(e.target.value as AutoPostStatus)}
               autoComplete="off"
             >
               {autoPostOptions.map(opt => (
