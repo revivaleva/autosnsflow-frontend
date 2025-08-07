@@ -5,7 +5,7 @@ import AppLayout from "@/components/AppLayout";
 export default function RepliesPage() {
   return (
     <AppLayout>
-       <RepliesList  />
+       <RepliesList/>
     </AppLayout>
   );
 }

@@ -23,10 +23,9 @@ type ThreadsAccount = {
 };
 */
 
-export default function SNSAccountsTable({ userId }) {
+export default function SNSAccountsTable() {
   const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
-
   // モーダル関連
   const [modalOpen, setModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState("create");
@@ -34,6 +33,8 @@ export default function SNSAccountsTable({ userId }) {
 
   // 一覧取得処理を関数化
   const loadAccounts = async () => {
+    const userId = localStorage.getItem("userId");
+    if (!userId) return;
     setLoading(true);
     const res = await fetch(`/api/threads-accounts?userId=${userId}`);
     const data = await res.json();
@@ -43,8 +44,8 @@ export default function SNSAccountsTable({ userId }) {
 
   // 初回＆userId更新時にAPIから取得
   useEffect(() => {
-    if (userId) loadAccounts();
-  }, [userId]);
+    loadAccounts();
+  }, []);
 
   const handleToggle = async (acc, field) => {
     const newVal = !acc[field];
