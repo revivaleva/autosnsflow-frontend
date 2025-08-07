@@ -1,7 +1,7 @@
-// /src/pages/api/auth/login.ts
+// src/pages/api/auth/login.ts
 
 import type { NextApiRequest, NextApiResponse } from 'next'
-import { CognitoIdentityProviderClient, InitiateAuthCommand } from '@aws-sdk/client-cognito-identity-provider'
+import { CognitoIdentityProviderClient, InitiateAuthCommand, AuthFlowType } from '@aws-sdk/client-cognito-identity-provider'
 
 const client = new CognitoIdentityProviderClient({ region: process.env.COGNITO_REGION! })
 
@@ -13,7 +13,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     const params = {
-      AuthFlow: 'USER_PASSWORD_AUTH',
+      AuthFlow: AuthFlowType.USER_PASSWORD_AUTH,  // ← enumで指定
       ClientId: process.env.COGNITO_CLIENT_ID!,
       AuthParameters: { USERNAME: email, PASSWORD: password }
     }
@@ -22,7 +22,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const idToken = result.AuthenticationResult?.IdToken
     if (!idToken) throw new Error('No token returned')
 
-    // Cookieでセット（Secure, HttpOnly, SameSite=Strict）
     res.setHeader('Set-Cookie', `idToken=${idToken}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=3600`)
     res.status(200).json({ success: true })
   } catch (err: any) {
