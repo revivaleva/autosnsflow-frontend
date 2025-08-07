@@ -36,7 +36,7 @@ export default async function handler(
           const postId = i.postId?.S ?? ""; // ←ここで投稿IDを取得
           const scheduledPostId = i.SK?.S?.replace("SCHEDULEDPOST#", "") ?? "";
           // Repliesテーブルから取得
-          let replies = [];
+          let replies: any[] = [];
           try {
             const repliesRes = await client.send(
               new QueryCommand({
