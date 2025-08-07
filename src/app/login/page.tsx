@@ -4,12 +4,14 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import SignUpModal from "./SignUpModal";
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const router = useRouter()
+  const [signupOpen, setSignupOpen] = useState(false);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -59,6 +61,13 @@ export default function LoginPage() {
         >
           ログイン
         </button>
+      <button
+        className="mt-6 text-blue-600 underline"
+        onClick={() => setSignupOpen(true)}
+      >
+        アカウントを作成
+      </button>
+      <SignUpModal open={signupOpen} onClose={() => setSignupOpen(false)} />
       </form>
     </div>
   )
