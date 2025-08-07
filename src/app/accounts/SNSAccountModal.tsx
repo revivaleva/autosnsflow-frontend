@@ -30,6 +30,41 @@ type AIPersonaPayload = {
   personaDetail: any; // 詳細な型がわからなければ any で仮対応
   personaSimple: string;
 };
+// --- アカウントの型 ---
+type AccountType = {
+  accountId: string;
+  displayName: string;
+  accessToken?: string;
+  characterImage?: string;
+  personaMode?: "simple" | "detail";
+  personaSimple?: string;
+  personaDetail?: string;
+  autoPostGroupId?: string;
+  createdAt?: number;
+};
+// --- 自動投稿グループの型 ---
+type AutoPostGroupType = {
+  groupKey: string;
+  groupName: string;
+};
+// --- ペルソナの型 ---
+type PersonaType = {
+  name: string;
+  age: string;
+  gender: string;
+  job: string;
+  lifestyle: string;
+  character: string;
+  tone: string;
+  vocab: string;
+  emotion: string;
+  erotic: string;
+  target: string;
+  purpose: string;
+  distance: string;
+  ng: string;
+};
+
 
 function AIGeneratedPersonaModal({
   open,
@@ -80,8 +115,8 @@ function AccountCopyModal({
   onClose,
   onSelect,
 }: AccountCopyModalProps) {
-  const [accounts, setAccounts] = useState([]);
-  const [selected, setSelected] = useState(null);
+  const [accounts, setAccounts] = useState<AccountType[]>([]);
+  const [selected, setSelected] = useState<AccountType | null>(null);
 
   useEffect(() => {
     if (open) {
@@ -100,7 +135,7 @@ function AccountCopyModal({
       <div className="bg-white rounded shadow-lg w-full max-w-xl p-6">
         <h3 className="font-bold text-lg mb-3">複製するアカウントを選択</h3>
         <div className="max-h-60 overflow-y-auto mb-2 border rounded">
-          {accounts.map(acc => (
+          {accounts.map((acc: AccountType) => (
             <div
               key={acc.accountId}
               className={`p-2 cursor-pointer border-b last:border-b-0 hover:bg-blue-50 ${
@@ -176,42 +211,6 @@ export default function SNSAccountModal({
   account,
   reloadAccounts,
 }: SNSAccountModalProps) {
-  // 入力state
-  const [displayName, setDisplayName] = useState("");
-  const [accountId, setAccountId] = useState("");
-  const [accessToken, setAccessToken] = useState("");
-  const [characterImage, setCharacterImage] = useState("");
-  const [aiLoading, setAiLoading] = useState(false);
-  const [groupId, setGroupId] = useState("");
-  const [groups, setGroups] = useState([]);
-  const [persona, setPersona] = useState({
-    name: "",
-    age: "",
-    gender: "",
-    job: "",
-    lifestyle: "",
-    character: "",
-    tone: "",
-    vocab: "",
-    emotion: "",
-    erotic: "",
-    target: "",
-    purpose: "",
-    distance: "",
-    ng: "",
-  });
-  const [personaMode, setPersonaMode] = useState("detail");
-  const [personaSimple, setPersonaSimple] = useState("");
-
-  // エラー表示・保存中管理
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-
-  // モーダル管理
-  const [copyModalOpen, setCopyModalOpen] = useState(false);
-  const [aiPreviewModalOpen, setAiPreviewModalOpen] = useState(false);
-  const [aiPersonaDetail, setAiPersonaDetail] = useState("");
-  const [aiPersonaSimple, setAiPersonaSimple] = useState("");
   // 期待する内部キー
   const emptyPersona = {
     name: "",
@@ -229,6 +228,27 @@ export default function SNSAccountModal({
     distance: "",
     ng: "",
   };
+  // 入力state
+  const [displayName, setDisplayName] = useState("");
+  const [accountId, setAccountId] = useState("");
+  const [accessToken, setAccessToken] = useState("");
+  const [characterImage, setCharacterImage] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [groupId, setGroupId] = useState("");
+  const [groups, setGroups] = useState<AutoPostGroupType[]>([]);
+  const [persona, setPersona] = useState<PersonaType>(emptyPersona);
+  const [personaMode, setPersonaMode] = useState("detail");
+  const [personaSimple, setPersonaSimple] = useState("");
+
+  // エラー表示・保存中管理
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  // モーダル管理
+  const [copyModalOpen, setCopyModalOpen] = useState(false);
+  const [aiPreviewModalOpen, setAiPreviewModalOpen] = useState(false);
+  const [aiPersonaDetail, setAiPersonaDetail] = useState("");
+  const [aiPersonaSimple, setAiPersonaSimple] = useState("");
 
   // グループ一覧の取得
   useEffect(() => {
@@ -527,7 +547,7 @@ export default function SNSAccountModal({
           onChange={e => setGroupId(e.target.value)}
         >
           <option value="">選択してください</option>
-          {groups.map(g => (
+          {groups.map((g: AutoPostGroupType) => (
             <option key={g.groupKey} value={g.groupKey}>
               {g.groupName}
             </option>
