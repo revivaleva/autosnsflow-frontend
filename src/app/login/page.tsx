@@ -1,71 +1,65 @@
 // /src/app/login/page.tsx
 
-"use client";
+'use client'
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 
 export default function LoginPage() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const router = useRouter();
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const router = useRouter()
 
-const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
-  e.preventDefault();
-  setError(""); // 追加
-  try {
-    const res = await fetch("/api/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError('')
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
-    });
-    if (!res.ok) {
-      setError("通信エラー（API未定義 or サーバエラー）");
-      return;
-    }
-    const data = await res.json();
-    if (data.success) {
-      localStorage.setItem("userId", data.userId);
-      router.push("/dashboard");
+    })
+    if (res.ok) {
+      router.push('/') // トップページ等へリダイレクト
     } else {
-      setError("ログイン失敗（メールかパスワード不一致）");
+      const data = await res.json()
+      setError(data.error || 'ログイン失敗')
     }
-  } catch (e: unknown) {
-    setError("ログイン時にエラーが発生しました");
-    //console.error(e);
   }
-};
 
   return (
-    <div className="flex items-center justify-center h-screen">
-      <form className="bg-white shadow-md rounded px-8 pt-6 pb-8 mb-4" onSubmit={handleLogin}>
-        <h2 className="text-xl font-bold mb-4">ログイン</h2>
+    <div className="min-h-screen flex items-center justify-center bg-gray-100">
+      <form className="bg-white p-8 rounded-2xl shadow-lg w-full max-w-sm" onSubmit={handleLogin}>
+        <h2 className="text-2xl font-bold mb-6 text-center">ログイン</h2>
         <div className="mb-4">
+          <label className="block mb-1 text-gray-700">メールアドレス</label>
           <input
-            className="shadow appearance-none border rounded w-full py-2 px-3"
             type="email"
-            placeholder="メールアドレス"
             value={email}
             onChange={e => setEmail(e.target.value)}
+            className="w-full p-2 border rounded-lg"
             required
+            autoFocus
           />
         </div>
         <div className="mb-6">
+          <label className="block mb-1 text-gray-700">パスワード</label>
           <input
-            className="shadow appearance-none border rounded w-full py-2 px-3"
             type="password"
-            placeholder="パスワード"
             value={password}
             onChange={e => setPassword(e.target.value)}
+            className="w-full p-2 border rounded-lg"
             required
           />
         </div>
-        {error && <p className="text-red-500 mb-4">{error}</p>}
-        <button className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded" type="submit">
+        {error && <div className="mb-4 text-red-600">{error}</div>}
+        <button
+          type="submit"
+          className="w-full bg-blue-600 text-white py-2 rounded-xl hover:bg-blue-700 transition"
+        >
           ログイン
         </button>
       </form>
     </div>
-  );
+  )
 }
