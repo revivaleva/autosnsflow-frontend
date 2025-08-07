@@ -18,6 +18,7 @@
     "aws-amplify": "^6.15.4",
     "dayjs": "^1.11.13",
     "js-cookie": "^3.0.5",
+    "jsonwebtoken": "^9.0.2",
     "next": "^15.4.5",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
