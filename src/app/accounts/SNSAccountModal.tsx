@@ -2,8 +2,42 @@
 
 import React, { useState, useEffect } from "react";
 
+// 型定義
 // --- AI生成プレビュー用モーダル ---
-function AIGeneratedPersonaModal({ open, onClose, personaDetail, personaSimple, onApply }) {
+type AIGeneratedPersonaModalProps = {
+  open: boolean;
+  onClose: () => void;
+  personaDetail: string;
+  personaSimple: string;
+  onApply: (payload: AIPersonaPayload) => void;
+};
+// --- 既存アカウント複製用モーダル ---
+type AccountCopyModalProps = {
+  open: boolean;
+  onClose: () => void;
+  onSelect: (account: any) => void; // account型があれば型指定推奨
+};
+// --- SNSアカウントモーダルのプロパティ型 ---
+type SNSAccountModalProps = {
+  open: boolean;
+  onClose: () => void;
+  mode?: "create" | "edit"; // デフォルト値が"create"の場合（必要に応じて修正）
+  account?: any; // account型がわかれば具体的に
+  reloadAccounts: () => void;
+};
+// --- AIペルソナ生成のペイロード型 ---
+type AIPersonaPayload = {
+  personaDetail: any; // 詳細な型がわからなければ any で仮対応
+  personaSimple: string;
+};
+
+function AIGeneratedPersonaModal({
+  open,
+  onClose,
+  personaDetail,
+  personaSimple,
+  onApply,
+}: AIGeneratedPersonaModalProps) {
   if (!open) return null;
   return (
     <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-40 z-50">
@@ -41,8 +75,11 @@ function AIGeneratedPersonaModal({ open, onClose, personaDetail, personaSimple, 
   );
 }
 
-// --- 既存アカウント複製用モーダル ---
-function AccountCopyModal({ open, onClose, onSelect }) {
+function AccountCopyModal({
+  open,
+  onClose,
+  onSelect,
+}: AccountCopyModalProps) {
   const [accounts, setAccounts] = useState([]);
   const [selected, setSelected] = useState(null);
 
@@ -137,8 +174,8 @@ export default function SNSAccountModal({
   onClose,
   mode = "create",
   account,
-  reloadAccounts
-}) {
+  reloadAccounts,
+}: SNSAccountModalProps) {
   // 入力state
   const [displayName, setDisplayName] = useState("");
   const [accountId, setAccountId] = useState("");
@@ -242,11 +279,11 @@ export default function SNSAccountModal({
   }, [account, mode]);
 
   // ペルソナ入力
-  const handlePersonaChange = e =>
+  const handlePersonaChange = (e: React.ChangeEvent<HTMLInputElement>) =>
     setPersona({ ...persona, [e.target.name]: e.target.value });
 
   // 複製データ反映
-  const handleCopyAccountData = acc => {
+  const handleCopyAccountData = (acc: any) => {
     setDisplayName("");
     setAccountId("");
     setAccessToken("");
@@ -293,12 +330,12 @@ export default function SNSAccountModal({
   };
 
   // AIで返ってきたJSONをセットする部分
-  const handleApplyAIPersona = ({ personaDetail, personaSimple }) => {
+  const handleApplyAIPersona = ({ personaDetail, personaSimple }: AIPersonaPayload) => {
     setPersona({ ...emptyPersona, ...personaDetail });
     setPersonaSimple(personaSimple || "");
     setAiPreviewModalOpen(false);
   };
-
+  
   // 編集時の元のIDを保持
   const originalAccountId = account?.accountId;
 
