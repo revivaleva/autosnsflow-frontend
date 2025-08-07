@@ -7,7 +7,8 @@ import { useState } from "react";
 // 必要なら amplify-jsや@aws-sdk/client-cognito-identity-providerをimport
 import { CognitoIdentityProviderClient, SignUpCommand, ConfirmSignUpCommand } from "@aws-sdk/client-cognito-identity-provider";
 
-const client = new CognitoIdentityProviderClient({ region: process.env.NEXT_PUBLIC_COGNITO_REGION });
+const region = process.env.NEXT_PUBLIC_AWS_REGION || process.env.NEXT_PUBLIC_COGNITO_REGION;
+const client = new CognitoIdentityProviderClient({ region });
 
 export default function SignUpModal({ open, onClose }: { open: boolean; onClose: () => void; }) {
   const [step, setStep] = useState<"input" | "verify" | "done">("input");
@@ -17,30 +18,27 @@ export default function SignUpModal({ open, onClose }: { open: boolean; onClose:
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-    const handleSignUp = async () => {
+  const handleSignUp = async () => {
     setLoading(true);
     setError("");
     if (!username || !password) {
-        setError("メールアドレスとパスワードを入力してください");
-        setLoading(false);
-        return;
+      setError("メールアドレスとパスワードを入力してください");
+      setLoading(false);
+      return;
     }
     try {
-        console.log("username:", username, "password:", password);
-        console.log("CLIENT_ID=", process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID);
-        console.log("CLIENT_ID=", process.env.NEXT_PUBLIC_AWS_REGION);
-        await client.send(new SignUpCommand({
+      await client.send(new SignUpCommand({
         ClientId: process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID!,
         Username: username,
         Password: password,
-        }));
-        setStep("verify");
+      }));
+      setStep("verify");
     } catch (e: any) {
-        setError(e.message || JSON.stringify(e) || "登録に失敗しました");
-        console.error(e);
+      setError(e.message || JSON.stringify(e) || "登録に失敗しました");
+      console.error(e);
     }
     setLoading(false);
-    };
+  };
 
   // 認証コード確認
   const handleConfirm = async () => {
