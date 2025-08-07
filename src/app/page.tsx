@@ -3,9 +3,8 @@
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 
-export default function Home() {
-  // CookieからidTokenを取得
-  const cookieStore = cookies()
+export default async function Home() {
+  const cookieStore = await cookies();
   const idToken = cookieStore.get('idToken')
 
   if (idToken?.value) {
