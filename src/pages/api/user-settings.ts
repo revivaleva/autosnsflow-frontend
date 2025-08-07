@@ -6,7 +6,9 @@ import { DynamoDBClient, GetItemCommand, PutItemCommand } from '@aws-sdk/client-
 const client = new DynamoDBClient({ region: 'ap-northeast-1' })
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const userId = req.query.userId as string || req.body?.userId;
+  // bodyがstringで来る場合も考慮
+  const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+  const userId = (req.query.userId as string) || body?.userId;
   if (!userId) return res.status(400).json({ error: 'userId required' });
 
   // GET: 設定取得
@@ -18,13 +20,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }));
       const item = result.Item;
       return res.status(200).json({
-        discordWebhook: item?.discordWebhook?.S || "",
-        errorDiscordWebhook: item?.errorDiscordWebhook?.S || "",
-        openaiApiKey: item?.openaiApiKey?.S || "",
-        selectedModel: item?.selectedModel?.S || "gpt-3.5-turbo",
-        masterPrompt: item?.masterPrompt?.S || "",
-        replyPrompt: item?.replyPrompt?.S || "",
-        autoPost: item?.autoPost?.S || "active",
+        discordWebhook: item?.discordWebhook?.S ?? "",
+        errorDiscordWebhook: item?.errorDiscordWebhook?.S ?? "",
+        openaiApiKey: item?.openaiApiKey?.S ?? "",
+        selectedModel: item?.selectedModel?.S ?? "gpt-3.5-turbo",
+        masterPrompt: item?.masterPrompt?.S ?? "",
+        replyPrompt: item?.replyPrompt?.S ?? "",
+        autoPost: item?.autoPost?.S ?? "active",
       });
     } catch (e: unknown) {
       return res.status(500).json({ error: String(e) });
@@ -34,14 +36,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   // PUT: 設定保存
   if (req.method === 'PUT') {
     const {
-      discordWebhook,
-      errorDiscordWebhook,
-      openaiApiKey,
-      selectedModel,
-      masterPrompt,
-      replyPrompt,
-      autoPost,
-    } = req.body;
+      discordWebhook = "",
+      errorDiscordWebhook = "",
+      openaiApiKey = "",
+      selectedModel = "gpt-3.5-turbo",
+      masterPrompt = "",
+      replyPrompt = "",
+      autoPost = "active",
+    } = body;
 
     try {
       await client.send(new PutItemCommand({
@@ -49,13 +51,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         Item: {
           PK: { S: `USER#${userId}` },
           SK: { S: "SETTINGS" },
-          discordWebhook: { S: discordWebhook || "" },
-          errorDiscordWebhook: { S: errorDiscordWebhook || "" },
-          openaiApiKey: { S: openaiApiKey || "" },
-          selectedModel: { S: selectedModel || "gpt-3.5-turbo" },
-          masterPrompt: { S: masterPrompt || "" },
-          replyPrompt: { S: replyPrompt || "" },
-          autoPost: { S: autoPost || "active" },
+          discordWebhook: { S: discordWebhook },
+          errorDiscordWebhook: { S: errorDiscordWebhook },
+          openaiApiKey: { S: openaiApiKey },
+          selectedModel: { S: selectedModel },
+          masterPrompt: { S: masterPrompt },
+          replyPrompt: { S: replyPrompt },
+          autoPost: { S: autoPost },
         }
       }));
       return res.status(200).json({ success: true });

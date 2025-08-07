@@ -5,7 +5,7 @@ import {
   DynamoDBClient,
   QueryCommand,
   PutItemCommand,
-  DeleteItemCommand
+  GetItemCommand,
 } from "@aws-sdk/client-dynamodb";
 
 const client = new DynamoDBClient({ region: "ap-northeast-1" });
@@ -14,7 +14,11 @@ export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
 ) {
-  const userId = (req.query.userId as string) || req.body?.userId;
+  const userId =
+    (req.query.userId as string) ||
+    (typeof req.body === "string"
+      ? JSON.parse(req.body).userId
+      : req.body?.userId);
   if (!userId)
     return res.status(400).json({ error: "userId required" });
 
@@ -30,7 +34,7 @@ export default async function handler(
       const posts = await Promise.all(
         (Items ?? []).map(async (i) => {
           const postId = i.postId?.S ?? ""; // ←ここで投稿IDを取得
-          const scheduledPostId = i.SK.S.replace("SCHEDULEDPOST#", "");
+          const scheduledPostId = i.SK?.S?.replace("SCHEDULEDPOST#", "") ?? "";
           // Repliesテーブルから取得
           let replies = [];
           try {
@@ -69,6 +73,7 @@ export default async function handler(
             replyCount: Number(i.replyCount?.N ?? 0),
             postId: i.postId?.S ?? "",
             createdAt: Number(i.createdAt?.N ?? 0),
+            isDeleted: !!i.isDeleted?.BOOL,
             replies, // ← 追加
           };
         })
@@ -82,6 +87,8 @@ export default async function handler(
 
   // 登録
   if (req.method === "POST") {
+    const body =
+      typeof req.body === "string" ? JSON.parse(req.body) : req.body;
     const {
       scheduledPostId,
       accountId,
@@ -90,7 +97,7 @@ export default async function handler(
       theme,
       content,
       scheduledAt,
-    } = req.body;
+    } = body;
     if (!scheduledPostId || !accountId)
       return res.status(400).json({ error: "scheduledPostId/accountId required" });
     try {
@@ -112,6 +119,7 @@ export default async function handler(
             replyCount: { N: "0" },
             postId: { S: "" },
             createdAt: { N: String(Math.floor(Date.now() / 1000)) },
+            isDeleted: { BOOL: false },
           },
         })
       );
@@ -124,19 +132,41 @@ export default async function handler(
 
   // 論理削除
   if (req.method === "PATCH") {
-    const { scheduledPostId, isDeleted } = req.body;
+    const body =
+      typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+    const { scheduledPostId, isDeleted } = body;
     if (!scheduledPostId)
       return res.status(400).json({ error: "scheduledPostId required" });
+
+    // 1. 既存Item取得
+    let existing;
+    try {
+      const resItem = await client.send(
+        new GetItemCommand({
+          TableName: "ScheduledPosts",
+          Key: {
+            PK: { S: `USER#${userId}` },
+            SK: { S: `SCHEDULEDPOST#${scheduledPostId}` },
+          },
+        })
+      );
+      existing = resItem.Item;
+      if (!existing)
+        return res.status(404).json({ error: "Not found" });
+    } catch (e) {
+      return res.status(500).json({ error: String(e) });
+    }
+
+    // 2. isDeletedだけ上書きして再Put
+    const updatedItem = {
+      ...existing,
+      isDeleted: { BOOL: !!isDeleted },
+    };
     try {
       await client.send(
         new PutItemCommand({
           TableName: "ScheduledPosts",
-          Item: {
-            PK: { S: `USER#${userId}` },
-            SK: { S: `SCHEDULEDPOST#${scheduledPostId}` },
-            isDeleted: { BOOL: !!isDeleted },
-            // 他フィールドは上書き用に適宜取得・再セットしてください
-          },
+          Item: updatedItem,
         })
       );
       res.status(200).json({ success: true });
@@ -147,4 +177,3 @@ export default async function handler(
   }
   res.status(405).end();
 }
-// /src/pages/api/scheduled-posts.ts
