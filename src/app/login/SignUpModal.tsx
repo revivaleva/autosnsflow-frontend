@@ -17,22 +17,28 @@ export default function SignUpModal({ open, onClose }: { open: boolean; onClose:
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // サインアップ
-  const handleSignUp = async () => {
+    const handleSignUp = async () => {
     setLoading(true);
     setError("");
+    if (!username || !password) {
+        setError("メールアドレスとパスワードを入力してください");
+        setLoading(false);
+        return;
+    }
     try {
-      await client.send(new SignUpCommand({
+        console.log("username:", username, "password:", password);
+        await client.send(new SignUpCommand({
         ClientId: process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID!,
         Username: username,
         Password: password,
-      }));
-      setStep("verify");
+        }));
+        setStep("verify");
     } catch (e: any) {
-      setError(e.message || "登録に失敗しました");
+        setError(e.message || JSON.stringify(e) || "登録に失敗しました");
+        console.error(e);
     }
     setLoading(false);
-  };
+    };
 
   // 認証コード確認
   const handleConfirm = async () => {
@@ -59,18 +65,22 @@ export default function SignUpModal({ open, onClose }: { open: boolean; onClose:
           <>
             <h2 className="text-xl font-bold mb-4">アカウント作成</h2>
             <input
-              className="w-full border rounded p-2 mb-2"
-              placeholder="ユーザー名（メールアドレスでもOK）"
-              value={username}
-              onChange={e => setUsername(e.target.value)}
-              autoFocus
+            className="w-full border rounded p-2 mb-2"
+            placeholder="ユーザー名（メールアドレスでもOK）"
+            value={username}
+            onChange={e => setUsername(e.target.value)}
+            autoFocus
+            autoComplete="username"
             />
             <input
-              className="w-full border rounded p-2 mb-2"
-              type="password"
-              placeholder="パスワード"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
+            className="w-full border rounded p-2 mb-2"
+            type="password"
+            placeholder="パスワード（大文字小文字数字記号を含め8文字以上）"
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+            name="password"
+            autoComplete="new-password"
+            required
             />
             {error && <div className="text-red-500 mb-2">{error}</div>}
             <div className="flex justify-between mt-4">
