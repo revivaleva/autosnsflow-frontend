@@ -27,6 +27,8 @@ export default function SignUpModal({ open, onClose }: { open: boolean; onClose:
     }
     try {
         console.log("username:", username, "password:", password);
+        console.log("CLIENT_ID=", process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID);
+        console.log("CLIENT_ID=", process.env.NEXT_PUBLIC_AWS_REGION);
         await client.send(new SignUpCommand({
         ClientId: process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID!,
         Username: username,
