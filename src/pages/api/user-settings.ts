@@ -2,14 +2,29 @@
 
 import type { NextApiRequest, NextApiResponse } from 'next'
 import { DynamoDBClient, GetItemCommand, PutItemCommand } from '@aws-sdk/client-dynamodb'
+import jwt from 'jsonwebtoken'
 
 const client = new DynamoDBClient({ region: 'ap-northeast-1' })
 
+// Cognito JWTの検証（シンプルなデコードのみ。検証までやる場合はJWKも必要です）
+function getUserIdFromToken(token?: string): string | null {
+  if (!token) return null
+  try {
+    const decoded = jwt.decode(token) as any
+    // Cognitoユーザープールのsub or cognito:usernameが一意のユーザーID
+    return decoded?.sub || decoded?.['cognito:username'] || null
+  } catch {
+    return null
+  }
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  // bodyがstringで来る場合も考慮
-  const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
-  const userId = (req.query.userId as string) || body?.userId;
-  if (!userId) return res.status(400).json({ error: 'userId required' });
+  // CookieからidTokenを取得
+  const cookies = req.headers.cookie?.split(';').map(s => s.trim()) ?? []
+  const idToken = cookies.find(c => c.startsWith('idToken='))?.split('=')[1]
+
+  const userId = getUserIdFromToken(idToken)
+  if (!userId) return res.status(401).json({ error: '認証が必要です（idTokenが無効）' })
 
   // GET: 設定取得
   if (req.method === 'GET') {
@@ -17,8 +32,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const result = await client.send(new GetItemCommand({
         TableName: 'UserSettings',
         Key: { PK: { S: `USER#${userId}` }, SK: { S: "SETTINGS" } }
-      }));
-      const item = result.Item;
+      }))
+      const item = result.Item
       return res.status(200).json({
         discordWebhook: item?.discordWebhook?.S ?? "",
         errorDiscordWebhook: item?.errorDiscordWebhook?.S ?? "",
@@ -27,14 +42,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         masterPrompt: item?.masterPrompt?.S ?? "",
         replyPrompt: item?.replyPrompt?.S ?? "",
         autoPost: item?.autoPost?.S ?? "active",
-      });
+      })
     } catch (e: unknown) {
-      return res.status(500).json({ error: String(e) });
+      return res.status(500).json({ error: String(e) })
     }
   }
 
   // PUT: 設定保存
   if (req.method === 'PUT') {
+    // bodyがstringで来る場合も考慮
+    const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body
+
     const {
       discordWebhook = "",
       errorDiscordWebhook = "",
@@ -43,7 +61,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       masterPrompt = "",
       replyPrompt = "",
       autoPost = "active",
-    } = body;
+    } = body
 
     try {
       await client.send(new PutItemCommand({
@@ -59,12 +77,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           replyPrompt: { S: replyPrompt },
           autoPost: { S: autoPost },
         }
-      }));
-      return res.status(200).json({ success: true });
+      }))
+      return res.status(200).json({ success: true })
     } catch (e: unknown) {
-      return res.status(500).json({ error: String(e) });
+      return res.status(500).json({ error: String(e) })
     }
   }
 
-  res.status(405).end();
+  res.status(405).end()
 }

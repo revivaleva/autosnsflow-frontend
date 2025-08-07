@@ -272,10 +272,11 @@ export default function ScheduledPostsTable() {
     setModalOpen(true);
   };
 
+  // userIdは一切使わず、credentials: "include"のみでAPIアクセス
   useEffect(() => {
-    const userId = localStorage.getItem("userId");
-    if (!userId) return;
-    fetch(`/api/scheduled-posts?userId=${userId}`)
+    fetch(`/api/scheduled-posts`, {
+      credentials: "include"
+    })
       .then(res => res.json())
       .then(data => {
         setPosts(data.posts ?? []);
@@ -289,17 +290,45 @@ export default function ScheduledPostsTable() {
 
   // モーダル保存時
   const handleAddSave = async (newPost: ScheduledPostType) => {
-    const userId = localStorage.getItem("userId");
     let scheduledAt = newPost.scheduledAt;
     if (scheduledAt && String(scheduledAt).length < 11) {
       scheduledAt = Number(scheduledAt);
     }
-    await fetch(`/api/scheduled-posts?userId=${userId}`, {
+    await fetch(`/api/scheduled-posts`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      credentials: "include",
       body: JSON.stringify({ ...newPost, scheduledAt }),
     });
     setPosts((prev) => [...prev, { ...newPost, scheduledAt }]);
+  };
+
+  const handleEdit = (id: string) => {
+    const post = posts.find((p) => p.scheduledPostId === id);
+    setEditTarget(post || null);
+    setEditModalOpen(true);
+  };
+  const handleEditSave = (edited: ScheduledPostType) => {
+    setPosts((prev) =>
+      prev.map((p) =>
+        p.scheduledPostId === edited.scheduledPostId ? { ...p, ...edited } : p
+      )
+    );
+    setEditModalOpen(false);
+  };
+  const handleDelete = async (id: string) => {
+    if (!window.confirm("削除しますか？")) return;
+    await fetch(`/api/scheduled-posts`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ scheduledPostId: id, isDeleted: true }),
+    });
+    setPosts(posts =>
+      posts.map(p =>
+        p.scheduledPostId === id ? { ...p, isDeleted: true } : p
+      )
+    );
   };
 
   // ソート＋フィルタ
@@ -321,33 +350,6 @@ export default function ScheduledPostsTable() {
     });
 
   const handleManualRun = (id: string) => alert(`即時投稿: ${id}`);
-  const handleEdit = (id: string) => {
-    const post = posts.find((p) => p.scheduledPostId === id);
-    setEditTarget(post || null);
-    setEditModalOpen(true);
-  };
-  const handleEditSave = (edited: ScheduledPostType) => {
-    setPosts((prev) =>
-      prev.map((p) =>
-        p.scheduledPostId === edited.scheduledPostId ? { ...p, ...edited } : p
-      )
-    );
-    setEditModalOpen(false);
-  };
-  const handleDelete = async (id: string) => {
-    if (!window.confirm("削除しますか？")) return;
-    const userId = localStorage.getItem("userId");
-    await fetch(`/api/scheduled-posts?userId=${userId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ scheduledPostId: id, isDeleted: true }),
-    });
-    setPosts(posts =>
-      posts.map(p =>
-        p.scheduledPostId === id ? { ...p, isDeleted: true } : p
-      )
-    );
-  };
 
   if (loading)
     return <div className="p-6 text-center">読み込み中...</div>;

@@ -1,4 +1,4 @@
-// /src/app/accounts/SNSAccountsTable.tsx
+// src/app/accounts/SNSAccountsTable.tsx
 
 "use client";
 
@@ -6,7 +6,7 @@ import React, { useEffect, useState } from "react";
 import { ToggleSwitch } from "@/components/ToggleSwitch";
 import SNSAccountModal from "./SNSAccountModal";
 
-// 型定義（共通型は types ディレクトリ等に分離してもOK）
+// 型定義
 export type ThreadsAccount = {
   accountId: string;
   displayName: string;
@@ -30,12 +30,10 @@ export default function SNSAccountsTable() {
   const [modalMode, setModalMode] = useState<"create" | "edit">("create");
   const [selectedAccount, setSelectedAccount] = useState<ThreadsAccount | null>(null);
 
-  // 一覧取得処理を関数化
+  // 一覧取得処理
   const loadAccounts = async () => {
-    const userId = localStorage.getItem("userId");
-    if (!userId) return;
     setLoading(true);
-    const res = await fetch(`/api/threads-accounts?userId=${userId}`);
+    const res = await fetch(`/api/threads-accounts`, { credentials: "include" });
     const data = await res.json();
     setAccounts(data.accounts ?? []);
     setLoading(false);
@@ -48,8 +46,6 @@ export default function SNSAccountsTable() {
 
   // 楽観的UIトグル
   const handleToggle = async (acc: ThreadsAccount, field: keyof ThreadsAccount) => {
-    const userId = localStorage.getItem("userId");
-    if (!userId) return;
     const newVal = !acc[field];
     setAccounts(prev =>
       prev.map(a =>
@@ -59,8 +55,8 @@ export default function SNSAccountsTable() {
     await fetch("/api/threads-accounts", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
+      credentials: "include",
       body: JSON.stringify({
-        userId,
         accountId: acc.accountId,
         updateFields: { [field]: newVal }
       }),
@@ -85,14 +81,12 @@ export default function SNSAccountsTable() {
 
   // 削除
   const handleDelete = async (acc: ThreadsAccount) => {
-    const userId = localStorage.getItem("userId");
-    if (!userId) return;
     if (!window.confirm("本当に削除しますか？")) return;
     const res = await fetch(`/api/threads-accounts`, {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
+      credentials: "include",
       body: JSON.stringify({
-        userId,
         accountId: acc.accountId,
       }),
     });

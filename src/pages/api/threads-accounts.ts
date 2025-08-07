@@ -1,14 +1,30 @@
-// /src/pages/api/threads-accounts.ts
+// src/pages/api/threads-accounts.ts
+
 import type { NextApiRequest, NextApiResponse } from 'next'
 import { DynamoDBClient, QueryCommand, PutItemCommand, DeleteItemCommand, UpdateItemCommand } from '@aws-sdk/client-dynamodb'
+import jwt from 'jsonwebtoken'
 
 const client = new DynamoDBClient({ region: 'ap-northeast-1' })
 
+// JWTからuserId取得（subまたはcognito:username）
+function getUserIdFromToken(token?: string): string | null {
+  if (!token) return null;
+  try {
+    const decoded = jwt.decode(token) as any;
+    return decoded?.sub || decoded?.["cognito:username"] || null;
+  } catch {
+    return null;
+  }
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  const cookies = req.headers.cookie?.split(";").map((s) => s.trim()) ?? [];
+  const idToken = cookies.find((c) => c.startsWith("idToken="))?.split("=")[1];
+  const userId = getUserIdFromToken(idToken);
+  if (!userId) return res.status(401).json({ error: '認証が必要です（idTokenが無効）' });
+
   // bodyがstringで来る場合もparse
   const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
-  const userId = (req.query.userId as string) || body?.userId;
-  if (!userId) return res.status(400).json({ error: 'userId required' });
 
   if (req.method === 'GET') {
     // 一覧取得
@@ -38,7 +54,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
     return;
   }
-  
+
   // 追加・編集
   if (req.method === 'POST' || req.method === 'PUT') {
     const {
@@ -62,7 +78,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       personaMode: { S: personaMode ?? "detail" },
       autoPostGroupId: { S: autoPostGroupId ?? "" },
     };
-    // 追加のオプションフラグ系
     if (typeof autoPost === "boolean") item.autoPost = { BOOL: autoPost };
     if (typeof autoGenerate === "boolean") item.autoGenerate = { BOOL: autoGenerate };
     if (typeof autoReply === "boolean") item.autoReply = { BOOL: autoReply };
@@ -78,18 +93,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(500).json({ success: false, error: String(e) });
     }
   }
-  
+
   // 削除
   if (req.method === "DELETE") {
-    const { userId: delUserId, accountId } = body;
-    if (!delUserId || !accountId) {
-      return res.status(400).json({ success: false, error: "userId and accountId required" });
+    const { accountId } = body;
+    if (!accountId) {
+      return res.status(400).json({ success: false, error: "accountId required" });
     }
     try {
       await client.send(new DeleteItemCommand({
         TableName: "ThreadsAccounts",
         Key: {
-          PK: { S: `USER#${delUserId}` },
+          PK: { S: `USER#${userId}` },
           SK: { S: `ACCOUNT#${accountId}` }
         }
       }));
@@ -101,9 +116,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   // PATCH: トグル用部分更新
   if (req.method === "PATCH") {
-    const { userId: patchUserId, accountId, updateFields } = body;
-    if (!patchUserId || !accountId || !updateFields || Object.keys(updateFields).length === 0) {
-      return res.status(400).json({ success: false, error: "userId, accountId, updateFields are required" });
+    const { accountId, updateFields } = body;
+    if (!accountId || !updateFields || Object.keys(updateFields).length === 0) {
+      return res.status(400).json({ success: false, error: "accountId, updateFields are required" });
     }
     const updateExp = Object.keys(updateFields)
       .map((k, i) => `#f${i} = :v${i}`).join(", ");
@@ -117,7 +132,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     try {
       await client.send(new UpdateItemCommand({
         TableName: "ThreadsAccounts",
-        Key: { PK: { S: `USER#${patchUserId}` }, SK: { S: `ACCOUNT#${accountId}` } },
+        Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } },
         UpdateExpression: "SET " + updateExp,
         ExpressionAttributeNames: exprAttrNames,
         ExpressionAttributeValues: exprAttrVals

@@ -1,4 +1,4 @@
-// src/ui-components/SettingsForm.tsx
+// src/app/settings/SettingsForm.tsx
 
 "use client";
 
@@ -48,35 +48,35 @@ export default function SettingsForm() {
 
   // 設定情報の取得
   useEffect(() => {
-    const userId = localStorage.getItem("userId");
-    if (!userId) return;
-    fetch(`/api/user-settings?userId=${userId}`)
-      .then(res => res.json())
-      .then((data: Partial<SettingsType>) => {
-        if (data) {
-          setDiscordWebhook(data.discordWebhook || "");
-          setErrorDiscordWebhook(data.errorDiscordWebhook || "");
-          setOpenAiApiKey(data.openaiApiKey || "");
-          setSelectedModel(
-            (data.selectedModel as ModelType) || modelOptions[0]
-          );
-          setMasterPrompt(data.masterPrompt || "");
-          setReplyPrompt(data.replyPrompt || "");
-          setAutoPost((data.autoPost as AutoPostStatus) || "active");
-        }
-      });
+    fetch('/api/user-settings', {
+      credentials: 'include', // Cookie(idToken)を必ず送る
+    })
+    .then(res => res.json())
+    .then((data: Partial<SettingsType>) => {
+      if (data) {
+        setDiscordWebhook(data.discordWebhook || "");
+        setErrorDiscordWebhook(data.errorDiscordWebhook || "");
+        setOpenAiApiKey(data.openaiApiKey || "");
+        setSelectedModel(
+          (data.selectedModel as ModelType) || modelOptions[0]
+        );
+        setMasterPrompt(data.masterPrompt || "");
+        setReplyPrompt(data.replyPrompt || "");
+        setAutoPost((data.autoPost as AutoPostStatus) || "active");
+      }
+    });
   }, []);
 
   // 保存処理
   const handleSave = async () => {
     setSaving(true);
     setSaveMessage("");
-    const userId = localStorage.getItem("userId");
+    // userIdは送信しない。サーバー側でidTokenから判別する
     const res = await fetch("/api/user-settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
+      credentials: "include", // Cookie(idToken)を送信
       body: JSON.stringify({
-        userId,
         discordWebhook,
         errorDiscordWebhook,
         openaiApiKey,

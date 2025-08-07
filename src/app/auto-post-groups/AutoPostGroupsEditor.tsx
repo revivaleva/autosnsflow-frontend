@@ -33,10 +33,6 @@ type GroupModalProps = {
 // =======================
 const API = "/api/auto-post-groups";
 
-// ユーザーID取得ヘルパー
-const getUserId = (): string =>
-  typeof window !== "undefined" ? localStorage.getItem("userId") || "" : "";
-
 // "07:00-09:30" → {start: "07:00", end: "09:30"}
 function parseTimeRange(time: string = "", theme: string = ""): ScheduleType {
   const [start = "", end = ""] = (time || "").split("-");
@@ -191,20 +187,17 @@ export default function AutoPostGroupsEditor() {
 
   // 一覧取得
   const loadGroups = async () => {
-    const userId = getUserId();
-    if (!userId) return;
-    const res = await fetch(`${API}?userId=${userId}`);
+    const res = await fetch(API, { credentials: "include" });
     const data = await res.json();
     setGroups(data.groups ?? []);
   };
 
   // グループ一覧・使用中グループ取得
   useEffect(() => {
-    const userId = localStorage.getItem("userId") || "";
-    fetch(`/api/auto-post-groups?userId=${userId}`)
+    fetch(API, { credentials: "include" })
       .then(res => res.json())
       .then(data => setGroups(data.groups ?? []));
-    fetch(`/api/threads-accounts?userId=${userId}`)
+    fetch("/api/threads-accounts", { credentials: "include" })
       .then(res => res.json())
       .then(data => {
         const keys: string[] = (data.accounts ?? [])
@@ -226,11 +219,11 @@ export default function AutoPostGroupsEditor() {
 
   const handleDelete = async (groupKey: string) => {
     if (!window.confirm("削除しますか？")) return;
-    const userId = getUserId();
     const res = await fetch(API, {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId, groupKey }),
+      credentials: "include",
+      body: JSON.stringify({ groupKey }),
     });
     const data = await res.json();
     if (data.success) {
@@ -241,10 +234,8 @@ export default function AutoPostGroupsEditor() {
   };
 
   const handleSave = async (group: AutoPostGroupType) => {
-    const userId = getUserId();
     const method = group.groupKey ? "PUT" : "POST";
     const body = {
-      userId,
       groupKey: group.groupKey || `GROUP#${Date.now()}`,
       groupName: group.groupName,
       time1: group.time1,
@@ -257,6 +248,7 @@ export default function AutoPostGroupsEditor() {
     const res = await fetch(API, {
       method,
       headers: { "Content-Type": "application/json" },
+      credentials: "include",
       body: JSON.stringify(body),
     });
     const data = await res.json();

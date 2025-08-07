@@ -100,10 +100,8 @@ export default function RepliesList() {
 
   // APIからデータ取得
   useEffect(() => {
-    const userId = localStorage.getItem("userId");
-    if (!userId) return;
     setLoading(true);
-    fetch(`/api/replies?userId=${userId}`)
+    fetch(`/api/replies`, { credentials: "include" }) // userId送信しない
       .then(res => res.json())
       .then(data => {
         setReplies(

@@ -1,9 +1,10 @@
+// src/app/accounts/SNSAccountModal.tsx
+
 "use client";
 
 import React, { useState, useEffect } from "react";
 
-// 型定義
-// --- AI生成プレビュー用モーダル ---
+// 型定義（省略せずそのまま記載）
 type AIGeneratedPersonaModalProps = {
   open: boolean;
   onClose: () => void;
@@ -11,26 +12,22 @@ type AIGeneratedPersonaModalProps = {
   personaSimple: string;
   onApply: (payload: AIPersonaPayload) => void;
 };
-// --- 既存アカウント複製用モーダル ---
 type AccountCopyModalProps = {
   open: boolean;
   onClose: () => void;
-  onSelect: (account: any) => void; // account型があれば型指定推奨
+  onSelect: (account: any) => void;
 };
-// --- SNSアカウントモーダルのプロパティ型 ---
 type SNSAccountModalProps = {
   open: boolean;
   onClose: () => void;
-  mode?: "create" | "edit"; // デフォルト値が"create"の場合（必要に応じて修正）
-  account?: any; // account型がわかれば具体的に
+  mode?: "create" | "edit";
+  account?: any;
   reloadAccounts: () => void;
 };
-// --- AIペルソナ生成のペイロード型 ---
 type AIPersonaPayload = {
-  personaDetail: any; // 詳細な型がわからなければ any で仮対応
+  personaDetail: any;
   personaSimple: string;
 };
-// --- アカウントの型 ---
 type AccountType = {
   accountId: string;
   displayName: string;
@@ -42,12 +39,10 @@ type AccountType = {
   autoPostGroupId?: string;
   createdAt?: number;
 };
-// --- 自動投稿グループの型 ---
 type AutoPostGroupType = {
   groupKey: string;
   groupName: string;
 };
-// --- ペルソナの型 ---
 type PersonaType = {
   name: string;
   age: string;
@@ -64,7 +59,6 @@ type PersonaType = {
   distance: string;
   ng: string;
 };
-
 
 function AIGeneratedPersonaModal({
   open,
@@ -120,8 +114,7 @@ function AccountCopyModal({
 
   useEffect(() => {
     if (open) {
-      const userId = localStorage.getItem("userId");
-      fetch(`/api/threads-accounts?userId=${userId}`)
+      fetch(`/api/threads-accounts`, { credentials: "include" })
         .then(res => res.json())
         .then(data => setAccounts(data.accounts ?? []));
       setSelected(null);
@@ -138,9 +131,7 @@ function AccountCopyModal({
           {accounts.map((acc: AccountType) => (
             <div
               key={acc.accountId}
-              className={`p-2 cursor-pointer border-b last:border-b-0 hover:bg-blue-50 ${
-                selected?.accountId === acc.accountId ? "bg-blue-100" : ""
-              }`}
+              className={`p-2 cursor-pointer border-b last:border-b-0 hover:bg-blue-50 ${selected?.accountId === acc.accountId ? "bg-blue-100" : ""}`}
               onClick={() => setSelected(acc)}
             >
               <div className="font-semibold">{acc.displayName}</div>
@@ -162,19 +153,15 @@ function AccountCopyModal({
                   let detail = selected.personaDetail;
                   if (!detail) return "（簡易ペルソナ入力のみ）";
                   try {
-                    // 文字列ならJSON.parseして整形
                     if (typeof detail === "string") {
                       if (detail.trim() === "" || detail.trim() === "{}") return "（簡易ペルソナ入力のみ）";
                       detail = JSON.parse(detail);
                     }
-                    // オブジェクトかつ空オブジェクトも検出
                     if (typeof detail === "object" && Object.keys(detail).length === 0) {
                       return "（簡易ペルソナ入力のみ）";
                     }
-                    // 日本語キーや英語キーが混在していてもよい
                     return JSON.stringify(detail, null, 2);
                   } catch {
-                    // パースできない場合はそのまま表示
                     return detail || "（簡易ペルソナ入力のみ）";
                   }
                 })()
@@ -211,7 +198,6 @@ export default function SNSAccountModal({
   account,
   reloadAccounts,
 }: SNSAccountModalProps) {
-  // 期待する内部キー
   const emptyPersona = {
     name: "",
     age: "",
@@ -228,7 +214,7 @@ export default function SNSAccountModal({
     distance: "",
     ng: "",
   };
-  // 入力state
+
   const [displayName, setDisplayName] = useState("");
   const [accountId, setAccountId] = useState("");
   const [accessToken, setAccessToken] = useState("");
@@ -239,12 +225,8 @@ export default function SNSAccountModal({
   const [persona, setPersona] = useState<PersonaType>(emptyPersona);
   const [personaMode, setPersonaMode] = useState("detail");
   const [personaSimple, setPersonaSimple] = useState("");
-
-  // エラー表示・保存中管理
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-
-  // モーダル管理
   const [copyModalOpen, setCopyModalOpen] = useState(false);
   const [aiPreviewModalOpen, setAiPreviewModalOpen] = useState(false);
   const [aiPersonaDetail, setAiPersonaDetail] = useState("");
@@ -253,13 +235,11 @@ export default function SNSAccountModal({
   // グループ一覧の取得
   useEffect(() => {
     if (!open) return;
-    const userId = localStorage.getItem("userId");
-    fetch(`/api/auto-post-groups?userId=${userId}`)
+    fetch(`/api/auto-post-groups`, { credentials: "include" })
       .then(res => res.json())
       .then(data => setGroups(data.groups ?? []));
   }, [open]);
 
-  // 編集時は初期値セット
   useEffect(() => {
     if (mode === "edit" && account) {
       setDisplayName(account.displayName || "");
@@ -277,32 +257,15 @@ export default function SNSAccountModal({
       setGroupId("");
       setPersonaMode("detail");
       setPersonaSimple("");
-      setPersona({
-        name: "",
-        age: "",
-        gender: "",
-        job: "",
-        lifestyle: "",
-        character: "",
-        tone: "",
-        vocab: "",
-        emotion: "",
-        erotic: "",
-        target: "",
-        purpose: "",
-        distance: "",
-        ng: "",
-      });
+      setPersona({ ...emptyPersona });
       setCharacterImage("");
     }
     setError("");
   }, [account, mode]);
 
-  // ペルソナ入力
   const handlePersonaChange = (e: React.ChangeEvent<HTMLInputElement>) =>
     setPersona({ ...persona, [e.target.name]: e.target.value });
 
-  // 複製データ反映
   const handleCopyAccountData = (acc: any) => {
     setDisplayName("");
     setAccountId("");
@@ -315,21 +278,19 @@ export default function SNSAccountModal({
     setCopyModalOpen(false);
   };
 
-  // AIペルソナ生成＆プレビュー
   const handleAIGenerate = async () => {
     setAiLoading(true);
     setError("");
     setAiPersonaDetail("");
     setAiPersonaSimple("");
     try {
-      const userId = localStorage.getItem("userId");
       const res = await fetch("/api/ai-gateway", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({
-          userId,
           purpose: "persona-generate",
-          input: { personaSeed: characterImage || "" }, // キャラクターイメージだけを送信
+          input: { personaSeed: characterImage || "" },
         }),
       });
       const data = await res.json();
@@ -349,17 +310,14 @@ export default function SNSAccountModal({
     }
   };
 
-  // AIで返ってきたJSONをセットする部分
   const handleApplyAIPersona = ({ personaDetail, personaSimple }: AIPersonaPayload) => {
     setPersona({ ...emptyPersona, ...personaDetail });
     setPersonaSimple(personaSimple || "");
     setAiPreviewModalOpen(false);
   };
-  
-  // 編集時の元のIDを保持
+
   const originalAccountId = account?.accountId;
 
-  // 登録・保存（DB/API連携）
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setSaving(true);
@@ -370,20 +328,21 @@ export default function SNSAccountModal({
       return;
     }
     try {
-      const userId = localStorage.getItem("userId");
+      // 編集時にIDが変わった場合は旧データを削除
       if (mode === "edit" && originalAccountId && originalAccountId !== accountId) {
         await fetch("/api/threads-accounts", {
           method: "DELETE",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ userId, accountId: originalAccountId }),
+          credentials: "include",
+          body: JSON.stringify({ accountId: originalAccountId }),
         });
       }
       const method = mode === "create" ? "POST" : "PUT";
       const res = await fetch("/api/threads-accounts", {
         method,
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({
-          userId,
           accountId,
           displayName,
           accessToken: accessToken,
@@ -415,14 +374,11 @@ export default function SNSAccountModal({
 
   return (
     <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-40 z-50">
-      {/* 既存アカウント複製モーダル */}
       <AccountCopyModal
         open={copyModalOpen}
         onClose={() => setCopyModalOpen(false)}
         onSelect={handleCopyAccountData}
       />
-
-      {/* AI生成プレビュー・確認モーダル */}
       <AIGeneratedPersonaModal
         open={aiPreviewModalOpen}
         onClose={() => setAiPreviewModalOpen(false)}
@@ -430,7 +386,6 @@ export default function SNSAccountModal({
         personaSimple={aiPersonaSimple}
         onApply={handleApplyAIPersona}
       />
-
       <form
         className="bg-white p-8 rounded shadow-lg min-w-[600px] max-h-[90vh] overflow-y-auto relative"
         onSubmit={handleSubmit}
@@ -438,10 +393,8 @@ export default function SNSAccountModal({
         <button type="button" className="absolute top-2 right-2 text-gray-400" onClick={onClose}>×</button>
         <h2 className="text-xl font-bold mb-4">{mode === "edit" ? "アカウント編集" : "新規アカウント追加"}</h2>
 
-        {/* エラー表示 */}
         {error && <div className="mb-3 text-red-500">{error}</div>}
 
-        {/* アカウント名 */}
         <label className="block">アカウント名</label>
         <input
           className="mb-2 border rounded px-2 py-1 w-full"
@@ -450,7 +403,6 @@ export default function SNSAccountModal({
           placeholder="例）営業用公式アカウント"
         />
 
-        {/* アカウントID */}
         <label className="block">アカウントID</label>
         <input
           className="mb-2 border rounded px-2 py-1 w-full"
@@ -459,7 +411,6 @@ export default function SNSAccountModal({
           placeholder="@account_id"
         />
 
-        {/* アクセストークン */}
         <label className="block">アクセストークン</label>
         <input
           className="mb-2 border rounded px-2 py-1 w-full"
@@ -467,7 +418,6 @@ export default function SNSAccountModal({
           onChange={e => setAccessToken(e.target.value)}
         />
 
-        {/* キャラクターイメージ input+AI生成ボタン */}
         <label className="block">キャラクターイメージ</label>
         <div className="flex gap-2 mb-2">
           <input
@@ -487,7 +437,6 @@ export default function SNSAccountModal({
           </button>
         </div>
 
-        {/* 既存アカウント複製 */}
         <div className="my-3 flex gap-2">
           <button
             type="button"
@@ -498,7 +447,6 @@ export default function SNSAccountModal({
           </button>
         </div>
 
-        {/* 簡易ペルソナ切り替え */}
         <div className="mb-2 flex items-center gap-4">
           <span className="font-semibold">ペルソナ入力</span>
           <label className="flex items-center gap-1 cursor-pointer">
@@ -512,7 +460,6 @@ export default function SNSAccountModal({
           </label>
         </div>
 
-        {/* ペルソナ詳細 or 簡易ペルソナ */}
         {personaMode === "simple" ? (
           <textarea
             className="border rounded p-2 w-full mb-3 min-h-[80px] resize-y"
@@ -539,7 +486,6 @@ export default function SNSAccountModal({
           </div>
         )}
 
-        {/* 自動投稿グループ */}
         <label className="block">自動投稿グループ</label>
         <select
           className="mb-4 border px-2 py-1 rounded w-full"

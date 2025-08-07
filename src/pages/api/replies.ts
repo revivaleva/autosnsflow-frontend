@@ -1,18 +1,35 @@
-// /src/pages/api/replies.ts
+// src/pages/api/replies.ts
+
 import type { NextApiRequest, NextApiResponse } from "next";
 import {
   DynamoDBClient,
   QueryCommand
 } from "@aws-sdk/client-dynamodb";
+import jwt from "jsonwebtoken";
 
 const client = new DynamoDBClient({ region: "ap-northeast-1" });
+
+// JWTからuserId取得（subまたはcognito:username）
+function getUserIdFromToken(token?: string): string | null {
+  if (!token) return null;
+  try {
+    const decoded = jwt.decode(token) as any;
+    return decoded?.sub || decoded?.["cognito:username"] || null;
+  } catch {
+    return null;
+  }
+}
 
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
 ) {
-  const userId = (req.query.userId as string) || req.body?.userId;
-  if (!userId) return res.status(400).json({ error: "userId required" });
+  // CookieからidTokenを取得
+  const cookies = req.headers.cookie?.split(";").map((s) => s.trim()) ?? [];
+  const idToken = cookies.find((c) => c.startsWith("idToken="))?.split("=")[1];
+  const userId = getUserIdFromToken(idToken);
+
+  if (!userId) return res.status(401).json({ error: "認証が必要です（idTokenが無効）" });
 
   // 全リプライ取得（PK: USER#userId）
   const params = {
@@ -30,7 +47,7 @@ export default async function handler(
         scheduledAt: Number(i.scheduledAt?.N ?? 0),
         content: i.content?.S ?? "",
         replyContent: i.replyContent?.S ?? "",
-        responseContent: i.responseContent?.S ?? "", // ★追加！
+        responseContent: i.responseContent?.S ?? "",
         replyAt: i.replyAt?.N ? Number(i.replyAt.N) : null,
         status: i.status?.S ?? "",
         createdAt: i.createdAt?.N ? Number(i.createdAt.N) : null,

@@ -1,5 +1,7 @@
 "use client";
 
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import AppLayout from "@/components/AppLayout";
 
 // 仮データ
@@ -37,27 +39,22 @@ const stats = [
   },
 ];
 
+// src/app/dashboard/page.tsx
 export default function DashboardPage() {
+  // CookieからidTokenを取得
+  const cookieStore = cookies();
+  const idToken = cookieStore.get("idToken");
+
+  // Cookieがなければ/loginへリダイレクト
+  if (!idToken?.value) {
+    redirect("/login");
+  }
+
+  // Cookieがある（＝認証済み）場合のみ以下を表示
   return (
-    <AppLayout>
-      <div>
-        <h1 className="text-2xl font-bold mb-6">ダッシュボード</h1>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
-          {stats.map((s) => (
-            <div
-              key={s.label}
-              className={`flex items-center rounded-2xl p-5 shadow ${s.color} text-white`}
-            >
-              <span className="text-3xl mr-4">{s.icon}</span>
-              <div>
-                <div className="text-xl font-semibold">{s.value}</div>
-                <div className="text-sm opacity-80">{s.label}</div>
-              </div>
-            </div>
-          ))}
-        </div>
-        {/* 必要に応じてここにグラフやサマリテーブルも追加 */}
-      </div>
-    </AppLayout>
+    <div>
+      <h1 className="text-xl font-bold mb-4">ダッシュボード</h1>
+      {/* 以下コンテンツ */}
+    </div>
   );
 }

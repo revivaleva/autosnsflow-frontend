@@ -1,4 +1,4 @@
-// /src/pages/api/auto-post-groups.ts
+// src/pages/api/auto-post-groups.ts
 
 import type { NextApiRequest, NextApiResponse } from 'next'
 import {
@@ -7,20 +7,31 @@ import {
   PutItemCommand,
   DeleteItemCommand,
 } from '@aws-sdk/client-dynamodb'
+import jwt from 'jsonwebtoken'
 
 const client = new DynamoDBClient({ region: 'ap-northeast-1' })
+
+// JWTからuserId取得
+function getUserIdFromToken(token?: string): string | null {
+  if (!token) return null;
+  try {
+    const decoded = jwt.decode(token) as any;
+    return decoded?.sub || decoded?.["cognito:username"] || null;
+  } catch {
+    return null;
+  }
+}
 
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
 ) {
-  // PKはユーザーID（"USER#xxx"）
-  const userId =
-    (req.query.userId as string) ||
-    (typeof req.body === "string"
-      ? JSON.parse(req.body).userId
-      : req.body?.userId);
-  if (!userId) return res.status(400).json({ error: 'userId required' });
+  // CookieからidToken取得
+  const cookies = req.headers.cookie?.split(";").map((s) => s.trim()) ?? [];
+  const idToken = cookies.find((c) => c.startsWith("idToken="))?.split("=")[1];
+  const userId = getUserIdFromToken(idToken);
+
+  if (!userId) return res.status(401).json({ error: '認証が必要です（idTokenが無効）' });
 
   // 一覧取得
   if (req.method === 'GET') {
@@ -102,7 +113,6 @@ export default async function handler(
 
   // 削除
   if (req.method === 'DELETE') {
-    // bodyはstringで来る場合もあるため考慮
     const body =
       typeof req.body === "string" ? JSON.parse(req.body) : req.body;
     const { groupKey } = body;
