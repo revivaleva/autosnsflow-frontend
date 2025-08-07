@@ -20,21 +20,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     try {
       const { Items } = await client.send(new QueryCommand(params))
       res.status(200).json({ accounts: (Items ?? []).map(i => ({
-        accountId: i.SK.S.replace('ACCOUNT#', ''),
-        displayName: i.displayName.S,
-        accessToken: i.accessToken?.S || "",
-        personaMode: i.personaMode?.S || "",
-        autoPostGroupId: i.autoPostGroupId?.S || "",
-        personaSimple: i.personaSimple?.S || "",
-        personaDetail: i.personaDetail?.S || "",
-        createdAt: Number(i.createdAt.N),
-        autoPost: i.autoPost ? i.autoPost.BOOL : false,
-        autoGenerate: i.autoGenerate ? i.autoGenerate.BOOL : false,
-        autoReply: i.autoReply ? i.autoReply.BOOL : false,
-        statusMessage: i.statusMessage?.S || "",
+        accountId: i.SK?.S?.replace('ACCOUNT#', '') ?? '',
+        displayName: i.displayName?.S ?? "",
+        accessToken: i.accessToken?.S ?? "",
+        personaMode: i.personaMode?.S ?? "",
+        autoPostGroupId: i.autoPostGroupId?.S ?? "",
+        personaSimple: i.personaSimple?.S ?? "",
+        personaDetail: i.personaDetail?.S ?? "",
+        createdAt: i.createdAt?.N ? Number(i.createdAt.N) : 0,
+        autoPost: i.autoPost?.BOOL ?? false,
+        autoGenerate: i.autoGenerate?.BOOL ?? false,
+        autoReply: i.autoReply?.BOOL ?? false,
+        statusMessage: i.statusMessage?.S ?? "",
       })) })
     } catch (e: unknown) {
-      res.status(500).json({ error: String(e) })
+      return res.status(500).json({ error: String(e) })
     }
     return;
   }
@@ -54,13 +54,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const item: any = {
       PK: { S: `USER#${userId}` },
       SK: { S: `ACCOUNT#${accountId}` },
-      displayName: { S: displayName },
+      displayName: { S: displayName ?? "" },
       accessToken: { S: accessToken ?? "" },
       createdAt: { N: String(createdAt ?? Math.floor(Date.now() / 1000)) },
-      personaDetail: { S: personaDetail || "{}" },
-      personaSimple: { S: personaSimple || "" },
-      personaMode: { S: personaMode || "detail" },
-      autoPostGroupId: { S: autoPostGroupId || "" },
+      personaDetail: { S: personaDetail ?? "{}" },
+      personaSimple: { S: personaSimple ?? "" },
+      personaMode: { S: personaMode ?? "detail" },
+      autoPostGroupId: { S: autoPostGroupId ?? "" },
     };
     // 追加のオプションフラグ系
     if (typeof autoPost === "boolean") item.autoPost = { BOOL: autoPost };
@@ -102,7 +102,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   // PATCH: トグル用部分更新
   if (req.method === "PATCH") {
     const { userId: patchUserId, accountId, updateFields } = body;
-    if (!patchUserId || !accountId || !updateFields) {
+    if (!patchUserId || !accountId || !updateFields || Object.keys(updateFields).length === 0) {
       return res.status(400).json({ success: false, error: "userId, accountId, updateFields are required" });
     }
     const updateExp = Object.keys(updateFields)
