@@ -1,4 +1,3 @@
-"use client";  // これを一行目に追加
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
