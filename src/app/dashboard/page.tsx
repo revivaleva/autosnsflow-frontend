@@ -39,9 +39,8 @@ const stats = [
 ];
 
 // src/app/dashboard/page.tsx
-export default function DashboardPage() {
-  // CookieからidTokenを取得
-  const cookieStore = cookies();
+export default async function DashboardPage() {
+  const cookieStore = await cookies();
   const idToken = cookieStore.get("idToken");
 
   // Cookieがなければ/loginへリダイレクト

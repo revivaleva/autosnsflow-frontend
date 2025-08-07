@@ -4,8 +4,8 @@ import { redirect } from "next/navigation";
 import RepliesList from "./RepliesList";
 import AppLayout from "@/components/AppLayout";
 
-export default function RepliesPage() {
-  const cookieStore = cookies();
+export default async function RepliesPage() {
+  const cookieStore = await cookies();
   const idToken = cookieStore.get("idToken");
   if (!idToken?.value) {
     redirect("/login");

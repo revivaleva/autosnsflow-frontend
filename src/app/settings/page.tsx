@@ -4,8 +4,8 @@ import { redirect } from "next/navigation";
 import SettingsForm from "./SettingsForm";
 import AppLayout from "@/components/AppLayout";
 
-export default function SettingsPage() {
-  const cookieStore = cookies();
+export default async function SettingsPage() {
+  const cookieStore = await cookies();
   const idToken = cookieStore.get("idToken");
   if (!idToken?.value) {
     redirect("/login");
