@@ -53,7 +53,7 @@ export default async function handler(
               replyAt: Number(r.replyAt?.N ?? 0),
               errorDetail: r.errorDetail?.S ?? "",
             }));
-          } catch (e) {
+          } catch (e: unknown) {
             replies = [];
           }
           return {
@@ -74,7 +74,7 @@ export default async function handler(
         })
       );
       res.status(200).json({ posts });
-    } catch (e) {
+    } catch (e: unknown) {
       res.status(500).json({ error: String(e) });
     }
     return;
@@ -116,7 +116,7 @@ export default async function handler(
         })
       );
       res.status(200).json({ success: true });
-    } catch (e) {
+    } catch (e: unknown) {
       res.status(500).json({ error: String(e) });
     }
     return;
@@ -140,7 +140,7 @@ export default async function handler(
         })
       );
       res.status(200).json({ success: true });
-    } catch (e) {
+    } catch (e: unknown) {
       res.status(500).json({ error: String(e) });
     }
     return;

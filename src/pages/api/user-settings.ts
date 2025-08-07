@@ -26,7 +26,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         replyPrompt: item?.replyPrompt?.S || "",
         autoPost: item?.autoPost?.S || "active",
       });
-    } catch (e) {
+    } catch (e: unknown) {
       return res.status(500).json({ error: String(e) });
     }
   }
@@ -59,7 +59,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
       }));
       return res.status(200).json({ success: true });
-    } catch (e) {
+    } catch (e: unknown) {
       return res.status(500).json({ error: String(e) });
     }
   }

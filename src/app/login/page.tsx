@@ -11,7 +11,7 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const router = useRouter();
 
-const handleLogin = async (e) => {
+const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
   e.preventDefault();
   setError(""); // 追加
   try {
@@ -31,9 +31,9 @@ const handleLogin = async (e) => {
     } else {
       setError("ログイン失敗（メールかパスワード不一致）");
     }
-  } catch (e) {
+  } catch (e: unknown) {
     setError("ログイン時にエラーが発生しました");
-    console.error(e);
+    //console.error(e);
   }
 };
 

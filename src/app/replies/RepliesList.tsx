@@ -35,7 +35,7 @@ function EditModal({ open, onClose, onSave, value }) {
           className="border rounded w-full p-2 mb-4"
           rows={4}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setText(e.target.value)}
         />
         <div className="flex justify-between mb-2">
           <button

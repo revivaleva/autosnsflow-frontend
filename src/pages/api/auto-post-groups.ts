@@ -32,7 +32,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           createdAt: i.createdAt ? Number(i.createdAt.N) : undefined,
         })) || []
       });
-    } catch (e) {
+    } catch (e: unknown) {
       res.status(500).json({ error: String(e) });
     }
     return;
@@ -65,7 +65,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     try {
       await client.send(new PutItemCommand(params));
       return res.status(200).json({ success: true });
-    } catch (e) {
+    } catch (e: unknown) {
       return res.status(500).json({ success: false, error: String(e) });
     }
   }
@@ -85,7 +85,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
       }));
       return res.status(200).json({ success: true });
-    } catch (e) {
+    } catch (e: unknown) {
       return res.status(500).json({ success: false, error: String(e) });
     }
   }

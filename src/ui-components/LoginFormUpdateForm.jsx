@@ -83,7 +83,7 @@ export default function LoginFormUpdateForm(props) {
       rowGap="15px"
       columnGap="15px"
       padding="20px"
-      onSubmit={async (event) => {
+      onSubmit={async (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
         let modelFields = {
           username: username ?? null,
@@ -144,7 +144,7 @@ export default function LoginFormUpdateForm(props) {
         isRequired={false}
         isReadOnly={false}
         value={username}
-        onChange={(e) => {
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
           let { value } = e.target;
           if (onChange) {
             const modelFields = {
@@ -169,7 +169,7 @@ export default function LoginFormUpdateForm(props) {
         isRequired={false}
         isReadOnly={false}
         value={password}
-        onChange={(e) => {
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
           let { value } = e.target;
           if (onChange) {
             const modelFields = {
@@ -196,7 +196,7 @@ export default function LoginFormUpdateForm(props) {
         <Button
           children="Reset"
           type="reset"
-          onClick={(event) => {
+          onClick={(event: React.MouseEvent<HTMLButtonElement>) => {
             event.preventDefault();
             resetStateValues();
           }}

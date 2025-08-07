@@ -19,7 +19,7 @@ function AddPostModal({ open, onClose, onSave }) {
   const [autoPostGroupId, setAutoPostGroupId] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setSaving(true);
     // scheduledPostIdはランダム生成
@@ -126,7 +126,7 @@ function EditPostModal({ open, onClose, post, onSave }) {
     }, 800);
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     onSave({
       ...post,
@@ -350,7 +350,7 @@ export default function ScheduledPostsTable() {
         <select
           className="border rounded p-1"
           value={filterStatus}
-          onChange={(e) => setFilterStatus(e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFilterStatus(e.target.value)}
         >
           {statusOptions.map((opt) => (
             <option key={opt.value} value={opt.value}>{opt.label}</option>

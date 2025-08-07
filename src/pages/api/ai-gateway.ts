@@ -20,7 +20,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     openaiApiKey = result.Item?.openaiApiKey?.S || "";
     selectedModel = result.Item?.selectedModel?.S || "gpt-3.5-turbo";
     if (!openaiApiKey) throw new Error("APIキー未設定です");
-  } catch (e) {
+  } catch (e: unknown) {
     return res.status(500).json({ error: "APIキーの取得に失敗: " + String(e) });
   }
 
@@ -127,7 +127,7 @@ json
             detailRaw = detailBlockMatch[1].trim();
             try {
                 personaDetail = JSON.parse(detailRaw);
-            } catch (e) {
+            } catch (e: unknown) {
                 console.log("JSON parse error!", e, detailRaw);
                 personaDetail = {};
             }
@@ -150,7 +150,7 @@ json
 
 
     return res.status(200).json({ text });
-  } catch (e) {
+  } catch (e: unknown) {
     return res.status(500).json({ error: "OpenAI API呼び出し失敗: " + String(e) });
   }
 }

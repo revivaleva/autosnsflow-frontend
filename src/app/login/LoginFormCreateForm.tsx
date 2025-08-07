@@ -9,13 +9,11 @@ import * as React from "react";
 import { Button, Flex, Grid, TextField } from "@aws-amplify/ui-react";
 import { fetchByPath, getOverrideProps, validateField } from "../../ui-components/utils";
 import { generateClient } from "aws-amplify/api";
-import { getLoginForm } from "../../graphql/queries";
-import { updateLoginForm } from "../../graphql/mutations";
+import { createLoginForm } from "../../graphql/mutations";
 const client = generateClient();
-export default function LoginFormUpdateForm(props) {
+export default function LoginFormCreateForm(props) {
   const {
-    id: idProp,
-    loginForm: loginFormModelProp,
+    clearOnSuccess = true,
     onSuccess,
     onError,
     onSubmit,
@@ -32,30 +30,10 @@ export default function LoginFormUpdateForm(props) {
   const [password, setPassword] = React.useState(initialValues.password);
   const [errors, setErrors] = React.useState({});
   const resetStateValues = () => {
-    const cleanValues = loginFormRecord
-      ? { ...initialValues, ...loginFormRecord }
-      : initialValues;
-    setUsername(cleanValues.username);
-    setPassword(cleanValues.password);
+    setUsername(initialValues.username);
+    setPassword(initialValues.password);
     setErrors({});
   };
-  const [loginFormRecord, setLoginFormRecord] =
-    React.useState(loginFormModelProp);
-  React.useEffect(() => {
-    const queryData = async () => {
-      const record = idProp
-        ? (
-            await client.graphql({
-              query: getLoginForm.replaceAll("__typename", ""),
-              variables: { id: idProp },
-            })
-          )?.data?.getLoginForm
-        : loginFormModelProp;
-      setLoginFormRecord(record);
-    };
-    queryData();
-  }, [idProp, loginFormModelProp]);
-  React.useEffect(resetStateValues, [loginFormRecord]);
   const validations = {
     username: [],
     password: [],
@@ -83,11 +61,11 @@ export default function LoginFormUpdateForm(props) {
       rowGap="15px"
       columnGap="15px"
       padding="20px"
-      onSubmit={async (event) => {
+      onSubmit={async (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
         let modelFields = {
-          username: username ?? null,
-          password: password ?? null,
+          username,
+          password,
         };
         const validationResponses = await Promise.all(
           Object.keys(validations).reduce((promises, fieldName) => {
@@ -118,16 +96,18 @@ export default function LoginFormUpdateForm(props) {
             }
           });
           await client.graphql({
-            query: updateLoginForm.replaceAll("__typename", ""),
+            query: createLoginForm.replaceAll("__typename", ""),
             variables: {
               input: {
-                id: loginFormRecord.id,
                 ...modelFields,
               },
             },
           });
           if (onSuccess) {
             onSuccess(modelFields);
+          }
+          if (clearOnSuccess) {
+            resetStateValues();
           }
         } catch (err) {
           if (onError) {
@@ -136,7 +116,7 @@ export default function LoginFormUpdateForm(props) {
           }
         }
       }}
-      {...getOverrideProps(overrides, "LoginFormUpdateForm")}
+      {...getOverrideProps(overrides, "LoginFormCreateForm")}
       {...rest}
     >
       <TextField
@@ -144,7 +124,7 @@ export default function LoginFormUpdateForm(props) {
         isRequired={false}
         isReadOnly={false}
         value={username}
-        onChange={(e) => {
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
           let { value } = e.target;
           if (onChange) {
             const modelFields = {
@@ -169,7 +149,7 @@ export default function LoginFormUpdateForm(props) {
         isRequired={false}
         isReadOnly={false}
         value={password}
-        onChange={(e) => {
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
           let { value } = e.target;
           if (onChange) {
             const modelFields = {
@@ -194,14 +174,13 @@ export default function LoginFormUpdateForm(props) {
         {...getOverrideProps(overrides, "CTAFlex")}
       >
         <Button
-          children="Reset"
+          children="Clear"
           type="reset"
-          onClick={(event) => {
+          onClick={(event: React.MouseEvent<HTMLButtonElement>) => {
             event.preventDefault();
             resetStateValues();
           }}
-          isDisabled={!(idProp || loginFormModelProp)}
-          {...getOverrideProps(overrides, "ResetButton")}
+          {...getOverrideProps(overrides, "ClearButton")}
         ></Button>
         <Flex
           gap="15px"
@@ -211,10 +190,7 @@ export default function LoginFormUpdateForm(props) {
             children="Submit"
             type="submit"
             variation="primary"
-            isDisabled={
-              !(idProp || loginFormModelProp) ||
-              Object.values(errors).some((e) => e?.hasError)
-            }
+            isDisabled={Object.values(errors).some((e) => e?.hasError)}
             {...getOverrideProps(overrides, "SubmitButton")}
           ></Button>
         </Flex>

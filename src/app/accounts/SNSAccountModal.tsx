@@ -286,7 +286,7 @@ export default function SNSAccountModal({
       setAiPersonaDetail(data.personaDetail || "");
       setAiPersonaSimple(data.personaSimple || "");
       setAiPreviewModalOpen(true);
-    } catch (e) {
+    } catch (e: unknown) {
       setError("AI生成エラー: " + String(e));
       setAiLoading(false);
     }
@@ -303,7 +303,7 @@ export default function SNSAccountModal({
   const originalAccountId = account?.accountId;
 
   // 登録・保存（DB/API連携）
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setSaving(true);
     setError("");
@@ -348,7 +348,7 @@ export default function SNSAccountModal({
       } else {
         setError(data.error || "保存に失敗しました");
       }
-    } catch (e) {
+    } catch (e: unknown) {
       setError("通信エラー: " + String(e));
       setSaving(false);
     }
@@ -417,7 +417,7 @@ export default function SNSAccountModal({
             className="border rounded px-2 py-1 w-full"
             type="text"
             value={characterImage}
-            onChange={(e) => setCharacterImage(e.target.value)}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCharacterImage(e.target.value)}
             placeholder="キャラクターイメージ"
           />
           <button

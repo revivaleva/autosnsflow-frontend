@@ -36,7 +36,7 @@ export default async function handler(
         createdAt: i.createdAt?.N ? Number(i.createdAt.N) : null,
       })),
     });
-  } catch (e) {
+  } catch (e: unknown) {
     res.status(500).json({ error: String(e) });
   }
 }
