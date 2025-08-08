@@ -19,13 +19,6 @@ export default function AppLayout({ children }) {
   const pathname = usePathname();
   const router = useRouter();
 
-  useEffect(() => {
-    // /loginページ自身ではリダイレクトしない
-    if (pathname !== "/login" && !localStorage.getItem("userId")) {
-      router.push("/login");
-    }
-  }, [pathname, router]);
-
   return (
     <div className="flex min-h-screen">
       <nav className="w-56 bg-gray-900 text-white flex flex-col py-6 px-4">
