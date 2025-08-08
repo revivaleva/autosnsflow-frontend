@@ -50,9 +50,11 @@ export default async function DashboardPage() {
 
   // Cookieがある（＝認証済み）場合のみ以下を表示
   return (
-    <div>
-      <h1 className="text-xl font-bold mb-4">ダッシュボード</h1>
-      {/* 以下コンテンツ */}
-    </div>
+      <AppLayout>
+        <div>
+          <h1 className="text-xl font-bold mb-4">ダッシュボード</h1>
+          {/* 以下コンテンツ */}
+        </div>
+      </AppLayout>
   );
 }
