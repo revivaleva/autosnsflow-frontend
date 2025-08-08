@@ -48,6 +48,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         masterPrompt: item?.masterPrompt?.S ?? "",
         replyPrompt: item?.replyPrompt?.S ?? "",
         autoPost: item?.autoPost?.S ?? "active",
+        doublePostDelay: item?.doublePostDelay?.S ?? "0" // 追加
       })
     } catch (e: unknown) {
       return res.status(500).json({ error: String(e) })
@@ -67,7 +68,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       masterPrompt = "",
       replyPrompt = "",
       autoPost = "active",
-    } = body
+      doublePostDelay = "0", // 追加
+    } = body;
 
     try {
       await client.send(new PutItemCommand({
@@ -82,6 +84,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           masterPrompt: { S: masterPrompt },
           replyPrompt: { S: replyPrompt },
           autoPost: { S: autoPost },
+          doublePostDelay: { S: doublePostDelay }, // 追加
         }
       }))
       return res.status(200).json({ success: true })
