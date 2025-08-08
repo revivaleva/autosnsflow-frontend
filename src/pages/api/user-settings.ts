@@ -12,6 +12,9 @@ const client = new DynamoDBClient({
   }
 });
 
+  console.log("accessKeyId:", process.env.AUTOSNSFLOW_ACCESS_KEY_ID);
+  console.log("secretAccessKey:", process.env.AUTOSNSFLOW_SECRET_ACCESS_KEY);
+  
 // Cognito JWTの検証（シンプルなデコードのみ。検証までやる場合はJWKも必要です）
 function getUserIdFromToken(token?: string): string | null {
   if (!token) return null
@@ -31,9 +34,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const userId = getUserIdFromToken(idToken)
   if (!userId) return res.status(401).json({ error: '認証が必要です（idTokenが無効）' })
-
-  console.log("accessKeyId:", process.env.AUTOSNSFLOW_ACCESS_KEY_ID);
-  console.log("secretAccessKey:", process.env.AUTOSNSFLOW_SECRET_ACCESS_KEY);
 
   // GET: 設定取得
   if (req.method === 'GET') {
