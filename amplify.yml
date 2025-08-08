@@ -1,0 +1,20 @@
+version: 1
+frontend:
+  phases:
+    preBuild:
+      commands:
+        - npm ci
+        # 環境変数を明示的に .env.production に書き出す（必要なものだけ）
+        - echo "AUTOSNSFLOW_ACCESS_KEY_ID=$AUTOSNSFLOW_ACCESS_KEY_ID" >> .env.production
+        - echo "AUTOSNSFLOW_SECRET_ACCESS_KEY=$AUTOSNSFLOW_SECRET_ACCESS_KEY" >> .env.production
+        - echo "NEXT_PUBLIC_AWS_REGION=$NEXT_PUBLIC_AWS_REGION" >> .env.production
+    build:
+      commands:
+        - npm run build
+  artifacts:
+    baseDirectory: .next
+    files:
+      - '**/*'
+  cache:
+    paths:
+      - node_modules/**/*
