@@ -3,7 +3,13 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 import { DynamoDBClient, GetItemCommand } from '@aws-sdk/client-dynamodb'
 
-const client = new DynamoDBClient({ region: 'ap-northeast-1' });
+const client = new DynamoDBClient({
+  region: process.env.NEXT_PUBLIC_AWS_REGION,
+  credentials: {
+    accessKeyId: process.env.AUTOSNSFLOW_ACCESS_KEY_ID!,
+    secretAccessKey: process.env.AUTOSNSFLOW_SECRET_ACCESS_KEY!,
+  }
+});
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).end();
