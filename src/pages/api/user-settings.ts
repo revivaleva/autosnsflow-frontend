@@ -14,7 +14,9 @@ const client = new DynamoDBClient({
 
   console.log("accessKeyId:", process.env.AUTOSNSFLOW_ACCESS_KEY_ID!);
   console.log("secretAccessKey:", process.env.AUTOSNSFLOW_SECRET_ACCESS_KEY!);
-  console.log("region:", process.env.NEXT_PUBLIC_AWS_REGION);
+  console.log("NEXT_PUBLIC_BASE_URL:", process.env.NEXT_PUBLIC_BASE_URL);
+  console.log("LIVE_UPDATES:", process.env._LIVE_UPDATES);
+  console.log("AMPLIFY_BACKEND_APP_ID:", process.env.AMPLIFY_BACKEND_APP_ID);
 // Cognito JWTの検証（シンプルなデコードのみ。検証までやる場合はJWKも必要です）
 function getUserIdFromToken(token?: string): string | null {
   if (!token) return null
