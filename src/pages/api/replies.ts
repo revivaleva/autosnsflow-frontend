@@ -1,5 +1,3 @@
-// src/pages/api/replies.ts
-
 import type { NextApiRequest, NextApiResponse } from "next";
 import {
   DynamoDBClient,
@@ -7,8 +5,9 @@ import {
 } from "@aws-sdk/client-dynamodb";
 import jwt from "jsonwebtoken";
 
+// Amplify Hosting (Gen1) でシークレット環境変数を読み込み
 const client = new DynamoDBClient({
-  region: process.env.NEXT_PUBLIC_AWS_REGION,
+  region: process.env.NEXT_PUBLIC_AWS_REGION,  // 公開してもよい
   credentials: {
     accessKeyId: process.env.AUTOSNSFLOW_ACCESS_KEY_ID!,
     secretAccessKey: process.env.AUTOSNSFLOW_SECRET_ACCESS_KEY!,
@@ -30,19 +29,18 @@ export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
 ) {
-  // CookieからidTokenを取得
   const cookies = req.headers.cookie?.split(";").map((s) => s.trim()) ?? [];
   const idToken = cookies.find((c) => c.startsWith("idToken="))?.split("=")[1];
   const userId = getUserIdFromToken(idToken);
 
   if (!userId) return res.status(401).json({ error: "認証が必要です（idTokenが無効）" });
 
-  // 全リプライ取得（PK: USER#userId）
   const params = {
     TableName: "Replies",
     KeyConditionExpression: "PK = :pk",
     ExpressionAttributeValues: { ":pk": { S: `USER#${userId}` } },
   };
+
   try {
     const { Items } = await client.send(new QueryCommand(params));
     res.status(200).json({

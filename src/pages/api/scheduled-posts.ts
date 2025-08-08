@@ -1,5 +1,3 @@
-// src/pages/api/scheduled-posts.ts
-
 import type { NextApiRequest, NextApiResponse } from "next";
 import {
   DynamoDBClient,
@@ -9,15 +7,15 @@ import {
 } from "@aws-sdk/client-dynamodb";
 import jwt from "jsonwebtoken";
 
+// シークレット環境変数からDynamoDBクライアントを初期化
 const client = new DynamoDBClient({
-  region: process.env.NEXT_PUBLIC_AWS_REGION,
+  region: process.env.NEXT_PUBLIC_AWS_REGION, // 公開しても問題ない
   credentials: {
     accessKeyId: process.env.AUTOSNSFLOW_ACCESS_KEY_ID!,
     secretAccessKey: process.env.AUTOSNSFLOW_SECRET_ACCESS_KEY!,
   }
 });
 
-// JWTデコード用ヘルパー
 function getUserIdFromToken(token?: string): string | null {
   if (!token) return null;
   try {
@@ -28,11 +26,7 @@ function getUserIdFromToken(token?: string): string | null {
   }
 }
 
-export default async function handler(
-  req: NextApiRequest,
-  res: NextApiResponse
-) {
-  // CookieからidToken取得
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const cookies = req.headers.cookie?.split(";").map((s) => s.trim()) ?? [];
   const idToken = cookies.find((c) => c.startsWith("idToken="))?.split("=")[1];
   const userId = getUserIdFromToken(idToken);
@@ -40,7 +34,6 @@ export default async function handler(
   if (!userId)
     return res.status(401).json({ error: "認証が必要です（idTokenが無効）" });
 
-  // 一覧取得＋各postごとにRepliesも取得
   if (req.method === "GET") {
     const params = {
       TableName: "ScheduledPosts",
@@ -53,7 +46,6 @@ export default async function handler(
         (Items ?? []).map(async (i) => {
           const postId = i.postId?.S ?? "";
           const scheduledPostId = i.SK?.S?.replace("SCHEDULEDPOST#", "") ?? "";
-          // Repliesテーブルから取得
           let replies: any[] = [];
           try {
             const repliesRes = await client.send(
@@ -75,7 +67,7 @@ export default async function handler(
               replyAt: Number(r.replyAt?.N ?? 0),
               errorDetail: r.errorDetail?.S ?? "",
             }));
-          } catch (e: unknown) {
+          } catch {
             replies = [];
           }
           return {
@@ -103,18 +95,11 @@ export default async function handler(
     return;
   }
 
-  // 登録
   if (req.method === "POST") {
-    const body =
-      typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+    const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
     const {
-      scheduledPostId,
-      accountId,
-      accountName,
-      autoPostGroupId,
-      theme,
-      content,
-      scheduledAt,
+      scheduledPostId, accountId, accountName, autoPostGroupId,
+      theme, content, scheduledAt,
     } = body;
     if (!scheduledPostId || !accountId)
       return res.status(400).json({ error: "scheduledPostId/accountId required" });
@@ -148,15 +133,12 @@ export default async function handler(
     return;
   }
 
-  // 論理削除
   if (req.method === "PATCH") {
-    const body =
-      typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+    const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
     const { scheduledPostId, isDeleted } = body;
     if (!scheduledPostId)
       return res.status(400).json({ error: "scheduledPostId required" });
 
-    // 1. 既存Item取得
     let existing;
     try {
       const resItem = await client.send(
@@ -175,7 +157,6 @@ export default async function handler(
       return res.status(500).json({ error: String(e) });
     }
 
-    // 2. isDeletedだけ上書きして再Put
     const updatedItem = {
       ...existing,
       isDeleted: { BOOL: !!isDeleted },
@@ -193,5 +174,6 @@ export default async function handler(
     }
     return;
   }
+
   res.status(405).end();
 }

@@ -1,20 +1,19 @@
-// src/pages/api/auto-post-groups.ts
-
-import type { NextApiRequest, NextApiResponse } from 'next'
+import type { NextApiRequest, NextApiResponse } from 'next';
 import {
   DynamoDBClient,
   QueryCommand,
   PutItemCommand,
   DeleteItemCommand,
-} from '@aws-sdk/client-dynamodb'
-import jwt from 'jsonwebtoken'
+} from '@aws-sdk/client-dynamodb';
+import jwt from 'jsonwebtoken';
 
+// Amplify Hosting Gen1 の Secrets から取得
 const client = new DynamoDBClient({
   region: process.env.NEXT_PUBLIC_AWS_REGION,
   credentials: {
     accessKeyId: process.env.AUTOSNSFLOW_ACCESS_KEY_ID!,
     secretAccessKey: process.env.AUTOSNSFLOW_SECRET_ACCESS_KEY!,
-  }
+  },
 });
 
 // JWTからuserId取得
@@ -32,14 +31,13 @@ export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
 ) {
-  // CookieからidToken取得
   const cookies = req.headers.cookie?.split(";").map((s) => s.trim()) ?? [];
   const idToken = cookies.find((c) => c.startsWith("idToken="))?.split("=")[1];
   const userId = getUserIdFromToken(idToken);
 
   if (!userId) return res.status(401).json({ error: '認証が必要です（idTokenが無効）' });
 
-  // 一覧取得
+  // GET: 一覧取得
   if (req.method === 'GET') {
     const params = {
       TableName: 'AutoPostGroups',
@@ -68,9 +66,8 @@ export default async function handler(
     return;
   }
 
-  // 追加・編集（PutItemで新規/上書きどちらも対応）
+  // POST/PUT: 登録・編集
   if (req.method === 'POST' || req.method === 'PUT') {
-    // Next.jsのAPIルートはbodyがJSONまたはstringで来る場合がある
     const body =
       typeof req.body === "string" ? JSON.parse(req.body) : req.body;
 
@@ -85,14 +82,14 @@ export default async function handler(
       theme3,
       createdAt,
     } = body;
+
     if (!groupKey || !groupName) {
       return res.status(400).json({ error: "groupKey and groupName required" });
     }
-    // createdAt: number。なければ現在時刻をセット
-    let createdAtNumber = Number(createdAt);
-    if (!createdAtNumber || isNaN(createdAtNumber)) {
-      createdAtNumber = Math.floor(Date.now() / 1000);
-    }
+
+    const createdAtNumber = !createdAt || isNaN(Number(createdAt))
+      ? Math.floor(Date.now() / 1000)
+      : Number(createdAt);
 
     const params = {
       TableName: "AutoPostGroups",
@@ -117,7 +114,7 @@ export default async function handler(
     }
   }
 
-  // 削除
+  // DELETE: 削除
   if (req.method === 'DELETE') {
     const body =
       typeof req.body === "string" ? JSON.parse(req.body) : req.body;
@@ -141,6 +138,6 @@ export default async function handler(
     }
   }
 
-  // その他
+  // その他メソッドは許可しない
   return res.status(405).json({ error: "Method Not Allowed" });
 }

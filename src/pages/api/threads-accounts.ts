@@ -12,7 +12,6 @@ const client = new DynamoDBClient({
   }
 });
 
-// JWTからuserId取得（subまたはcognito:username）
 function getUserIdFromToken(token?: string): string | null {
   if (!token) return null;
   try {
@@ -29,11 +28,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const userId = getUserIdFromToken(idToken);
   if (!userId) return res.status(401).json({ error: '認証が必要です（idTokenが無効）' });
 
-  // bodyがstringで来る場合もparse
-  const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
-
   if (req.method === 'GET') {
-    // 一覧取得
     const params = {
       TableName: 'ThreadsAccounts',
       KeyConditionExpression: 'PK = :pk',
@@ -61,7 +56,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return;
   }
 
-  // 追加・編集
+  // POST/PUT/DELETE/PATCH は body を使うため parse 必要
+  const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+
   if (req.method === 'POST' || req.method === 'PUT') {
     const {
       accountId, displayName, createdAt, accessToken,
@@ -100,7 +97,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   }
 
-  // 削除
   if (req.method === "DELETE") {
     const { accountId } = body;
     if (!accountId) {
@@ -120,7 +116,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   }
 
-  // PATCH: トグル用部分更新
   if (req.method === "PATCH") {
     const { accountId, updateFields } = body;
     if (!accountId || !updateFields || Object.keys(updateFields).length === 0) {
@@ -149,6 +144,5 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   }
 
-  // その他
   return res.status(405).json({ error: "Method Not Allowed" });
 }
