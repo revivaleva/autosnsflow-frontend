@@ -79,75 +79,77 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="p-6 space-y-6">
-      {/* 【追加】要約カード */}
-      <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-        <SummaryCard title="登録スレッズアカウント" value={numberFmt(stats?.accountCount)} />
-        <SummaryCard title="未投稿の予約投稿" value={numberFmt(stats?.scheduledCount)} />
-        <SummaryCard title="当日の投稿" value={numberFmt(stats?.todaysPostedCount)} />
-        <SummaryCard title="未返信リプ / 返信済" value={`${numberFmt(stats?.unrepliedCount)} / ${numberFmt(stats?.repliedCount)}`} />
-        <SummaryCard title="エラーのアカウント" value={numberFmt(stats?.errorAccountCount)} tone="danger" />
-        <SummaryCard title="エラーの投稿" value={numberFmt(stats?.failedPostCount)} tone="danger" />
-        <SummaryCard title="本日これからの予約" value={numberFmt(stats?.todaysRemainingScheduled)} />
-        <SummaryCard title="今月の投稿成功率" value={`${numberFmt(stats?.monthSuccessRate)}%`} />
-      </section>
+    <AppLayout>
+      <div className="p-6 space-y-6">
+        {/* 【追加】要約カード */}
+        <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+          <SummaryCard title="登録スレッズアカウント" value={numberFmt(stats?.accountCount)} />
+          <SummaryCard title="未投稿の予約投稿" value={numberFmt(stats?.scheduledCount)} />
+          <SummaryCard title="当日の投稿" value={numberFmt(stats?.todaysPostedCount)} />
+          <SummaryCard title="未返信リプ / 返信済" value={`${numberFmt(stats?.unrepliedCount)} / ${numberFmt(stats?.repliedCount)}`} />
+          <SummaryCard title="エラーのアカウント" value={numberFmt(stats?.errorAccountCount)} tone="danger" />
+          <SummaryCard title="エラーの投稿" value={numberFmt(stats?.failedPostCount)} tone="danger" />
+          <SummaryCard title="本日これからの予約" value={numberFmt(stats?.todaysRemainingScheduled)} />
+          <SummaryCard title="今月の投稿成功率" value={`${numberFmt(stats?.monthSuccessRate)}%`} />
+        </section>
 
-      {/* 【追加】最近のエラー（タブ＋リスト） */}
-      <section className="rounded-xl border border-gray-200 bg-white">
-        <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
-          <h2 className="text-base font-semibold">最近のエラー（直近7日・最大20件）</h2>
-          <Tabs active={activeTab} onChange={setActiveTab} />
-        </div>
-
-        {filteredErrors.length === 0 ? (
-          <div className="px-4 py-8 text-sm text-gray-500">表示するエラーはありません。</div>
-        ) : (
-          <ul className="divide-y divide-gray-100">
-            {filteredErrors.map((e) => (
-              <li key={`${e.type}-${e.id}-${e.at}`} className="px-4 py-3 hover:bg-gray-50">
-                <button
-                  className="w-full text-left"
-                  onClick={() => setDetail({ id: e.id, message: e.message })}
-                >
-                  <div className="flex items-center gap-2">
-                    <span className={badgeClass(e.type)}>{labelOf(e.type)}</span>
-                    <span className="text-xs text-gray-400">
-                      {new Date(e.at * 1000).toLocaleString('ja-JP')}
-                    </span>
-                  </div>
-                  <div className="mt-1 line-clamp-2 text-sm text-gray-700">{e.message}</div>
-                  <div className="mt-1 text-xs text-gray-400">ID: {e.id}</div>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      {/* 【追加】詳細モーダル */}
-      {detail && (
-        <Modal onClose={() => setDetail(null)} title="エラー詳細">
-          <div className="space-y-3">
-            <div>
-              <div className="text-xs text-gray-400">対象ID</div>
-              <div className="text-sm">{detail.id}</div>
-            </div>
-            <div>
-              <div className="text-xs text-gray-400">メッセージ</div>
-              <pre className="whitespace-pre-wrap break-all text-sm">{detail.message}</pre>
-            </div>
-            <div className="pt-2">
-              <button
-                className="rounded-md border px-3 py-1.5 text-sm hover:bg-gray-50"
-                onClick={() => navigator.clipboard.writeText(`[${detail.id}] ${detail.message}`)}
-              >
-                コピー
-              </button>
-            </div>
+        {/* 【追加】最近のエラー（タブ＋リスト） */}
+        <section className="rounded-xl border border-gray-200 bg-white">
+          <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
+            <h2 className="text-base font-semibold">最近のエラー（直近7日・最大20件）</h2>
+            <Tabs active={activeTab} onChange={setActiveTab} />
           </div>
-        </Modal>
-      )}
-    </div>
+
+          {filteredErrors.length === 0 ? (
+            <div className="px-4 py-8 text-sm text-gray-500">表示するエラーはありません。</div>
+          ) : (
+            <ul className="divide-y divide-gray-100">
+              {filteredErrors.map((e) => (
+                <li key={`${e.type}-${e.id}-${e.at}`} className="px-4 py-3 hover:bg-gray-50">
+                  <button
+                    className="w-full text-left"
+                    onClick={() => setDetail({ id: e.id, message: e.message })}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className={badgeClass(e.type)}>{labelOf(e.type)}</span>
+                      <span className="text-xs text-gray-400">
+                        {new Date(e.at * 1000).toLocaleString('ja-JP')}
+                      </span>
+                    </div>
+                    <div className="mt-1 line-clamp-2 text-sm text-gray-700">{e.message}</div>
+                    <div className="mt-1 text-xs text-gray-400">ID: {e.id}</div>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        {/* 【追加】詳細モーダル */}
+        {detail && (
+          <Modal onClose={() => setDetail(null)} title="エラー詳細">
+            <div className="space-y-3">
+              <div>
+                <div className="text-xs text-gray-400">対象ID</div>
+                <div className="text-sm">{detail.id}</div>
+              </div>
+              <div>
+                <div className="text-xs text-gray-400">メッセージ</div>
+                <pre className="whitespace-pre-wrap break-all text-sm">{detail.message}</pre>
+              </div>
+              <div className="pt-2">
+                <button
+                  className="rounded-md border px-3 py-1.5 text-sm hover:bg-gray-50"
+                  onClick={() => navigator.clipboard.writeText(`[${detail.id}] ${detail.message}`)}
+                >
+                  コピー
+                </button>
+              </div>
+            </div>
+          </Modal>
+        )}
+      </div>
+    </AppLayout>
   );
 }
 
