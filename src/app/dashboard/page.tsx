@@ -5,6 +5,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
+import AppLayout from '@/components/AppLayout'; // 【追加】
 
 // 【追加】型定義
 type DashboardStats = {
@@ -58,18 +59,22 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <div className="p-6">
-        <div className="animate-pulse text-sm text-gray-500">読み込み中...</div>
-      </div>
+      <AppLayout>
+        <div className="p-6">
+          <div className="animate-pulse text-sm text-gray-500">読み込み中...</div>
+        </div>
+      </AppLayout>
     );
   }
   if (errorMsg) {
     return (
-      <div className="p-6">
-        <div className="rounded-md border border-red-300 bg-red-50 px-4 py-3 text-red-700">
-          ダッシュボードの読み込みに失敗しました：{errorMsg}
+      <AppLayout>
+        <div className="p-6">
+          <div className="rounded-md border border-red-300 bg-red-50 px-4 py-3 text-red-700">
+            ダッシュボードの読み込みに失敗しました：{errorMsg}
+          </div>
         </div>
-      </div>
+      </AppLayout>
     );
   }
 
