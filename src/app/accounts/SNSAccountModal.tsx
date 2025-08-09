@@ -1,5 +1,3 @@
-// src/app/accounts/SNSAccountModal.tsx
-
 "use client";
 
 import React, { useState, useEffect } from "react";
@@ -39,7 +37,7 @@ type AccountType = {
   autoPostGroupId?: string;
   createdAt?: number;
   /** ▼追加: 2段階投稿用のThreads投稿本文 */
-  secondStageContent?: string; // ← 追加
+  secondStageContent?: string; // ← 追加（既存コメントは変更しない）
 };
 type AutoPostGroupType = {
   groupKey: string;
@@ -133,14 +131,18 @@ function AccountCopyModal({
           {accounts.map((acc: AccountType) => (
             <div
               key={acc.accountId}
-              className={`p-2 cursor-pointer border-b last:border-b-0 hover:bg-blue-50 ${selected?.accountId === acc.accountId ? "bg-blue-100" : ""}`}
+              className={`p-2 cursor-pointer border-b last:border-b-0 hover:bg-blue-50 ${
+                selected?.accountId === acc.accountId ? "bg-blue-100" : ""
+              }`}
               onClick={() => setSelected(acc)}
             >
               <div className="font-semibold">{acc.displayName}</div>
               <div className="text-xs text-gray-600">{acc.accountId}</div>
             </div>
           ))}
-          {accounts.length === 0 && <div className="text-center p-4 text-gray-400">アカウントがありません</div>}
+          {accounts.length === 0 && (
+            <div className="text-center p-4 text-gray-400">アカウントがありません</div>
+          )}
         </div>
         {selected && (
           <div className="border rounded bg-gray-50 p-3 my-2">
@@ -250,7 +252,12 @@ export default function SNSAccountModal({
       setAccountId(account.accountId || "");
       setAccessToken(account.accessToken || "");
       setGroupId(account.autoPostGroupId || "");
-      setPersona(account.personaDetail ? JSON.parse(account.personaDetail) : {});
+      // ▼【追加】不正なJSON文字列で落ちないようガード
+      try {
+        setPersona(account.personaDetail ? JSON.parse(account.personaDetail) : { ...emptyPersona }); // 【追加】
+      } catch {
+        setPersona({ ...emptyPersona }); // 【追加】
+      }
       setCharacterImage(account.characterImage || "");
       setPersonaMode(account.personaMode === "simple" ? "simple" : "detail");
       setPersonaSimple(account.personaSimple || "");
@@ -280,7 +287,12 @@ export default function SNSAccountModal({
     setCharacterImage(acc.characterImage || "");
     setPersonaMode(acc.personaMode || "detail");
     setPersonaSimple(acc.personaSimple || "");
-    setPersona(acc.personaDetail ? JSON.parse(acc.personaDetail) : {});
+    // ▼【追加】コピー元のJSONもガード
+    try {
+      setPersona(acc.personaDetail ? JSON.parse(acc.personaDetail) : { ...emptyPersona }); // 【追加】
+    } catch {
+      setPersona({ ...emptyPersona }); // 【追加】
+    }
     setSecondStageContent(acc.secondStageContent || ""); // ← 追加
     setCopyModalOpen(false);
   };
@@ -291,6 +303,13 @@ export default function SNSAccountModal({
     setAiPersonaDetail("");
     setAiPersonaSimple("");
     try {
+      // ▼【追加】空入力の早期バリデーション
+      if (!characterImage.trim()) {
+        setAiLoading(false);
+        setError("キャラクターイメージを入力してください。"); // 【追加】
+        return;
+      }
+
       const res = await fetch("/api/ai-gateway", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -300,8 +319,16 @@ export default function SNSAccountModal({
           input: { personaSeed: characterImage || "" },
         }),
       });
-      const data = await res.json();
+
+      // ▼【追加】非200時の詳細メッセージを拾う
+      const data = await res.json().catch(() => ({})); // 【追加】
       setAiLoading(false);
+
+      if (!res.ok) { // 【追加】
+        const msg = data?.error || data?.message || "AI生成に失敗しました"; // 【追加】
+        setError(msg); // 【追加】
+        return;
+      }
 
       if (data.error) {
         setError(data.error);
@@ -318,7 +345,15 @@ export default function SNSAccountModal({
   };
 
   const handleApplyAIPersona = ({ personaDetail, personaSimple }: AIPersonaPayload) => {
-    setPersona({ ...emptyPersona, ...personaDetail });
+    // ▼【追加】文字列JSONのまま渡ってきても安全に取り込む
+    try {
+      const obj = typeof personaDetail === "string" && personaDetail.trim()
+        ? JSON.parse(personaDetail)
+        : personaDetail || {};
+      setPersona({ ...emptyPersona, ...(obj || {}) });
+    } catch {
+      setPersona({ ...emptyPersona });
+    }
     setPersonaSimple(personaSimple || "");
     setAiPreviewModalOpen(false);
   };
@@ -353,9 +388,10 @@ export default function SNSAccountModal({
           accountId,
           displayName,
           accessToken: accessToken,
-          createdAt: mode === "create"
-            ? Math.floor(Date.now() / 1000)
-            : account?.createdAt ?? Math.floor(Date.now() / 1000),
+          createdAt:
+            mode === "create"
+              ? Math.floor(Date.now() / 1000)
+              : account?.createdAt ?? Math.floor(Date.now() / 1000),
           personaDetail: JSON.stringify(persona),
           personaSimple: personaSimple,
           personaMode: personaMode,
@@ -526,13 +562,17 @@ export default function SNSAccountModal({
             type="submit"
             className="bg-blue-500 text-white rounded px-5 py-2 hover:bg-blue-600 mr-2"
             disabled={saving}
-          >{mode === "edit" ? "保存" : "登録"}</button>
+          >
+            {mode === "edit" ? "保存" : "登録"}
+          </button>
           <button
             type="button"
             className="bg-gray-300 text-gray-800 rounded px-4 py-2"
             onClick={onClose}
             disabled={saving}
-          >キャンセル</button>
+          >
+            キャンセル
+          </button>
         </div>
       </form>
     </div>
