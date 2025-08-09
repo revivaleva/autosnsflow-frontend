@@ -49,6 +49,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         autoGenerate: i.autoGenerate?.BOOL ?? false,
         autoReply: i.autoReply?.BOOL ?? false,
         statusMessage: i.statusMessage?.S ?? "",
+        /** ▼追加: 2段階投稿テキストを返却 */
+        secondStageContent: i.secondStageContent?.S ?? "",
       })) })
     } catch (e: unknown) {
       return res.status(500).json({ error: String(e) })
@@ -64,6 +66,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       accountId, displayName, createdAt, accessToken,
       personaDetail, personaSimple, personaMode, autoPostGroupId,
       autoPost, autoGenerate, autoReply, statusMessage,
+      /** ▼追加: 2段階投稿テキストを受領 */
+      secondStageContent,
     } = body;
 
     if (!accountId || !displayName) {
@@ -80,6 +84,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       personaSimple: { S: personaSimple ?? "" },
       personaMode: { S: personaMode ?? "detail" },
       autoPostGroupId: { S: autoPostGroupId ?? "" },
+      /** ▼追加: 2段階投稿テキストを保存 */
+      secondStageContent: { S: secondStageContent ?? "" },
     };
     if (typeof autoPost === "boolean") item.autoPost = { BOOL: autoPost };
     if (typeof autoGenerate === "boolean") item.autoGenerate = { BOOL: autoGenerate };
@@ -127,7 +133,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       Object.keys(updateFields).map((k, i) => [`#f${i}`, k])
     );
     const exprAttrVals = Object.entries(updateFields).reduce((obj, [k, v], i) => {
-      obj[`:v${i}`] = typeof v === "boolean" ? { BOOL: v } : { S: String(v) };
+      obj[`:v${i}`] =
+        typeof v === "boolean" ? { BOOL: v }
+        : v === null ? { NULL: true }
+        : { S: String(v) }; // 文字列はSとして保存
       return obj;
     }, {} as Record<string, any>);
     try {

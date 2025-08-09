@@ -19,6 +19,8 @@ export type ThreadsAccount = {
   personaSimple: string;
   personaDetail: string;
   autoPostGroupId: string;
+  /** ▼追加: 2段階投稿用のThreads投稿本文 */
+  secondStageContent?: string;
 };
 
 export default function SNSAccountsTable() {
@@ -44,13 +46,20 @@ export default function SNSAccountsTable() {
     loadAccounts();
   }, []);
 
-  // 楽観的UIトグル
-  const handleToggle = async (acc: ThreadsAccount, field: keyof ThreadsAccount) => {
+  // テキストのトリミング（2段階投稿の長文を短縮表示用）
+  const truncate = (text: string, max = 30) => {
+    if (!text) return "";
+    return text.length > max ? `${text.slice(0, max)}…` : text;
+  };
+
+  // 楽観的UIトグル（対象はブール値のみ）
+  const handleToggle = async (
+    acc: ThreadsAccount,
+    field: "autoPost" | "autoGenerate" | "autoReply" // ←型を限定
+  ) => {
     const newVal = !acc[field];
-    setAccounts(prev =>
-      prev.map(a =>
-        a.accountId === acc.accountId ? { ...a, [field]: newVal } : a
-      )
+    setAccounts((prev) =>
+      prev.map((a) => (a.accountId === acc.accountId ? { ...a, [field]: newVal } : a))
     );
     await fetch("/api/threads-accounts", {
       method: "PATCH",
@@ -58,7 +67,7 @@ export default function SNSAccountsTable() {
       credentials: "include",
       body: JSON.stringify({
         accountId: acc.accountId,
-        updateFields: { [field]: newVal }
+        updateFields: { [field]: newVal },
       }),
     });
   };
@@ -121,17 +130,18 @@ export default function SNSAccountsTable() {
             <th className="py-2 px-3 w-28">本文生成</th>
             <th className="py-2 px-3 w-28">リプ返信</th>
             <th className="py-2 px-3 w-36">状態</th>
+            {/* ▼追加カラム：2段階投稿の有無／冒頭プレビュー */}
+            <th className="py-2 px-3 w-52">2段階投稿</th>
             <th className="py-2 px-3 w-20"></th>
           </tr>
         </thead>
         <tbody>
-          {accounts.map(acc => (
+          {accounts.map((acc) => (
             <tr key={acc.accountId} className="text-center border-t">
               <td className="py-2 px-3">{acc.displayName}</td>
               <td className="py-2 px-3">{acc.accountId}</td>
-              <td className="py-2 px-3">{acc.createdAt
-                ? new Date(acc.createdAt * 1000).toLocaleString()
-                : ""}
+              <td className="py-2 px-3">
+                {acc.createdAt ? new Date(acc.createdAt * 1000).toLocaleString() : ""}
               </td>
               <td className="py-2 px-3">
                 <ToggleSwitch
@@ -152,19 +162,27 @@ export default function SNSAccountsTable() {
                 />
               </td>
               <td className="py-2 px-3">{acc.statusMessage || ""}</td>
+              {/* ▼追加セル：2段階投稿の本文冒頭（最大30文字）を表示、未設定はダッシュ */}
+              <td className="py-2 px-3 text-left">
+                {acc.secondStageContent && acc.secondStageContent.trim().length > 0
+                  ? truncate(acc.secondStageContent, 30)
+                  : "—"}
+              </td>
               <td className="py-2 px-3">
-                <button
-                  className="bg-blue-500 text-white rounded px-3 py-1 hover:bg-blue-600"
-                  onClick={() => handleEditClick(acc)}
-                >
-                  編集
-                </button>
-                <button
-                  className="bg-red-500 text-white rounded px-3 py-1 hover:bg-red-600"
-                  onClick={() => handleDelete(acc)}
-                >
-                  削除
-                </button>
+                <div className="flex items-center justify-center gap-2">
+                  <button
+                    className="bg-blue-500 text-white rounded px-3 py-1 hover:bg-blue-600"
+                    onClick={() => handleEditClick(acc)}
+                  >
+                    編集
+                  </button>
+                  <button
+                    className="bg-red-500 text-white rounded px-3 py-1 hover:bg-red-600"
+                    onClick={() => handleDelete(acc)}
+                  >
+                    削除
+                  </button>
+                </div>
               </td>
             </tr>
           ))}
