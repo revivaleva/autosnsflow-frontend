@@ -15,6 +15,18 @@ const ddb = new DynamoDBClient({
   }
 });
 
+// 【追加】Cookieをパースするユーティリティを追加
+function parseCookies(cookieHeader?: string | string[]) {
+  const cookie = Array.isArray(cookieHeader) ? cookieHeader.join('; ') : (cookieHeader || '');
+  const map = new Map<string, string>();
+  if (!cookie) return map;
+  for (const kv of cookie.split(';').map(s => s.trim())) {
+    const [k, ...rest] = kv.split('=');
+    map.set(k, decodeURIComponent(rest.join('=')));
+  }
+  return map;
+}
+
 // 【追加】Cookie取得ヘルパ（ai-gateway.tsの方針に合わせて簡易実装）
 function getCookie(req: NextApiRequest, name: string): string | null {
   const cookie = req.headers.cookie;
@@ -26,19 +38,35 @@ function getCookie(req: NextApiRequest, name: string): string | null {
   return null;
 }
 
-// 【追加】ユーザーID抽出（Cookie "token" or Authorization: Bearer）→ JWTの`sub` or `userId`
+// 【修正】ユーザーID抽出ロジックを、他APIと同一仕様に統一（idToken → sub / cognito:username）
 function getUserIdFromRequest(req: NextApiRequest): string | null {
-  const cookieToken = getCookie(req, 'token'); // ←運用名に合わせて必要なら変更
-  const auth = req.headers.authorization?.split(' ')[1];
-  const raw = cookieToken || auth;
-  if (!raw) return null;
-  try {
-    const decoded: any = jwt.decode(raw);
-    if (!decoded) return null;
-    return decoded.userId || decoded.sub || null;
-  } catch {
-    return null;
+  // 1) Cookie の idToken を最優先で取得（/api/auth/login.ts と同一挙動）
+  const cookies = parseCookies(req.headers.cookie);
+  const idToken = cookies.get('idToken');
+  if (idToken) {
+    try {
+      const decoded: any = jwt.decode(idToken);
+      // 他APIと同じ優先順（/api/threads-accounts.ts）
+      return decoded?.sub || decoded?.['cognito:username'] || null;
+    } catch {
+      // 無効トークンは次の手段へ
+    }
   }
+
+  // 2) フォールバック：Authorization: Bearer <token>（ローカル確認や将来拡張用）
+  const auth = req.headers.authorization?.startsWith('Bearer ')
+    ? req.headers.authorization.split(' ')[1]
+    : undefined;
+  if (auth) {
+    try {
+      const decoded: any = jwt.decode(auth);
+      return decoded?.sub || decoded?.['cognito:username'] || decoded?.userId || null;
+    } catch {
+      /* noop */
+    }
+  }
+
+  return null; // 見つからなければ未認証
 }
 
 // 【追加】数値変換
