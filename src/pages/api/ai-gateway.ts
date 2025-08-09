@@ -14,28 +14,46 @@ const client = new DynamoDBClient({
   }
 });
 
-// 【追加】JWT/ヘッダー/ボディの順で userId を抽出（後方互換）
-// 署名検証が必要な場合は jwt.decode → jwt.verify に差し替えてください
+// 〖追加〗Cookie文字列から指定名の値を取り出すヘルパ
+function getCookie(req: NextApiRequest, name: string): string | null {
+  const cookie = req.headers.cookie;
+  if (!cookie) return null;
+  const items = cookie.split(";").map(s => s.trim());
+  for (const kv of items) {
+    const [k, ...rest] = kv.split("=");
+    if (k === name) return decodeURIComponent(rest.join("="));
+  }
+  return null;
+}
+
+// 〖追加〗JWT/ヘッダー/ボディ/クッキーの順で userId を抽出（後方互換）
 function extractUserId(req: NextApiRequest): string | null {
-  // Authorization: Bearer <JWT>
+  // --- 既存の Authorization ヘッダ ---
   const rawAuth = (req.headers.authorization || (req.headers as any).Authorization) as string | undefined;
   if (rawAuth && rawAuth.startsWith('Bearer ')) {
     const token = rawAuth.slice('Bearer '.length);
     try {
-      const payload: any = jwt.decode(token); // ←必要に応じ verify に変更
-      // Cognito想定: sub ／ 独自クレーム: userId or custom:userid
+      const payload: any = jwt.decode(token); // 必要に応じて verify
       const uid = payload?.userId || payload?.sub || payload?.['custom:userid'];
       if (uid) return String(uid);
-    } catch {
-      // 無効トークンは無視して次の手段へ
-    }
+    } catch {}
   }
 
-  // リバプロ等で付与されるヘッダー
-  const headerUid = req.headers['x-user-id'];
-  if (typeof headerUid === 'string' && headerUid) return headerUid;
+  // --- 〖追加〗HttpOnly Cookie の idToken を読む ---
+  try {
+    const idToken = getCookie(req, "idToken");              // 〖追加〗
+    if (idToken) {                                          // 〖追加〗
+      const payload: any = jwt.decode(idToken);             // 〖追加〗必要なら verify
+      const uid = payload?.userId || payload?.sub || payload?.['custom:userid'];
+      if (uid) return String(uid);                          // 〖追加〗
+    }
+  } catch {}
 
-  // 最後に旧仕様を許可（後方互換）
+  // 既存：リバプロ等のヘッダ
+  const headerUid = req.headers['x-user-id'];
+  if (typeof headerUid === 'string' && headerUid) return headerUid as string;
+
+  // 既存：最後に旧仕様（body）を許可
   const bodyUid = (req.body && (req.body.userId || req.body.userid));
   if (typeof bodyUid === 'string' && bodyUid) return bodyUid;
 
