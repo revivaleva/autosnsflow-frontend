@@ -83,11 +83,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const result = await client.send(new GetItemCommand({
       TableName: 'UserSettings',
       Key: { PK: { S: `USER#${userId}` }, SK: { S: "SETTINGS" } },
-      // 【追加】取得フィールドを明示（存在しない場合もあるため安全にfallback）
-      ProjectionExpression: "openAiApiKey, modelDefault, selectedModel"
+      // 〖修正〗openAiApiKey → openaiApiKey に統一。
+      // ついでに予約語回避のため ExpressionAttributeNames を併用
+      ProjectionExpression: "#k, #m1, #m2",                    // 〖修正〗
+      ExpressionAttributeNames: {                               // 〖追加〗
+        "#k":  "openaiApiKey",  // DB実体の属性名                // 〖追加〗
+        "#m1": "modelDefault",                                  // 〖追加〗
+        "#m2": "selectedModel",                                  // 〖追加〗
+      }
     }));
     openaiApiKey = result.Item?.openaiApiKey?.S || "";
-    // 【変更】modelDefault と selectedModel の両方に対応（後方互換）
     selectedModel =
       result.Item?.modelDefault?.S ||
       result.Item?.selectedModel?.S ||
