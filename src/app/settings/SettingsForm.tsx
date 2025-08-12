@@ -32,6 +32,31 @@ export default function SettingsForm() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // [ADD] 返却形式の違いを吸収する正規化
+  const normalize = (raw: any): Settings => {
+    const src =
+      raw?.settings ?? // 例: { settings: {...} }
+      raw?.data ?? // 例: { data: {...} }
+      raw ?? {}; // 例: { ...直下... }
+
+    const list: string[] = Array.isArray(src.discordWebhooks) ? src.discordWebhooks : [];
+    const discordWebhook = src.discordWebhook ?? list[0] ?? "";
+    const errorDiscordWebhook = src.errorDiscordWebhook ?? list[1] ?? "";
+    const openaiApiKey = src.openaiApiKey ?? src.openAiApiKey ?? "";
+    const selectedModel = src.selectedModel ?? src.modelDefault ?? DEFAULTS.selectedModel;
+
+    return {
+      discordWebhook,
+      errorDiscordWebhook,
+      openaiApiKey,
+      selectedModel,
+      masterPrompt: src.masterPrompt ?? "",
+      replyPrompt: src.replyPrompt ?? "",
+      autoPost: (src.autoPost ?? DEFAULTS.autoPost) as "active" | "inactive",
+      doublePostDelay: String(src.doublePostDelay ?? "0"),
+    };
+  };
+
   // 初期ロード（GET /api/user-settings）
   useEffect(() => {
     let alive = true;
@@ -40,23 +65,16 @@ export default function SettingsForm() {
       setMessage(null);
       setError(null);
       try {
-        const res = await fetch("/api/user-settings");
-        if (!res.ok) throw new Error(`GET failed: ${res.status}`);
+        const res = await fetch("/api/user-settings", { credentials: "include" }); // [FIX] 認証Cookie送出
+        if (!res.ok) throw new Error(`GET failed: ${res.status} ${await res.text()}`);
         const data = await res.json();
         if (!alive) return;
-        setValues({
-          discordWebhook: data.discordWebhook ?? "",
-          errorDiscordWebhook: data.errorDiscordWebhook ?? "",
-          openaiApiKey: data.openaiApiKey ?? "",
-          selectedModel: data.selectedModel ?? DEFAULTS.selectedModel,
-          masterPrompt: data.masterPrompt ?? "",
-          replyPrompt: data.replyPrompt ?? "",
-          autoPost: (data.autoPost ?? DEFAULTS.autoPost) as "active" | "inactive",
-          doublePostDelay: data.doublePostDelay ?? "0",
-        });
+        setValues(normalize(data)); // [FIX] 返却形式の差異を吸収
       } catch (e: any) {
         if (!alive) return;
         setError(e?.message ?? "設定の取得に失敗しました");
+        // 失敗しても空フォームで表示継続
+        setValues((prev) => ({ ...prev }));
       } finally {
         if (alive) setLoading(false);
       }
@@ -77,12 +95,30 @@ export default function SettingsForm() {
     setMessage(null);
     setError(null);
     try {
+      // [ADD] APIが受け取りやすい形にマッピング（両方式を同時送信してサーバ互換を確保）
+      const payload = {
+        // 画面の項目（そのまま）
+        discordWebhook: values.discordWebhook,
+        errorDiscordWebhook: values.errorDiscordWebhook,
+        openaiApiKey: values.openaiApiKey,
+        selectedModel: values.selectedModel,
+        masterPrompt: values.masterPrompt,
+        replyPrompt: values.replyPrompt,
+        autoPost: values.autoPost,
+        doublePostDelay: values.doublePostDelay,
+        // 既存API互換キー（サーバ側がこちらを見ている場合に対応）
+        discordWebhooks: [values.discordWebhook, values.errorDiscordWebhook].filter(Boolean),
+        openAiApiKey: values.openaiApiKey,
+        modelDefault: values.selectedModel,
+      };
+
       const res = await fetch("/api/user-settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(values),
+        credentials: "include", // [ADD] 認証Cookie送出
+        body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error(`PUT failed: ${res.status}`);
+      if (!res.ok) throw new Error(`PUT failed: ${res.status} ${await res.text()}`);
       setMessage("保存しました");
     } catch (e: any) {
       setError(e?.message ?? "保存に失敗しました");
@@ -230,7 +266,9 @@ export default function SettingsForm() {
       {(message || error) && (
         <div
           className={`rounded px-4 py-3 text-sm ${
-            error ? "bg-red-50 text-red-700 border border-red-200" : "bg-green-50 text-green-700 border border-green-200"
+            error
+              ? "bg-red-50 text-red-700 border border-red-200"
+              : "bg-green-50 text-green-700 border border-green-200"
           }`}
         >
           {error ?? message}
