@@ -3,7 +3,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { ToggleSwitch } from "@/components/ToggleSwitch"; // 既存JSXコンポーネントを流用
+import ToggleSwitch from "@/components/ToggleSwitch";
 // 画面表示のため、フロントでは「見せる/隠す」判定のみ。サーバのAPI側で必ずadmin検証します。
 
 type AdminUserRow = {

@@ -3,7 +3,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { ToggleSwitch } from "@/components/ToggleSwitch";
+import ToggleSwitch from "@/components/ToggleSwitch";
 import SNSAccountModal from "./SNSAccountModal";
 
 // 型定義
