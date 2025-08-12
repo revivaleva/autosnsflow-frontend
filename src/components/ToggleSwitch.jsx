@@ -1,12 +1,20 @@
-// /src/components/ToggleSwitch.jsx
+// src/components/ToggleSwitch.jsx
+"use client";
 import React from "react";
 
-export default function ToggleSwitch({ enabled, checked, onChange, disabled }) {
+export function ToggleSwitch({ enabled, checked, onChange, disabled }) {
   const isChecked = checked ?? enabled ?? false;
 
-  const handleClick = () => {
+  const toggle = () => {
+    if (!disabled) onChange?.(!isChecked);
+  };
+
+  const onKeyDown = (e) => {
     if (disabled) return;
-    onChange?.(!isChecked);
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onChange?.(!isChecked);
+    }
   };
 
   return (
@@ -16,7 +24,8 @@ export default function ToggleSwitch({ enabled, checked, onChange, disabled }) {
       aria-checked={isChecked}
       aria-disabled={disabled}
       disabled={disabled}
-      onClick={handleClick}
+      onClick={toggle}
+      onKeyDown={onKeyDown}
       className={`relative inline-flex h-6 w-11 items-center rounded-full transition
         ${disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}
         ${isChecked ? "bg-blue-600" : "bg-gray-300"}`}
@@ -28,3 +37,5 @@ export default function ToggleSwitch({ enabled, checked, onChange, disabled }) {
     </button>
   );
 }
+
+export default ToggleSwitch;
