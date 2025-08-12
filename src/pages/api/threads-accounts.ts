@@ -6,10 +6,25 @@ import {
   UpdateItemCommand,
 } from "@aws-sdk/client-dynamodb";
 
-const region = process.env.AWS_REGION || process.env.NEXT_PUBLIC_AWS_REGION || "ap-northeast-1";
 const TBL_THREADS = process.env.TBL_THREADS || "ThreadsAccounts";
+const region = process.env.AWS_REGION || process.env.NEXT_PUBLIC_AWS_REGION || "ap-northeast-1";
 
-const ddb = new DynamoDBClient({ region });
+// ここから追加
+const resolvedCredentials =
+  (process.env.AUTOSNSFLOW_ACCESS_KEY_ID && process.env.AUTOSNSFLOW_SECRET_ACCESS_KEY)
+    ? {
+        accessKeyId: process.env.AUTOSNSFLOW_ACCESS_KEY_ID as string,
+        secretAccessKey: process.env.AUTOSNSFLOW_SECRET_ACCESS_KEY as string,
+      }
+    : (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY)
+    ? {
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID as string,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY as string,
+      }
+    : undefined;
+// ここまで追加
+
+const ddb = new DynamoDBClient({ region, credentials: resolvedCredentials });
 
 // TODO: 実運用の認証に合わせて取得
 function getUserId(req: NextApiRequest): string {

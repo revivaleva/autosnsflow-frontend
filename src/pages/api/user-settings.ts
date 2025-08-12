@@ -4,7 +4,23 @@ import { DynamoDBClient, GetItemCommand, PutItemCommand } from "@aws-sdk/client-
 
 const region = process.env.AWS_REGION || process.env.NEXT_PUBLIC_AWS_REGION || "ap-northeast-1";
 const TBL_SETTINGS = process.env.TBL_SETTINGS || "UserSettings";
-const ddb = new DynamoDBClient({ region });
+
+// ここから追加
+const resolvedCredentials =
+  (process.env.AUTOSNSFLOW_ACCESS_KEY_ID && process.env.AUTOSNSFLOW_SECRET_ACCESS_KEY)
+    ? {
+        accessKeyId: process.env.AUTOSNSFLOW_ACCESS_KEY_ID as string,
+        secretAccessKey: process.env.AUTOSNSFLOW_SECRET_ACCESS_KEY as string,
+      }
+    : (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY)
+    ? {
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID as string,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY as string,
+      }
+    : undefined;
+// ここまで追加
+
+const ddb = new DynamoDBClient({ region, credentials: resolvedCredentials });
 
 function getUserId(req: NextApiRequest): string {
   return (req.headers["x-user-id"] as string)
