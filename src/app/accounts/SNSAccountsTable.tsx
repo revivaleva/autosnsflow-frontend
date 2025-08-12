@@ -35,13 +35,14 @@ export default function SNSAccountsTable() {
   // [ADD] 更新中アカウントの制御（多重クリック防止＆UI無効化）
   const [updatingId, setUpdatingId] = useState<string | null>(null);
 
-  // 一覧取得処理
+  // /src/app/accounts/SNSAccountsTable.tsx
+  // [FIX] GET応答が {accounts} / {items} 両方来ても動くように
+  // （他はそのまま。トグルは前回の修正のままでOK）
   const loadAccounts = async () => {
     setLoading(true);
     const res = await fetch(`/api/threads-accounts`, { credentials: "include" });
     const data = await res.json();
-    // [FIX] API応答のキー差異に両対応（items / accounts）
-    setAccounts((data.items ?? data.accounts) ?? []);
+    setAccounts((data.items ?? data.accounts) ?? []); // [FIX]
     setLoading(false);
   };
 

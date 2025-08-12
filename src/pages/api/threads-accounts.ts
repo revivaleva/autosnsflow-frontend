@@ -6,66 +6,64 @@ import {
   UpdateItemCommand,
 } from "@aws-sdk/client-dynamodb";
 
-// 既存のregion/envはそのまま流用してください
-const region = process.env.AWS_REGION || "ap-northeast-1";
+const region = process.env.AWS_REGION || process.env.NEXT_PUBLIC_AWS_REGION || "ap-northeast-1";
 const TBL_THREADS = process.env.TBL_THREADS || "ThreadsAccounts";
 
-// TODO: 認証連携の実装に合わせて取得方法を統一する
+const ddb = new DynamoDBClient({ region });
+
+// TODO: 実運用の認証に合わせて取得
 function getUserId(req: NextApiRequest): string {
-  // セッション/トークンから抽出するのが正。ひとまずヘッダ or 環境変数をフォールバック
   return (req.headers["x-user-id"] as string)
     || process.env.USER_ID
     || "c7e43ae8-0031-70c5-a8ec-0f7962ee250f";
 }
-
-const ddb = new DynamoDBClient({ region });
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const userId = getUserId(req);
 
   try {
     if (req.method === "GET") {
-      // [FIX] GETでreq.bodyをパースしない（Amplify Gen1でbodyパースエラーになっていた）
-      const q = new QueryCommand({
+      // [FIX] GETでreq.bodyは読まない
+      const out = await ddb.send(new QueryCommand({
         TableName: TBL_THREADS,
         KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
         ExpressionAttributeValues: {
           ":pk":  { S: `USER#${userId}` },
           ":pfx": { S: "ACCOUNT#" },
         },
-        ProjectionExpression: "SK, displayName, autoPost, autoGenerate, autoReply, autoPostGroupId, personaMode, personaSimple, personaDetail",
-      });
-      const out = await ddb.send(q);
-      const items = (out.Items || []).map(i => ({
+        ProjectionExpression: "SK, displayName, createdAt, autoPost, autoGenerate, autoReply, statusMessage, personaMode, personaSimple, personaDetail, autoPostGroupId, secondStageContent",
+      }));
+
+      const accounts = (out.Items || []).map(i => ({
         accountId: (i.SK?.S || "").replace("ACCOUNT#", ""),
         displayName: i.displayName?.S || "",
+        createdAt: Number(i.createdAt?.N || "0"),
         autoPost: i.autoPost?.BOOL ?? false,
         autoGenerate: i.autoGenerate?.BOOL ?? false,
         autoReply: i.autoReply?.BOOL ?? false,
-        autoPostGroupId: i.autoPostGroupId?.S || "",
+        statusMessage: i.statusMessage?.S || "",
         personaMode: i.personaMode?.S || "",
         personaSimple: i.personaSimple?.S || "",
         personaDetail: i.personaDetail?.S || "",
+        autoPostGroupId: i.autoPostGroupId?.S || "",
+        secondStageContent: i.secondStageContent?.S || "",
       }));
-      res.status(200).json({ items });
+
+      // [FIX] フロント互換: accounts と items の両方で返す
+      res.status(200).json({ accounts, items: accounts });
       return;
     }
 
     if (req.method === "PATCH") {
-      // [ADD] トグル更新（部分更新に対応）
-      const { accountId, autoPost, autoGenerate, autoReply } = (typeof req.body === "string") ? JSON.parse(req.body) : req.body;
+      // [FIX] 期待ボディ: { accountId, autoPost?, autoGenerate?, autoReply? }
+      const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+      const { accountId, autoPost, autoGenerate, autoReply } = body || {};
+      if (!accountId) return res.status(400).json({ error: "accountId is required" });
 
-      if (!accountId) {
-        res.status(400).json({ error: "accountId is required" });
-        return;
-      }
-
-      // 動的Update式を組み立て
       const names: Record<string, string> = {};
       const values: Record<string, any> = {};
       const sets: string[] = [];
 
-      // それぞれ undefined でなければ更新
       if (typeof autoPost === "boolean") {
         names["#autoPost"] = "autoPost";
         values[":autoPost"] = { BOOL: autoPost };
@@ -82,17 +80,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         sets.push("#autoReply = :autoReply");
       }
 
-      if (sets.length === 0) {
-        res.status(400).json({ error: "no fields to update" });
-        return;
-      }
+      if (sets.length === 0) return res.status(400).json({ error: "no fields to update" });
 
       const cmd = new UpdateItemCommand({
         TableName: TBL_THREADS,
-        Key: {
-          PK: { S: `USER#${userId}` },
-          SK: { S: `ACCOUNT#${accountId}` },
-        },
+        Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } },
         UpdateExpression: `SET ${sets.join(", ")}`,
         ExpressionAttributeNames: names,
         ExpressionAttributeValues: values,
@@ -100,12 +92,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
 
       const out = await ddb.send(cmd);
-      const item = out.Attributes || {};
+      const a = out.Attributes || {};
       res.status(200).json({
         accountId,
-        autoPost: item.autoPost?.BOOL ?? false,
-        autoGenerate: item.autoGenerate?.BOOL ?? false,
-        autoReply: item.autoReply?.BOOL ?? false,
+        autoPost: a.autoPost?.BOOL ?? false,
+        autoGenerate: a.autoGenerate?.BOOL ?? false,
+        autoReply: a.autoReply?.BOOL ?? false,
       });
       return;
     }
@@ -113,7 +105,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     res.setHeader("Allow", "GET,PATCH");
     res.status(405).end("Method Not Allowed");
   } catch (e: any) {
-    console.error("threads-accounts api error", e);
+    console.error("threads-accounts error", e); // [ADD]
     res.status(500).json({ error: e?.message || "internal error" });
   }
 }
