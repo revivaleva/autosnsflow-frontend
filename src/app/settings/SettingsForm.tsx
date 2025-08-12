@@ -1,151 +1,125 @@
+// /src/app/settings/SettingsForm.tsx
+
 "use client";
 
-import React, { useEffect, useState } from "react";
-
-// 型定義
-type AutoPostStatus = "active" | "inactive";
-type ModelType =
-  | "gpt-3.5-turbo"
-  | "gpt-4o"
-  | "gpt-4-turbo"
-  | "gpt-4"
-  | "gpt-4o-mini";
-type SettingsType = {
-  discordWebhook: string;
-  errorDiscordWebhook: string;
-  openaiApiKey: string;
-  selectedModel: ModelType;
-  masterPrompt: string;
-  replyPrompt: string;
-  autoPost: AutoPostStatus;
-  doublePostDelay: string;
-};
-
-const modelOptions: ModelType[] = [
-  "gpt-3.5-turbo",
-  "gpt-4o",
-  "gpt-4-turbo",
-  "gpt-4",
-  "gpt-4o-mini",
-];
-
-const autoPostOptions: { value: AutoPostStatus; label: string }[] = [
-  { value: "active", label: "稼働" },
-  { value: "inactive", label: "停止" },
-];
-
-const delayOptions = ["0", "15", "30", "60", "120"];
+import { useEffect, useState } from "react";
 
 export default function SettingsForm() {
-  const [discordWebhook, setDiscordWebhook] = useState<string>("");
-  const [errorDiscordWebhook, setErrorDiscordWebhook] = useState<string>("");
-  const [openaiApiKey, setOpenAiApiKey] = useState<string>("");
-  const [selectedModel, setSelectedModel] = useState<ModelType>(modelOptions[0]);
-  const [masterPrompt, setMasterPrompt] = useState<string>("");
-  const [replyPrompt, setReplyPrompt] = useState<string>("");
-  const [autoPost, setAutoPost] = useState<AutoPostStatus>("active");
-  const [doublePostDelay, setDoublePostDelay] = useState<string>("0");
-  const [saving, setSaving] = useState<boolean>(false);
-  const [saveMessage, setSaveMessage] = useState<string>("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  // 既存項目（例）
+  const [discordWebhooks, setDiscordWebhooks] = useState<string>("");
+  const [planType, setPlanType] = useState<string>("free");
+
+  // [ADD] 読み取り専用で表示したい場合のみ保持（編集UIは出さない）
+  const [roDailyOpenAiLimit, setRoDailyOpenAiLimit] = useState<number | null>(null);
+  const [roDefaultOpenAiCost, setRoDefaultOpenAiCost] = useState<number | null>(null);
 
   useEffect(() => {
-    fetch('/api/user-settings', {
-      credentials: 'include',
-    })
-    .then(res => res.json())
-    .then((data: Partial<SettingsType>) => {
-      if (data) {
-        setDiscordWebhook(data.discordWebhook || "");
-        setErrorDiscordWebhook(data.errorDiscordWebhook || "");
-        setOpenAiApiKey(data.openaiApiKey || "");
-        setSelectedModel((data.selectedModel as ModelType) || modelOptions[0]);
-        setMasterPrompt(data.masterPrompt || "");
-        setReplyPrompt(data.replyPrompt || "");
-        setAutoPost((data.autoPost as AutoPostStatus) || "active");
-        setDoublePostDelay(data.doublePostDelay || "0");
+    const run = async () => {
+      try {
+        const res = await fetch("/api/user-settings");
+        const data = await res.json();
+
+        setDiscordWebhooks((data.discordWebhooks || []).join("\n"));
+        setPlanType(data.planType || "free");
+
+        // [ADD] 読み取り専用値の取得（APIは返却のみ）
+        setRoDailyOpenAiLimit(
+          typeof data.dailyOpenAiLimit === "number" ? data.dailyOpenAiLimit : null
+        );
+        setRoDefaultOpenAiCost(
+          typeof data.defaultOpenAiCost === "number" ? data.defaultOpenAiCost : null
+        );
+      } finally {
+        setLoading(false);
       }
-    });
+    };
+    run();
   }, []);
 
-  const handleSave = async () => {
+  const onSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     setSaving(true);
-    setSaveMessage("");
-    const res = await fetch("/api/user-settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({
-        discordWebhook,
-        errorDiscordWebhook,
-        openaiApiKey,
-        selectedModel,
-        masterPrompt,
-        replyPrompt,
-        autoPost,
-        doublePostDelay,
-      }),
-    });
-    const data = await res.json();
-    setSaving(false);
-    if (data.success) {
-      setSaveMessage("保存しました！");
-      setTimeout(() => setSaveMessage(""), 2000);
-    } else {
-      setSaveMessage(data.error || "保存に失敗しました");
+    try {
+      const body = {
+        discordWebhooks: discordWebhooks
+          .split("\n")
+          .map((s) => s.trim())
+          .filter(Boolean),
+        planType,
+        // [DEL] 上限値は管理画面からのみ更新可能にしたため送信しない
+        // dailyOpenAiLimit, defaultOpenAiCost
+      };
+      const res = await fetch("/api/user-settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(t);
+      }
+      alert("保存しました");
+    } catch (e: any) {
+      alert(`保存に失敗しました: ${e?.message || e}`);
+    } finally {
+      setSaving(false);
     }
   };
 
+  if (loading) {
+    return <div className="p-4 text-sm text-gray-500">読み込み中...</div>;
+  }
+
   return (
-    <div className="max-w-2xl mx-auto p-6 bg-white rounded-xl shadow">
-      <h2 className="text-xl font-bold mb-6">設定</h2>
-      <form autoComplete="off" onSubmit={e => { e.preventDefault(); handleSave(); }}>
-        <div className="space-y-4">
-          <div>
-            <label className="font-semibold block mb-1">DiscordWebhook</label>
-            <input type="text" className="w-full border rounded p-2" value={discordWebhook} onChange={e => setDiscordWebhook(e.target.value)} placeholder="https://discord.com/api/webhooks/..." autoComplete="off" />
-          </div>
-          <div>
-            <label className="font-semibold block mb-1">エラー通知DiscordWebhook</label>
-            <input type="text" className="w-full border rounded p-2" value={errorDiscordWebhook} onChange={e => setErrorDiscordWebhook(e.target.value)} placeholder="https://discord.com/api/webhooks/..." autoComplete="off" />
-          </div>
-          <div>
-            <label className="font-semibold block mb-1">OpenAI API キー</label>
-            <input type="new-password" className="w-full border rounded p-2" value={openaiApiKey} onChange={e => setOpenAiApiKey(e.target.value)} placeholder="sk-..." autoComplete="off" />
-          </div>
-          <div>
-            <label className="font-semibold block mb-1">使用モデル</label>
-            <select className="w-full border rounded p-2" value={selectedModel} onChange={e => setSelectedModel(e.target.value as ModelType)} autoComplete="off">
-              {modelOptions.map(m => <option key={m} value={m}>{m}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="font-semibold block mb-1">マスタープロンプト</label>
-            <textarea className="w-full border rounded p-2" rows={3} value={masterPrompt} onChange={e => setMasterPrompt(e.target.value)} placeholder="マスタープロンプトを入力" autoComplete="off" />
-          </div>
-          <div>
-            <label className="font-semibold block mb-1">リプライプロンプト</label>
-            <textarea className="w-full border rounded p-2" rows={3} value={replyPrompt} onChange={e => setReplyPrompt(e.target.value)} placeholder="リプライプロンプトを入力" autoComplete="off" />
-          </div>
-          <div>
-            <label className="font-semibold block mb-1">自動投稿</label>
-            <select className="w-full border rounded p-2" value={autoPost} onChange={e => setAutoPost(e.target.value as AutoPostStatus)} autoComplete="off">
-              {autoPostOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="font-semibold block mb-1">2段階投稿時間（分）</label>
-            <select className="w-full border rounded p-2" value={doublePostDelay} onChange={e => setDoublePostDelay(e.target.value)} autoComplete="off">
-              {delayOptions.map(opt => <option key={opt} value={opt}>{opt === "0" ? "なし" : `${opt}分後`}</option>)}
-            </select>
-          </div>
+    <form onSubmit={onSubmit} className="space-y-6 p-4 max-w-3xl">
+      {/* 既存: Discord Webhook */}
+      <div>
+        <label className="block text-sm font-medium mb-1">Discord Webhook URLs</label>
+        <textarea
+          className="w-full rounded-md border border-gray-300 p-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          rows={4}
+          value={discordWebhooks}
+          onChange={(e) => setDiscordWebhooks(e.target.value)}
+          placeholder="1行に1URL"
+        />
+        <p className="mt-1 text-xs text-gray-500">1行に1つずつ入力してください。</p>
+      </div>
+
+      {/* 既存: プラン */}
+      <div>
+        <label className="block text-sm font-medium mb-1">プラン</label>
+        <select
+          className="w-56 rounded-md border border-gray-300 p-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          value={planType}
+          onChange={(e) => setPlanType(e.target.value)}
+        >
+          <option value="free">free</option>
+          <option value="premium">premium</option>
+        </select>
+      </div>
+
+      {/* [ADD] 読み取り専用の参考表示（任意） */}
+      {roDailyOpenAiLimit !== null && (
+        <div className="rounded-md border border-gray-200 p-3 bg-gray-50">
+          <p className="text-sm text-gray-700">
+            OpenAI日次上限（参照のみ）: <span className="font-medium">{roDailyOpenAiLimit}</span>
+          </p>
+          <p className="mt-1 text-xs text-gray-500">
+            ※ 上限の変更は管理者にお問い合わせください。
+          </p>
         </div>
-        <div className="mt-8 flex justify-end items-center space-x-3">
-          {saveMessage && <span className="text-green-600">{saveMessage}</span>}
-          <button type="submit" className="bg-blue-500 text-white px-6 py-2 rounded hover:bg-blue-600 disabled:opacity-50" disabled={saving}>
-            {saving ? "保存中..." : "保存"}
-          </button>
-        </div>
-      </form>
-    </div>
+      )}
+
+      <button
+        type="submit"
+        disabled={saving}
+        className="inline-flex items-center rounded-md bg-indigo-600 px-4 py-2 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
+      >
+        {saving ? "保存中..." : "保存する"}
+      </button>
+    </form>
   );
 }
