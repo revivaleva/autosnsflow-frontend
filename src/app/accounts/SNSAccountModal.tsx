@@ -449,7 +449,7 @@ export default function SNSAccountModal({
           placeholder="例）営業用公式アカウント"
         />
 
-        <label className="block">アカウントID</label>
+        <label className="block">ID</label>
         <input
           className="mb-2 border rounded px-2 py-1 w-full"
           value={accountId}
@@ -532,7 +532,7 @@ export default function SNSAccountModal({
           </div>
         )}
 
-        <label className="block">自動投稿グループ</label>
+        <label className="block">投稿グループ</label>
         <select
           className="mb-4 border px-2 py-1 rounded w-full"
           value={groupId}

@@ -32,12 +32,16 @@ export default function SNSAccountsTable() {
   const [modalMode, setModalMode] = useState<"create" | "edit">("create");
   const [selectedAccount, setSelectedAccount] = useState<ThreadsAccount | null>(null);
 
+  // [ADD] 更新中アカウントの制御（多重クリック防止＆UI無効化）
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
+
   // 一覧取得処理
   const loadAccounts = async () => {
     setLoading(true);
     const res = await fetch(`/api/threads-accounts`, { credentials: "include" });
     const data = await res.json();
-    setAccounts(data.accounts ?? []);
+    // [FIX] API応答のキー差異に両対応（items / accounts）
+    setAccounts((data.items ?? data.accounts) ?? []);
     setLoading(false);
   };
 
@@ -57,19 +61,40 @@ export default function SNSAccountsTable() {
     acc: ThreadsAccount,
     field: "autoPost" | "autoGenerate" | "autoReply" // ←型を限定
   ) => {
+    if (updatingId) return; // [ADD] 同時更新ガード
     const newVal = !acc[field];
+    const prevVal = acc[field]; // [ADD] ロールバック用に保持
+    setUpdatingId(acc.accountId); // [ADD]
+
+    // 楽観更新
     setAccounts((prev) =>
       prev.map((a) => (a.accountId === acc.accountId ? { ...a, [field]: newVal } : a))
     );
-    await fetch("/api/threads-accounts", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({
-        accountId: acc.accountId,
-        updateFields: { [field]: newVal },
-      }),
-    });
+
+    try {
+      // [FIX] サーバー側の期待に合わせてトップレベルにブール値を渡す
+      const payload: Record<string, any> = { accountId: acc.accountId, [field]: newVal };
+      const resp = await fetch("/api/threads-accounts", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(payload),
+      });
+      if (!resp.ok) {
+        throw new Error(await resp.text());
+      }
+      // 成功時はサーバー値で再同期（ズレ防止）
+      await loadAccounts(); // [ADD]
+    } catch (e) {
+      console.error(e);
+      // [ADD] 失敗時はロールバック
+      setAccounts((prev) =>
+        prev.map((a) => (a.accountId === acc.accountId ? { ...a, [field]: prevVal } : a))
+      );
+      alert("更新に失敗しました。時間をおいて再度お試しください。");
+    } finally {
+      setUpdatingId(null); // [ADD]
+    }
   };
 
   const handleAddClick = () => {
@@ -111,7 +136,10 @@ export default function SNSAccountsTable() {
 
   return (
     <div className="max-w-5xl mx-auto mt-10">
-      <h1 className="text-2xl font-bold mb-6 text-center">SNSアカウント一覧</h1>
+      <h1 className="text-2xl font-bold mb-6 text-center">
+        {/* [FIX] 画面タイトル変更：SNSアカウント一覧 → Threadsアカウント一覧 */}
+        アカウント一覧
+      </h1>
       <div className="mb-3 flex justify-end">
         <button
           className="bg-green-500 text-white rounded px-4 py-2 hover:bg-green-600"
@@ -124,8 +152,8 @@ export default function SNSAccountsTable() {
         <thead className="bg-gray-100">
           <tr>
             <th className="py-2 px-3 w-32">アカウント名</th>
-            <th className="py-2 px-3 w-44">アカウントID</th>
-            <th className="py-2 px-3 w-36">作成日</th>
+            <th className="py-2 px-3 w-44">ID</th>
+            <th className="py-2 px-3 w-36">登録日</th>
             <th className="py-2 px-3 w-28">自動投稿</th>
             <th className="py-2 px-3 w-28">本文生成</th>
             <th className="py-2 px-3 w-28">リプ返信</th>
@@ -147,18 +175,21 @@ export default function SNSAccountsTable() {
                 <ToggleSwitch
                   checked={!!acc.autoPost}
                   onChange={() => handleToggle(acc, "autoPost")}
+                  disabled={updatingId === acc.accountId} // [ADD]
                 />
               </td>
               <td className="py-2 px-3">
                 <ToggleSwitch
                   checked={!!acc.autoGenerate}
                   onChange={() => handleToggle(acc, "autoGenerate")}
+                  disabled={updatingId === acc.accountId} // [ADD]
                 />
               </td>
               <td className="py-2 px-3">
                 <ToggleSwitch
                   checked={!!acc.autoReply}
                   onChange={() => handleToggle(acc, "autoReply")}
+                  disabled={updatingId === acc.accountId} // [ADD]
                 />
               </td>
               <td className="py-2 px-3">{acc.statusMessage || ""}</td>

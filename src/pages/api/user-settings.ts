@@ -40,6 +40,45 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         Key: { PK: { S: `USER#${userId}` }, SK: { S: "SETTINGS" } }
       }))
       const item = result.Item
+
+      // [ADD] 初回アクセス時はデフォルトで自動作成（Number型で保存）
+      if (!item) {
+        const defaults = {
+          PK: { S: `USER#${userId}` },
+          SK: { S: "SETTINGS" },
+          discordWebhook:      { S: "" },           // 単一文字列
+          errorDiscordWebhook: { S: "" },
+          openaiApiKey:        { S: "" },
+          selectedModel:       { S: "gpt-3.5-turbo" },
+          masterPrompt:        { S: "" },
+          replyPrompt:         { S: "" },
+          autoPost:            { S: "active" },
+          doublePostDelay:     { N: "0" }           // [ADD] DBはNumberで統一
+        }
+        await client.send(new PutItemCommand({
+          TableName: 'UserSettings',
+          Item: defaults,
+          ConditionExpression: "attribute_not_exists(PK) AND attribute_not_exists(SK)" // [ADD] 競合防止
+        }))
+        // 返却はUI互換のため string で統一
+        return res.status(200).json({
+          discordWebhook: "",
+          errorDiscordWebhook: "",
+          openaiApiKey: "",
+          selectedModel: "gpt-3.5-turbo",
+          masterPrompt: "",
+          replyPrompt: "",
+          autoPost: "active",
+          doublePostDelay: "0" // [ADD] 返却は文字列
+        })
+      }
+
+      // 既存レコードあり：doublePostDelay は N/S どちらでも読めるよう後方互換
+      const delayStr =
+        item?.doublePostDelay?.N !== undefined
+          ? String(Number(item.doublePostDelay.N) || 0)
+          : (item?.doublePostDelay?.S ?? "0")
+
       return res.status(200).json({
         discordWebhook: item?.discordWebhook?.S ?? "",
         errorDiscordWebhook: item?.errorDiscordWebhook?.S ?? "",
@@ -48,7 +87,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         masterPrompt: item?.masterPrompt?.S ?? "",
         replyPrompt: item?.replyPrompt?.S ?? "",
         autoPost: item?.autoPost?.S ?? "active",
-        doublePostDelay: item?.doublePostDelay?.S ?? "0" // 追加
+        doublePostDelay: delayStr // [MOD] 返却は文字列に統一
       })
     } catch (e: unknown) {
       return res.status(500).json({ error: String(e) })
@@ -68,23 +107,26 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       masterPrompt = "",
       replyPrompt = "",
       autoPost = "active",
-      doublePostDelay = "0", // 追加
+      doublePostDelay = "0", // 追加（string/number両対応）
     } = body;
 
     try {
+      // [MOD] 保存時は Number 型に正規化して保存
+      const delayNum = Number(doublePostDelay) || 0
+
       await client.send(new PutItemCommand({
         TableName: 'UserSettings',
         Item: {
           PK: { S: `USER#${userId}` },
           SK: { S: "SETTINGS" },
-          discordWebhook: { S: discordWebhook },
+          discordWebhook:      { S: discordWebhook },
           errorDiscordWebhook: { S: errorDiscordWebhook },
-          openaiApiKey: { S: openaiApiKey },
-          selectedModel: { S: selectedModel },
-          masterPrompt: { S: masterPrompt },
-          replyPrompt: { S: replyPrompt },
-          autoPost: { S: autoPost },
-          doublePostDelay: { S: doublePostDelay }, // 追加
+          openaiApiKey:        { S: openaiApiKey },
+          selectedModel:       { S: selectedModel },
+          masterPrompt:        { S: masterPrompt },
+          replyPrompt:         { S: replyPrompt },
+          autoPost:            { S: autoPost },
+          doublePostDelay:     { N: String(delayNum) } // [MOD] Numberで保存
         }
       }))
       return res.status(200).json({ success: true })
