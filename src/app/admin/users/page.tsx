@@ -131,13 +131,13 @@ export default function AdminUsersPage() {
                     </td>
                     <td className="px-3 py-2">
                       <ToggleSwitch
-                        enabled={r.autoPostAdminStop}
+                        checked={r.autoPostAdminStop}
                         onChange={(v: boolean) => onChangeField(r.userId, { autoPostAdminStop: v })}
                       />
                     </td>
                     <td className="px-3 py-2">
                       <ToggleSwitch
-                        enabled={!disabledByAdmin && r.autoPost}
+                        checked={!disabledByAdmin && r.autoPost}
                         onChange={(v: boolean) => onChangeField(r.userId, { autoPost: v })}
                         disabled={disabledByAdmin}
                       />
