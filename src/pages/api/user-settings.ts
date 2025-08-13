@@ -54,7 +54,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     res.setHeader("Allow", ["GET", "PUT"]);
     return res.status(405).json({ error: "Method Not Allowed" });
   } catch (e: any) {
-    const code = e?.statusCode || (e?.message === "Unauthorized" ? 401 : 500);
-    return res.status(code).json({ error: e?.message || "internal_error" });
+    console.error("user-settings error:", e?.detail || e); // [ADD] 詳細はログ
+    const code =
+      e?.statusCode ||
+      (e?.message === "Unauthorized" ? 401 : 500);
+    const message =
+      e?.message === "jwks_fetch_failed"
+        ? "認証設定エラー（JWKS取得失敗）"
+        : e?.message || "internal_error";
+    return res.status(code).json({ error: message });
   }
 }

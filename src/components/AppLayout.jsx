@@ -80,18 +80,11 @@ export default function AppLayout({ children }) {
           ))}
 
           {/* [admin-menu] 追記: 管理者のみ表示するメニュー */}
-          {isAdmin && (
-            <li key="/admin/users">
-              <Link
-                href="/admin/users"
-                className={`block px-3 py-2 rounded hover:bg-gray-700 ${
-                  pathname === "/admin/users" ? "bg-gray-700 font-semibold" : ""
-                }`}
-              >
-                管理画面
-              </Link>
-            </li>
-          )}
+          <li>
+            <a className="block px-3 py-2 hover:bg-gray-100 rounded" href="/admin/users">
+              管理（ユーザー一覧）
+            </a>
+          </li>
         </ul>
       </nav>
       <main className="flex-1 bg-gray-100 min-h-screen p-8">{children}</main>
