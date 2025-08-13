@@ -200,9 +200,9 @@ export default function AutoPostGroupsEditor() {
     fetch("/api/threads-accounts", { credentials: "include" })
       .then(res => res.json())
       .then(data => {
-        const keys: string[] = (data.accounts ?? [])
-          .map((a: { autoPostGroupId?: string }) => a.autoPostGroupId)
-          .filter(Boolean);
+        // [MOD] accounts / items の両方に対応
+        const list = (data.accounts ?? data.items ?? []) as Array<{ autoPostGroupId?: string }>;
+        const keys: string[] = list.map((a) => a.autoPostGroupId).filter(Boolean) as string[];
         setUsedGroupKeys(keys);
       });
   }, []);
