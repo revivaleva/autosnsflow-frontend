@@ -23,7 +23,12 @@ export const env = {
 };
 
 // [ADD] クライアントで使う環境変数の有無をUIで表示するためのユーティリティ
-export function getClientEnvStatus() {
+// [MOD] 戻り値の型を付与し、process.env を Record にキャストして型エラーを回避
+export function getClientEnvStatus(): {
+  missing: string[];
+  present: string[];
+  preview: { clientIdHead: string; userPoolIdHead: string; region: string };
+} {
   // クライアントに埋め込まれるのは NEXT_PUBLIC_* のみ
   const requiredKeys = [
     "NEXT_PUBLIC_COGNITO_CLIENT_ID",
@@ -31,19 +36,18 @@ export function getClientEnvStatus() {
     "NEXT_PUBLIC_AWS_REGION",
   ] as const;
 
-  const missing = requiredKeys.filter((k) => !process.env[k]);
-  const present = requiredKeys.filter((k) => !!process.env[k]);
+  // [MOD] 型の都合でキャスト
+  const penv = process.env as Record<string, string | undefined>;
+
+  const missing = requiredKeys.filter((k) => !penv[k]); // [MOD]
+  const present = requiredKeys.filter((k) => !!penv[k]); // [MOD]
 
   // 画面に出しても安全な“先頭数文字プレビュー”
   const preview = {
-    clientIdHead: (process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID || "").slice(0, 6),
-    userPoolIdHead: (process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID || "").slice(0, 6),
-    region: process.env.NEXT_PUBLIC_AWS_REGION || "",
+    clientIdHead: (penv.NEXT_PUBLIC_COGNITO_CLIENT_ID || "").slice(0, 6), // [MOD]
+    userPoolIdHead: (penv.NEXT_PUBLIC_COGNITO_USER_POOL_ID || "").slice(0, 6), // [MOD]
+    region: penv.NEXT_PUBLIC_AWS_REGION || "",
   };
 
-  return {
-    missing,         // 足りないキー一覧（例: ["NEXT_PUBLIC_COGNITO_CLIENT_ID"]）
-    present,         // 入っているキー一覧
-    preview,         // 先頭数文字の確認用表示
-  };
+  return { missing, present, preview };
 }
