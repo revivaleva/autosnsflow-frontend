@@ -64,7 +64,7 @@ export default function AppLayout({ children }) {
   return (
     <div className="flex min-h-screen">
       <nav className="w-56 bg-gray-900 text-white flex flex-col py-6 px-4">
-        <div className="mb-6 text-2xl font-bold">AutoSNSFlow</div>
+        <div className="mb-6 text-2xl font-bold">T-Booster</div>
         <ul className="space-y-2">
           {menu.map((item) => (
             <li key={item.href}>

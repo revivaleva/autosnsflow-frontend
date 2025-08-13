@@ -1,74 +1,93 @@
 // /src/app/login/page.tsx
+// [MOD] 直接 return で止めず、フォームは出しつつ上部に赤帯で警告を出す
+"use client";
 
-"use client"
-
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
-import SignUpModal from "./SignUpModal";
+import { useState } from "react";
+import { env, getClientEnvStatus } from "@/lib/env"; // [ADD]
 
 export default function LoginPage() {
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [error, setError] = useState('')
-  const router = useRouter()
-  const [signupOpen, setSignupOpen] = useState(false);
+  const { missing } = getClientEnvStatus(); // [ADD]
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError('')
-    const res = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+
+  const onSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    const resp = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password }),
-    })
-    if (res.ok) {
-      router.push('/') // トップページ等へリダイレクト
-    } else {
-      const data = await res.json()
-      setError(data.error || 'ログイン失敗')
-    }
-  }
+      credentials: "include",
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) return setError(data?.error || "ログインに失敗しました");
+    location.href = "/";
+  };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100">
-      <form className="bg-white p-8 rounded-2xl shadow-lg w-full max-w-sm" onSubmit={handleLogin}>
-        <h2 className="text-2xl font-bold mb-6 text-center">ログイン</h2>
-        <div className="mb-4">
-          <label className="block mb-1 text-gray-700">メールアドレス</label>
-          <input
-            type="email"
-            value={email}
-            onChange={e => setEmail(e.target.value)}
-            className="w-full p-2 border rounded-lg"
-            required
-            autoFocus
-          />
+    <main className="min-h-screen grid place-items-center">
+      <div className="w-[360px] rounded-2xl border p-6 bg-white shadow">
+        <h1 className="text-xl font-bold mb-4">ログイン</h1>
+
+        {/* [ADD] 環境変数の診断結果を常時表示（先頭数文字だけ） */}
+        {(missing.clientId || missing.userPoolId) && (
+          <div className="mb-4 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-700">
+            <p className="font-semibold mb-1">
+              {missing.clientId ? "Cognito ClientId is missing" : null}
+              {missing.clientId && missing.userPoolId ? " / " : null}
+              {missing.userPoolId ? "Cognito UserPoolId is missing" : null}
+            </p>
+            <p className="text-[11px] text-gray-600">
+              NEXT_PUBLIC_COGNITO_CLIENT_ID / NEXT_PUBLIC_COGNITO_USER_POOL_ID を
+              Amplify Hosting の環境変数に設定後、再デプロイしてください。
+            </p>
+          </div>
+        )}
+
+        <div className="text-[10px] text-gray-500 mb-3">
+          <div>Region: {env.NEXT_PUBLIC_AWS_REGION}</div>
+          <div>UserPoolId: {env.NEXT_PUBLIC_COGNITO_USER_POOL_ID?.slice(0, 10)}•••</div>
+          <div>ClientId: {env.NEXT_PUBLIC_COGNITO_CLIENT_ID?.slice(0, 6)}•••</div>
         </div>
-        <div className="mb-6">
-          <label className="block mb-1 text-gray-700">パスワード</label>
-          <input
-            type="password"
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            className="w-full p-2 border rounded-lg"
-            required
-          />
-        </div>
-        {error && <div className="mb-4 text-red-600">{error}</div>}
-        <button
-          type="submit"
-          className="w-full bg-blue-600 text-white py-2 rounded-xl hover:bg-blue-700 transition"
-        >
-          ログイン
-        </button>
-      <button
-        className="mt-6 text-blue-600 underline"
-        onClick={() => setSignupOpen(true)}
-      >
-        アカウントを作成
-      </button>
-      <SignUpModal open={signupOpen} onClose={() => setSignupOpen(false)} />
-      </form>
-    </div>
-  )
+
+        <form onSubmit={onSubmit} className="space-y-4">
+          <label className="block">
+            <span className="text-sm">メールアドレス</span>
+            <input
+              className="mt-1 w-full rounded border px-3 py-2"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="email"
+            />
+          </label>
+          <label className="block">
+            <span className="text-sm">パスワード</span>
+            <input
+              type="password"
+              className="mt-1 w-full rounded border px-3 py-2"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+            />
+          </label>
+
+          {error && <p className="text-red-600 text-sm">{error}</p>}
+
+          <button
+            type="submit"
+            className="w-full rounded bg-blue-600 text-white py-2 hover:bg-blue-700"
+            disabled={missing.clientId || missing.userPoolId} // [ADD] 認証に必要な値が空なら送信不可に
+          >
+            ログイン
+          </button>
+        </form>
+
+        <a href="#" className="text-blue-600 text-sm underline mt-4 inline-block">
+          アカウントを作成
+        </a>
+      </div>
+    </main>
+  );
 }
