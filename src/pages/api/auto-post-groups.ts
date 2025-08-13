@@ -1,12 +1,12 @@
 // /src/pages/api/auto-post-groups.ts
-// [MOD] decodeのみ→検証、Dynamo共通化、GETでbody読まない
+// [MOD] 認証→sub→Dynamo（共通化）、GETでbodyを読まない
 import type { NextApiRequest, NextApiResponse } from "next";
 import { QueryCommand, PutItemCommand, DeleteItemCommand } from "@aws-sdk/client-dynamodb";
 import { createDynamoClient } from "@/lib/ddb";             // [ADD]
 import { verifyUserFromRequest } from "@/lib/auth";         // [ADD]
 
 const ddb = createDynamoClient();                           // [ADD]
-const TBL = process.env.TBL_AUTO_POST_GROUPS || "AutoPostGroups"; // [ADD]
+const TBL_GROUPS = process.env.TBL_AUTO_POST_GROUPS || "AutoPostGroups"; // [ADD]
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
@@ -15,7 +15,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     if (req.method === "GET") {
       const out = await ddb.send(new QueryCommand({
-        TableName: TBL,
+        TableName: TBL_GROUPS,
         KeyConditionExpression: "PK = :pk",
         ExpressionAttributeValues: { ":pk": { S: `USER#${userId}` } },
         ScanIndexForward: false,
@@ -42,7 +42,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       const createdAtNumber = !createdAt || isNaN(Number(createdAt)) ? Math.floor(Date.now() / 1000) : Number(createdAt);
       await ddb.send(new PutItemCommand({
-        TableName: TBL,
+        TableName: TBL_GROUPS,
         Item: {
           PK: { S: `USER#${userId}` },
           SK: { S: String(groupKey) },
@@ -62,7 +62,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (!groupKey) return res.status(400).json({ error: "groupKey required" });
 
       await ddb.send(new DeleteItemCommand({
-        TableName: TBL,
+        TableName: TBL_GROUPS,
         Key: { PK: { S: `USER#${userId}` }, SK: { S: String(groupKey) } },
       }));
       return res.status(200).json({ success: true });
@@ -71,7 +71,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     res.setHeader("Allow", ["GET", "POST", "PUT", "DELETE"]);
     return res.status(405).json({ error: "Method Not Allowed" });
   } catch (e: any) {
-    const code = e?.statusCode || (e?.message === "Unauthorized" ? 401 : 500); // [ADD]
-    return res.status(code).json({ error: e?.message || String(e) });          // [MOD]
+    const code = e?.statusCode || (e?.message === "Unauthorized" ? 401 : 500);
+    return res.status(code).json({ error: e?.message || "internal_error" });
   }
 }
