@@ -1,54 +1,34 @@
+// /src/pages/api/replies.ts
+// [MOD] decodeのみ→検証へ統一、DynamoDBクライアントを共通化
 import type { NextApiRequest, NextApiResponse } from "next";
-import {
-  DynamoDBClient,
-  QueryCommand
-} from "@aws-sdk/client-dynamodb";
-import jwt from "jsonwebtoken";
+import { QueryCommand } from "@aws-sdk/client-dynamodb";
+import { createDynamoClient } from "@/lib/ddb";             // [ADD]
+import { verifyUserFromRequest } from "@/lib/auth";         // [ADD]
 
-// Amplify Hosting (Gen1) でシークレット環境変数を読み込み
-const client = new DynamoDBClient({
-  region: process.env.NEXT_PUBLIC_AWS_REGION,  // 公開してもよい
-  credentials: {
-    accessKeyId: process.env.AUTOSNSFLOW_ACCESS_KEY_ID!,
-    secretAccessKey: process.env.AUTOSNSFLOW_SECRET_ACCESS_KEY!,
-  }
-});
+const ddb = createDynamoClient();                           // [ADD]
+const TBL = process.env.TBL_REPLIES || "Replies";           // [ADD] 環境変数化（既定: Replies）
 
-// JWTからuserId取得（subまたはcognito:username）
-function getUserIdFromToken(token?: string): string | null {
-  if (!token) return null;
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
-    const decoded = jwt.decode(token) as any;
-    return decoded?.sub || decoded?.["cognito:username"] || null;
-  } catch {
-    return null;
-  }
-}
+    if (req.method !== "GET") return res.status(405).json({ error: "Method Not Allowed" });
 
-export default async function handler(
-  req: NextApiRequest,
-  res: NextApiResponse
-) {
-  const cookies = req.headers.cookie?.split(";").map((s) => s.trim()) ?? [];
-  const idToken = cookies.find((c) => c.startsWith("idToken="))?.split("=")[1];
-  const userId = getUserIdFromToken(idToken);
+    const user = await verifyUserFromRequest(req);          // [ADD] Cognito検証
+    const userId = user.sub;                                // [ADD]
 
-  if (!userId) return res.status(401).json({ error: "認証が必要です（idTokenが無効）" });
+    const { Items } = await ddb.send(new QueryCommand({
+      TableName: TBL,
+      KeyConditionExpression: "PK = :pk",
+      ExpressionAttributeValues: { ":pk": { S: `USER#${userId}` } },
+      ScanIndexForward: false,
+      Limit: 200,
+    }));
 
-  const params = {
-    TableName: "Replies",
-    KeyConditionExpression: "PK = :pk",
-    ExpressionAttributeValues: { ":pk": { S: `USER#${userId}` } },
-  };
-
-  try {
-    const { Items } = await client.send(new QueryCommand(params));
-    res.status(200).json({
-      replies: (Items ?? []).map((i) => ({
-        id: i.SK.S,
+    return res.status(200).json({
+      replies: (Items ?? []).map((i: any) => ({
+        id: i.SK?.S || "",
         postId: i.postId?.S ?? "",
         accountId: i.accountId?.S ?? "",
-        scheduledAt: Number(i.scheduledAt?.N ?? 0),
+        scheduledAt: i.scheduledAt?.N ? Number(i.scheduledAt.N) : 0,
         content: i.content?.S ?? "",
         replyContent: i.replyContent?.S ?? "",
         responseContent: i.responseContent?.S ?? "",
@@ -57,7 +37,8 @@ export default async function handler(
         createdAt: i.createdAt?.N ? Number(i.createdAt.N) : null,
       })),
     });
-  } catch (e: unknown) {
-    res.status(500).json({ error: String(e) });
+  } catch (e: any) {
+    const code = e?.statusCode || (e?.message === "Unauthorized" ? 401 : 500); // [ADD]
+    return res.status(code).json({ error: e?.message || String(e) });          // [MOD]
   }
 }

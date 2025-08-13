@@ -1,17 +1,16 @@
 // /src/pages/api/user-settings.ts
-// [MOD] 暫定の固定userIdを廃止し、Cognito IdToken から特定
+// [MOD] 設定APIを「ログインユーザーの sub でDynamoDB を読む」本番仕様に統一
 import type { NextApiRequest, NextApiResponse } from "next";
-import { DynamoDBClient, GetItemCommand, UpdateItemCommand } from "@aws-sdk/client-dynamodb";
+import { GetItemCommand, UpdateItemCommand } from "@aws-sdk/client-dynamodb";
+import { createDynamoClient } from "@/lib/ddb"; // [ADD]
 import { verifyUserFromRequest } from "@/lib/auth"; // [ADD]
 
-const region = process.env.AWS_REGION || "ap-northeast-1";
 const TBL_SETTINGS = process.env.TBL_SETTINGS || "UserSettings";
-
-const ddb = new DynamoDBClient({ region });
+const ddb = createDynamoClient(); // [ADD]
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
-    const user = await verifyUserFromRequest(req); // [ADD] 本番仕様: JWT検証
+    const user = await verifyUserFromRequest(req); // [ADD]
     const userId = user.sub;                        // [ADD]
 
     if (req.method === "GET") {
@@ -22,20 +21,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         })
       );
       const it: any = out.Item || {};
-      const body = {
+      return res.status(200).json({
         discordWebhooks: (it.discordWebhooks?.L || []).map((x: any) => x.S).filter(Boolean),
         planType: it.planType?.S || "free",
-        // [KEEP] 参照用に返す（編集は不可）
         dailyOpenAiLimit: it.dailyOpenAiLimit?.N ? Number(it.dailyOpenAiLimit.N) : 200,
         defaultOpenAiCost: it.defaultOpenAiCost?.N ? Number(it.defaultOpenAiCost.N) : 1,
-      };
-      return res.status(200).json(body);
+      });
     }
 
     if (req.method === "PUT") {
       const { discordWebhooks, planType } = req.body || {};
       const wl = Array.isArray(discordWebhooks) ? discordWebhooks : [];
-      // [KEEP][MOD] 上限値は管理APIのみで変更可能のためUpdate対象から除外
       await ddb.send(
         new UpdateItemCommand({
           TableName: TBL_SETTINGS,
@@ -54,14 +50,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     res.setHeader("Allow", ["GET", "PUT"]);
     return res.status(405).json({ error: "Method Not Allowed" });
   } catch (e: any) {
-    console.error("user-settings error:", e?.detail || e); // [ADD] 詳細はログ
+    console.error("user-settings error:", e?.detail || e);
+    const msg = String(e?.message || "");
     const code =
       e?.statusCode ||
-      (e?.message === "Unauthorized" ? 401 : 500);
-    const message =
-      e?.message === "jwks_fetch_failed"
-        ? "認証設定エラー（JWKS取得失敗）"
-        : e?.message || "internal_error";
-    return res.status(code).json({ error: message });
+      (msg === "Unauthorized" ? 401 : msg.includes("credentials") ? 500 : 500);
+    return res.status(code).json({
+      error:
+        msg === "jwks_fetch_failed"
+          ? "認証設定エラー（JWKS取得失敗）"
+          : msg || "internal_error",
+    });
   }
 }

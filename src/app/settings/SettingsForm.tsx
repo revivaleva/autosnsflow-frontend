@@ -247,7 +247,7 @@ export default function SettingsForm() {
         </p>
       </div>
 
-      {/* 連投ディレイ（追加されていた既存項目） */}
+      {/* 連投ディレイ（分） */}
       <div className="space-y-2">
         <label className="block text-sm font-medium text-gray-700">
           連投ディレイ（分）
