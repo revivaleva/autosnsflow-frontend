@@ -361,6 +361,26 @@ export default function SNSAccountModal({
 
   const originalAccountId = account?.accountId;
 
+  // [ADD] 削除ハンドラ（編集時のみ使用）
+  const handleDelete = async () => {
+    if (!originalAccountId) return;
+    if (!confirm("このアカウントを削除します。よろしいですか？")) return;
+    try {
+      const res = await fetch("/api/threads-accounts", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ accountId: originalAccountId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.error) throw new Error(data?.error || "delete failed");
+      await reloadAccounts();
+      onClose();
+    } catch (e: any) {
+      alert("削除に失敗しました: " + (e?.message || e));
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setSaving(true);
@@ -421,6 +441,8 @@ export default function SNSAccountModal({
       setSaving(false);
     }
   };
+
+  
 
   if (!open) return null;
 
@@ -650,22 +672,34 @@ export default function SNSAccountModal({
           onChange={(e) => setSecondStageContent(e.target.value)}
         />
 
-        <div className="text-right mt-6">
-          <button
-            type="submit"
-            className="bg-blue-500 text-white rounded px-5 py-2 hover:bg-blue-600 mr-2"
-            disabled={saving}
-          >
-            {mode === "edit" ? "保存" : "登録"}
-          </button>
-          <button
-            type="button"
-            className="bg-gray-300 text-gray-800 rounded px-4 py-2"
-            onClick={onClose}
-            disabled={saving}
-          >
-            キャンセル
-          </button>
+        <div className="mt-6 flex items-center justify-between">
+          <div>
+            {mode === "edit" && (
+              <button
+                type="button"
+                onClick={handleDelete}
+                className="rounded bg-red-600 px-4 py-2 text-white hover:bg-red-700"
+              >
+                削除
+              </button>
+            )}
+          </div>
+          <div className="text-right">
+            <button
+              type="submit"
+              className="bg-blue-500 text-white rounded px-5 py-2 hover:bg-blue-600 mr-2"
+              // 既存の saving フラグがある場合は disabled を付与
+            >
+              {mode === "edit" ? "保存" : "登録"}
+            </button>
+            <button
+              type="button"
+              className="bg-gray-300 text-gray-800 rounded px-4 py-2"
+              onClick={onClose}
+            >
+              キャンセル
+            </button>
+          </div>
         </div>
       </form>
     </div>
