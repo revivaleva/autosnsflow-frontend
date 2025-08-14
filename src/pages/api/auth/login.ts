@@ -2,6 +2,7 @@
 // [MOD] サーバサイドは COGNITO_* を優先し、なければ NEXT_PUBLIC_* を利用
 import type { NextApiRequest, NextApiResponse } from "next";
 import { env } from "@/lib/env"; // [ADD]
+import { setAdminFlagFromServerOnce } from "@/lib/adminFlag";
 import {
   CognitoIdentityProviderClient,
   InitiateAuthCommand
@@ -34,6 +35,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     res.setHeader("Set-Cookie", [
       `idToken=${encodeURIComponent(idToken)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=3600`
     ]);
+    await setAdminFlagFromServerOnce(); // ← これだけでサーバ側の管理者フラグを設定
     return res.status(200).json({ ok: true });
   } catch (e: any) {
     return res.status(401).json({ error: e?.message || "auth_failed" });
