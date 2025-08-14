@@ -6,7 +6,7 @@ import { env } from "./env";
 export type VerifiedUser = JWTPayload & {
   sub: string;
   email?: string;
-  "cognito:groups"?: string[];
+  "cognito:groups"?: string[] | string; // [MOD] 文字列も許容（Cognitoの出方に揺れがあるため）
 };
 
 function getIdTokenFromReq(req: any): string | null {
@@ -44,8 +44,14 @@ export async function verifyUserFromRequest(req: any): Promise<VerifiedUser> {
 }
 
 export function assertAdmin(user: VerifiedUser) {
-  const groups = (user["cognito:groups"] as string[]) || [];
-  if (!groups.includes("admin")) {
+  // [ADD] 環境変数で上書き可能。未設定は "Admins" 固定。
+  const ADMIN_GROUP = (process.env.ADMIN_GROUP || "Admins").trim();
+
+  // [MOD] groups は array/string 両対応に正規化
+  const raw = user["cognito:groups"];
+  const groups = Array.isArray(raw) ? raw : typeof raw === "string" ? [raw] : [];
+
+  if (!groups.includes(ADMIN_GROUP)) {
     const e: any = new Error("forbidden");
     e.statusCode = 403;
     throw e;

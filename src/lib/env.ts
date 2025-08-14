@@ -1,53 +1,59 @@
-// /src/lib/env.ts
-// [ADD] サーバ/クライアント共通の環境変数読み出し（サーバはNON-aws前綴りも許可）
-export const env = {
-  // [KEEP or ADD] クライアント/サーバ共通の環境変数取得（サーバはフォールバックあり）
-  NEXT_PUBLIC_AWS_REGION: process.env.NEXT_PUBLIC_AWS_REGION || "ap-northeast-1",
-  NEXT_PUBLIC_COGNITO_USER_POOL_ID: process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID || "",
-  NEXT_PUBLIC_COGNITO_CLIENT_ID: process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID || "",
+// /src/lib/auth.ts
+// [ADD] API Route からだけ使うCognito検証（Cookie or Bearer）
+import { createRemoteJWKSet, jwtVerify, JWTPayload } from "jose";
+import { env } from "./env";
 
-  // サーバ側優先。未設定なら NEXT_PUBLIC_* をフォールバック
-  COGNITO_USER_POOL_ID:
-    process.env.COGNITO_USER_POOL_ID || process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID || "",
-  COGNITO_CLIENT_ID:
-    process.env.COGNITO_CLIENT_ID || process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID || "",
-  AWS_REGION:
-    process.env.COGNITO_AWS_REGION ||
-    process.env.AWS_REGION ||
-    process.env.NEXT_PUBLIC_AWS_REGION ||
-    "ap-northeast-1",
-
-  // （暫定運用）固定アクセスキーがあればサーバ側で使用。将来はロール利用へ移行予定。
-  AUTOSNSFLOW_ACCESS_KEY_ID: process.env.AUTOSNSFLOW_ACCESS_KEY_ID || "",
-  AUTOSNSFLOW_SECRET_ACCESS_KEY: process.env.AUTOSNSFLOW_SECRET_ACCESS_KEY || "",
+export type VerifiedUser = JWTPayload & {
+  sub: string;
+  email?: string;
+  "cognito:groups"?: string[] | string; // [MOD] 文字列も許容（Cognitoの出方に揺れがあるため）
 };
 
-// [ADD] クライアントで使う環境変数の有無をUIで表示するためのユーティリティ
-// [MOD] 戻り値の型を付与し、process.env を Record にキャストして型エラーを回避
-export function getClientEnvStatus(): {
-  missing: string[];
-  present: string[];
-  preview: { clientIdHead: string; userPoolIdHead: string; region: string };
-} {
-  // クライアントに埋め込まれるのは NEXT_PUBLIC_* のみ
-  const requiredKeys = [
-    "NEXT_PUBLIC_COGNITO_CLIENT_ID",
-    "NEXT_PUBLIC_COGNITO_USER_POOL_ID",
-    "NEXT_PUBLIC_AWS_REGION",
-  ] as const;
+function getIdTokenFromReq(req: any): string | null {
+  const auth = req.headers?.authorization || "";
+  if (auth.startsWith("Bearer ")) return auth.slice(7);
+  const cookie = req.headers?.cookie || "";
+  const m = cookie.match(/(?:^|;\s*)idToken=([^;]+)/);
+  return m ? decodeURIComponent(m[1]) : null;
+}
 
-  // [MOD] 型の都合でキャスト
-  const penv = process.env as Record<string, string | undefined>;
+export async function verifyUserFromRequest(req: any): Promise<VerifiedUser> {
+  const token = getIdTokenFromReq(req);
+  if (!token) {
+    const e: any = new Error("Unauthorized");
+    e.statusCode = 401;
+    throw e;
+  }
+  const issuer = `https://cognito-idp.${env.AWS_REGION}.amazonaws.com/${env.COGNITO_USER_POOL_ID}`;
+  try {
+    const JWKS = createRemoteJWKSet(new URL(`${issuer}/.well-known/jwks.json`));
+    const { payload } = await jwtVerify(token, JWKS, { issuer });
+    if (!payload.sub) {
+      const e: any = new Error("Invalid token");
+      e.statusCode = 401;
+      throw e;
+    }
+    return payload as VerifiedUser;
+  } catch (err: any) {
+    const msg = String(err?.message || "");
+    const e: any = new Error(msg.includes("Expected 200 OK") ? "jwks_fetch_failed" : "token_verify_failed");
+    e.statusCode = msg.includes("Expected 200 OK") ? 500 : 401;
+    e.detail = msg;
+    throw e;
+  }
+}
 
-  const missing = requiredKeys.filter((k) => !penv[k]); // [MOD]
-  const present = requiredKeys.filter((k) => !!penv[k]); // [MOD]
+export function assertAdmin(user: VerifiedUser) {
+  // [ADD] 環境変数で上書き可能。未設定は "Admins" 固定。
+  const ADMIN_GROUP = (process.env.ADMIN_GROUP || "Admins").trim();
 
-  // 画面に出しても安全な“先頭数文字プレビュー”
-  const preview = {
-    clientIdHead: (penv.NEXT_PUBLIC_COGNITO_CLIENT_ID || "").slice(0, 6), // [MOD]
-    userPoolIdHead: (penv.NEXT_PUBLIC_COGNITO_USER_POOL_ID || "").slice(0, 6), // [MOD]
-    region: penv.NEXT_PUBLIC_AWS_REGION || "",
-  };
+  // [MOD] groups は array/string 両対応に正規化
+  const raw = user["cognito:groups"];
+  const groups = Array.isArray(raw) ? raw : typeof raw === "string" ? [raw] : [];
 
-  return { missing, present, preview };
+  if (!groups.includes(ADMIN_GROUP)) {
+    const e: any = new Error("forbidden");
+    e.statusCode = 403;
+    throw e;
+  }
 }
