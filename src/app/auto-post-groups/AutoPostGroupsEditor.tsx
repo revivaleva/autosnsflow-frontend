@@ -1,4 +1,4 @@
-// src/ui-components/AutoPostGroupsEditor.tsx
+// /src/app/auto-post-groups/AutoPostGroupsEditor.tsx
 
 "use client";
 
@@ -33,9 +33,11 @@ type GroupModalProps = {
 // =======================
 const API = "/api/auto-post-groups";
 
-// "07:00-09:30" → {start: "07:00", end: "09:30"}
+// [MOD] "07:00-09:30" → {start, end}。余分な空白をトリムして安全化
 function parseTimeRange(time: string = "", theme: string = ""): ScheduleType {
-  const [start = "", end = ""] = (time || "").split("-");
+  const [startRaw = "", endRaw = ""] = (time || "").split("-");
+  const start = startRaw.trim();
+  const end = endRaw.trim();
   return { start, end, theme: theme || "" };
 }
 
@@ -50,7 +52,9 @@ function GroupModal({
   groups,
 }: GroupModalProps) {
   const isEdit = !!group?.groupKey;
-  const [groupName, setGroupName] = useState<string>(group?.groupName || "");
+
+  // [MOD] 初期値は空。実データは下の useEffect で毎回セットし直す
+  const [groupName, setGroupName] = useState<string>("");
   const [schedule, setSchedule] = useState<ScheduleType[]>([
     { start: "", end: "", theme: "" },
     { start: "", end: "", theme: "" },
@@ -58,6 +62,28 @@ function GroupModal({
   ]);
   const [copySource, setCopySource] = useState<string>("");
 
+  // [ADD] モーダルを開いた/編集対象が変わったタイミングでフォームを再初期化
+  useEffect(() => {
+    if (!open) return;
+    if (group && isEdit) {
+      setGroupName(group.groupName || "");
+      setSchedule([
+        parseTimeRange(group.time1, group.theme1),
+        parseTimeRange(group.time2, group.theme2),
+        parseTimeRange(group.time3, group.theme3),
+      ]);
+    } else {
+      setGroupName("");
+      setSchedule([
+        { start: "", end: "", theme: "" },
+        { start: "", end: "", theme: "" },
+        { start: "", end: "", theme: "" },
+      ]);
+    }
+    setCopySource("");
+  }, [open, group, isEdit]);
+
+  // 既存の「複製」機能はそのまま
   useEffect(() => {
     if (!copySource) return;
     const src = groups.find((g) => g.groupKey === copySource);
@@ -200,9 +226,8 @@ export default function AutoPostGroupsEditor() {
     fetch("/api/threads-accounts", { credentials: "include" })
       .then(res => res.json())
       .then(data => {
-        // [MOD] accounts / items の両方に対応
-        const list = (data.accounts ?? data.items ?? []) as Array<{ autoPostGroupId?: string }>;
-        const keys: string[] = list.map((a) => a.autoPostGroupId).filter(Boolean) as string[];
+        const list = (data.accounts ?? data.items ?? []) as Array<{ autoPostGroupId?: string }>; // [MOD] 両形式を許容
+        const keys: string[] = list.map(a => a.autoPostGroupId).filter(Boolean) as string[];
         setUsedGroupKeys(keys);
       });
   }, []);
@@ -297,11 +322,11 @@ export default function AutoPostGroupsEditor() {
               <tr key={group.groupKey}>
                 <td className="border p-1">{group.groupName}</td>
                 <td className="border p-1">{group.time1}</td>
-                <td className="border p-1">{group.theme1}</td>
+                <td className="border p-1 whitespace-pre-wrap">{group.theme1}</td>
                 <td className="border p-1">{group.time2}</td>
-                <td className="border p-1">{group.theme2}</td>
+                <td className="border p-1 whitespace-pre-wrap">{group.theme2}</td>
                 <td className="border p-1">{group.time3}</td>
-                <td className="border p-1">{group.theme3}</td>
+                <td className="border p-1 whitespace-pre-wrap">{group.theme3}</td>
                 <td className="border p-1 space-x-1">
                   <button
                     className="bg-yellow-500 text-white px-2 py-1 rounded hover:bg-yellow-600"
@@ -313,7 +338,9 @@ export default function AutoPostGroupsEditor() {
                     <button
                       className="bg-red-500 text-white px-2 py-1 rounded hover:bg-red-600"
                       onClick={() => handleDelete(group.groupKey)}
-                    >削除</button>
+                    >
+                      削除
+                    </button>
                   )}
                 </td>
               </tr>
