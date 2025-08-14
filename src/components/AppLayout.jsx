@@ -61,6 +61,28 @@ export default function AppLayout({ children }) {
     }
   }, []);
 
+  // [admin-menu] 追記: ログアウト処理（API叩いてからクライアント側でもクッキー/LSをクリア）
+  async function handleLogout() {
+    try {
+      await fetch("/api/logout", { method: "POST", credentials: "include" });
+    } catch {}
+    try {
+      // cookie 双方キーに対応
+      document.cookie = "id_token=; Max-Age=0; path=/;";
+      document.cookie = "idToken=; Max-Age=0; path=/;";
+      document.cookie = "accessToken=; Max-Age=0; path=/;";
+      document.cookie = "refreshToken=; Max-Age=0; path=/;";
+      // localStorage も念のため削除
+      if (typeof window !== "undefined") {
+        window.localStorage.removeItem("id_token");
+        window.localStorage.removeItem("idToken");
+        window.localStorage.removeItem("accessToken");
+        window.localStorage.removeItem("refreshToken");
+      }
+    } catch {}
+    router.replace("/login");
+  }
+
   return (
     <div className="flex min-h-screen">
       <nav className="w-56 bg-gray-900 text-white flex flex-col py-6 px-4">
@@ -80,12 +102,29 @@ export default function AppLayout({ children }) {
           ))}
 
           {/* [admin-menu] 追記: 管理者のみ表示するメニュー */}
-          <li>
-            <a className="block px-3 py-2 hover:bg-gray-100 rounded" href="/admin/users">
-              管理（ユーザー一覧）
-            </a>
-          </li>
+          {isAdmin && (
+            <li>
+              <Link
+                href="/admin/users"
+                className={`block px-3 py-2 rounded hover:bg-gray-700 ${
+                  pathname === "/admin/users" ? "bg-gray-700 font-semibold" : ""
+                }`}
+              >
+                管理（ユーザー一覧）
+              </Link>
+            </li>
+          )}
         </ul>
+
+        {/* [admin-menu] 追記: メニュー下部のログアウトボタン */}
+        <div className="mt-auto pt-4 border-t border-white/10">
+          <button
+            onClick={handleLogout}
+            className="w-full text-left px-3 py-2 rounded bg-white/10 hover:bg-white/20"
+          >
+            ログアウト
+          </button>
+        </div>
       </nav>
       <main className="flex-1 bg-gray-100 min-h-screen p-8">{children}</main>
     </div>
