@@ -1,4 +1,6 @@
 // /src/app/settings/SettingsForm.tsx
+// [MOD] GETを { settings } に統一して取得。no-store & credentials を常時付与。
+//      正規化ロジックは互換キーも吸収。UIは現状のまま。
 "use client";
 
 import { useEffect, useState } from "react";
@@ -32,13 +34,12 @@ export default function SettingsForm() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // [ADD] 返却形式の違いを吸収する正規化
+  // [MOD] 返却 {settings} / 互換キーをまとめて正規化
   const normalize = (raw: any): Settings => {
     const src =
-      raw?.settings ?? // 例: { settings: {...} }
-      raw?.data ?? // 例: { data: {...} }
-      raw ?? {}; // 例: { ...直下... }
-
+      raw?.settings ??
+      raw?.data ??
+      raw ?? {};
     const list: string[] = Array.isArray(src.discordWebhooks) ? src.discordWebhooks : [];
     const discordWebhook = src.discordWebhook ?? list[0] ?? "";
     const errorDiscordWebhook = src.errorDiscordWebhook ?? list[1] ?? "";
@@ -65,23 +66,24 @@ export default function SettingsForm() {
       setMessage(null);
       setError(null);
       try {
-        const res = await fetch("/api/user-settings", { credentials: "include" }); // [FIX] 認証Cookie送出
+        const res = await fetch("/api/user-settings", {
+          credentials: "include",        // [MOD]
+          cache: "no-store",             // [ADD] 取得が古くならないように
+        });
         if (!res.ok) throw new Error(`GET failed: ${res.status} ${await res.text()}`);
         const data = await res.json();
         if (!alive) return;
-        setValues(normalize(data)); // [FIX] 返却形式の差異を吸収
+        setValues(normalize(data));
       } catch (e: any) {
         if (!alive) return;
         setError(e?.message ?? "設定の取得に失敗しました");
-        // 失敗しても空フォームで表示継続
+        // 取得失敗でも編集可能なように既定値を残す
         setValues((prev) => ({ ...prev }));
       } finally {
         if (alive) setLoading(false);
       }
     })();
-    return () => {
-      alive = false;
-    };
+    return () => { alive = false; };
   }, []);
 
   const onChange = <K extends keyof Settings>(key: K, v: Settings[K]) => {
@@ -95,7 +97,7 @@ export default function SettingsForm() {
     setMessage(null);
     setError(null);
     try {
-      // [ADD] APIが受け取りやすい形にマッピング（両方式を同時送信してサーバ互換を確保）
+      // [MOD] サーバ互換のダブルキーで送る（将来の後方互換）
       const payload = {
         // 画面の項目（そのまま）
         discordWebhook: values.discordWebhook,
@@ -106,7 +108,7 @@ export default function SettingsForm() {
         replyPrompt: values.replyPrompt,
         autoPost: values.autoPost,
         doublePostDelay: values.doublePostDelay,
-        // 既存API互換キー（サーバ側がこちらを見ている場合に対応）
+        // 互換キー
         discordWebhooks: [values.discordWebhook, values.errorDiscordWebhook].filter(Boolean),
         openAiApiKey: values.openaiApiKey,
         modelDefault: values.selectedModel,
@@ -115,7 +117,7 @@ export default function SettingsForm() {
       const res = await fetch("/api/user-settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        credentials: "include", // [ADD] 認証Cookie送出
+        credentials: "include",
         body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error(`PUT failed: ${res.status} ${await res.text()}`);
@@ -147,9 +149,7 @@ export default function SettingsForm() {
           className="w-full rounded border border-gray-300 px-3 py-2"
           placeholder="https://discord.com/api/webhooks/..."
         />
-        <p className="text-xs text-gray-500">
-          通常の通知を送る先の Webhook URL。
-        </p>
+        <p className="text-xs text-gray-500">通常の通知を送る先の Webhook URL。</p>
       </div>
 
       {/* エラー用 Discord Webhook */}
@@ -164,16 +164,12 @@ export default function SettingsForm() {
           className="w-full rounded border border-gray-300 px-3 py-2"
           placeholder="https://discord.com/api/webhooks/..."
         />
-        <p className="text-xs text-gray-500">
-          障害や失敗時の通知を送る先の Webhook URL。
-        </p>
+        <p className="text-xs text-gray-500">障害や失敗時の通知を送る先。</p>
       </div>
 
       {/* OpenAI APIキー */}
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-gray-700">
-          OpenAI APIキー
-        </label>
+        <label className="block text-sm font-medium text-gray-700">OpenAI APIキー</label>
         <input
           type="password"
           value={values.openaiApiKey}
@@ -182,16 +178,11 @@ export default function SettingsForm() {
           placeholder="sk-..."
           autoComplete="new-password"
         />
-        <p className="text-xs text-gray-500">
-          自動生成・自動返信に使用する API キー。
-        </p>
       </div>
 
       {/* 既定モデル */}
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-gray-700">
-          既定モデル
-        </label>
+        <label className="block text-sm font-medium text-gray-700">既定モデル</label>
         <select
           value={values.selectedModel}
           onChange={(e) => onChange("selectedModel", e.target.value)}
@@ -205,9 +196,7 @@ export default function SettingsForm() {
 
       {/* マスタープロンプト */}
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-gray-700">
-          マスタープロンプト（投稿生成）
-        </label>
+        <label className="block text-sm font-medium text-gray-700">マスタープロンプト（投稿生成）</label>
         <textarea
           value={values.masterPrompt}
           onChange={(e) => onChange("masterPrompt", e.target.value)}
@@ -218,9 +207,7 @@ export default function SettingsForm() {
 
       {/* 返信プロンプト */}
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-gray-700">
-          返信プロンプト（自動返信）
-        </label>
+        <label className="block text-sm font-medium text-gray-700">返信プロンプト（自動返信）</label>
         <textarea
           value={values.replyPrompt}
           onChange={(e) => onChange("replyPrompt", e.target.value)}
@@ -229,11 +216,9 @@ export default function SettingsForm() {
         />
       </div>
 
-      {/* 自動投稿 ON/OFF（ユーザー設定側のautoPost） */}
+      {/* 自動投稿 ON/OFF */}
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-gray-700">
-          自動投稿
-        </label>
+        <label className="block text-sm font-medium text-gray-700">自動投稿</label>
         <select
           value={values.autoPost}
           onChange={(e) => onChange("autoPost", e.target.value as "active" | "inactive")}
@@ -242,16 +227,11 @@ export default function SettingsForm() {
           <option value="active">有効</option>
           <option value="inactive">無効</option>
         </select>
-        <p className="text-xs text-gray-500">
-          管理者側で停止されている場合は、実行時にスキップされます。
-        </p>
       </div>
 
       {/* 連投ディレイ（分） */}
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-gray-700">
-          連投ディレイ（分）
-        </label>
+        <label className="block text-sm font-medium text-gray-700">連投ディレイ（分）</label>
         <input
           type="number"
           min={0}
@@ -262,7 +242,6 @@ export default function SettingsForm() {
         />
       </div>
 
-      {/* メッセージ */}
       {(message || error) && (
         <div
           className={`rounded px-4 py-3 text-sm ${
