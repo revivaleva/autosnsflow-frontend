@@ -53,23 +53,42 @@ export default function AppLayout({ children }) {
     return () => window.removeEventListener("storage", onStorage);
   }, [pathname]);
 
-  // ログアウト時はフラグもクリア
+  // これがログアウトボタンの onClick で呼ばれる想定
   async function handleLogout() {
     try {
-      await fetch("/api/logout", { method: "POST", credentials: "include" });
-    } catch {}
-    try {
-      document.cookie = "id_token=; Max-Age=0; path=/;";
-      document.cookie = "idToken=; Max-Age=0; path=/;";
-      document.cookie = "accessToken=; Max-Age=0; path=/;";
-      document.cookie = "refreshToken=; Max-Age=0; path=/;";
-      window.localStorage.removeItem("id_token");
-      window.localStorage.removeItem("idToken");
-      window.localStorage.removeItem("accessToken");
-      window.localStorage.removeItem("refreshToken");
-      clearAdminFlag(); // [admin-flag] 追加
-    } catch {}
-    router.replace("/login");
+      // 1) サーバー側 (HttpOnly / domain付き) クッキーの無効化
+      await fetch("/api/auth/logout", { method: "POST", credentials: "include" }).catch(() => {});
+
+      // 2) クライアント側のクッキー/LSを念のため全削除（domain あり/なし両対応）
+      const clearCookie = (name) => {
+        try {
+          const host = location.hostname;
+          // host-only
+          document.cookie = `${name}=; Max-Age=0; path=/;`;
+          // domain付き（.example.com）
+          document.cookie = `${name}=; Max-Age=0; path=/; domain=.${host};`;
+          // 可能な場合は Secure/SameSite も付けて上書き（無視されてもOK）
+          document.cookie = `${name}=; Max-Age=0; path=/; domain=.${host}; Secure; SameSite=None;`;
+        } catch {}
+      };
+
+      [
+        "idToken", "id_token",
+        "accessToken", "access_token",
+        "refreshToken", "refresh_token"
+      ].forEach(clearCookie);
+
+      try {
+        ["id_token","idToken","access_token","refresh_token","tb_is_admin"].forEach((k) => {
+          localStorage.removeItem(k);
+          sessionStorage.removeItem(k);
+        });
+      } catch {}
+      // 4) アプリのログイン画面へ
+      router.replace("/login");
+    } catch {
+      router.replace("/login");
+    }
   }
 
   return (
