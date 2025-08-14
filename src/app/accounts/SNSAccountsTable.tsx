@@ -1,12 +1,10 @@
 // src/app/accounts/SNSAccountsTable.tsx
-
 "use client";
 
 import React, { useEffect, useState } from "react";
 import ToggleSwitch from "@/components/ToggleSwitch";
 import SNSAccountModal from "./SNSAccountModal";
 
-// 型定義
 export type ThreadsAccount = {
   accountId: string;
   displayName: string;
@@ -19,8 +17,9 @@ export type ThreadsAccount = {
   personaSimple: string;
   personaDetail: string;
   autoPostGroupId: string;
-  /** ▼追加: 2段階投稿用のThreads投稿本文 */
   secondStageContent?: string;
+  // [ADD] アクセストークン（モーダル編集用）
+  accessToken?: string;
 };
 
 export default function SNSAccountsTable() {
@@ -106,7 +105,7 @@ export default function SNSAccountsTable() {
 
   const handleEditClick = (account: ThreadsAccount) => {
     setModalMode("edit");
-    setSelectedAccount(account);
+    setSelectedAccount(account); // [MOD] accessToken込みで渡る
     setModalOpen(true);
   };
 

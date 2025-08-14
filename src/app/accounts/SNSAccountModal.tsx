@@ -115,8 +115,8 @@ function AccountCopyModal({
   useEffect(() => {
     if (open) {
       fetch(`/api/threads-accounts`, { credentials: "include" })
-        .then(res => res.json())
-        .then(data => setAccounts(data.accounts ?? []));
+        .then((res) => res.json())
+        .then((data) => setAccounts((data.accounts ?? data.items ?? []) as AccountType[])); // [FIX] {items} 形式も許容
       setSelected(null);
     }
   }, [open]);
@@ -242,8 +242,8 @@ export default function SNSAccountModal({
   useEffect(() => {
     if (!open) return;
     fetch(`/api/auto-post-groups`, { credentials: "include" })
-      .then(res => res.json())
-      .then(data => setGroups(data.groups ?? []));
+      .then((res) => res.json())
+      .then((data) => setGroups(data.groups ?? []));
   }, [open]);
 
   useEffect(() => {
@@ -321,22 +321,22 @@ export default function SNSAccountModal({
       });
 
       // ▼【追加】非200時の詳細メッセージを拾う
-      const data = await res.json().catch(() => ({})); // 【追加】
+      const data = await res.json().catch(() => ({} as any)); // 【追加】
       setAiLoading(false);
 
-      if (!res.ok) { // 【追加】
-        const msg = data?.error || data?.message || "AI生成に失敗しました"; // 【追加】
+      if (!res.ok) {
+        const msg = (data as any)?.error || (data as any)?.message || "AI生成に失敗しました"; // 【追加】
         setError(msg); // 【追加】
         return;
       }
 
-      if (data.error) {
-        setError(data.error);
+      if ((data as any).error) {
+        setError((data as any).error);
         return;
       }
 
-      setAiPersonaDetail(data.personaDetail || "");
-      setAiPersonaSimple(data.personaSimple || "");
+      setAiPersonaDetail((data as any).personaDetail || "");
+      setAiPersonaSimple((data as any).personaSimple || "");
       setAiPreviewModalOpen(true);
     } catch (e: unknown) {
       setError("AI生成エラー: " + String(e));
@@ -347,9 +347,10 @@ export default function SNSAccountModal({
   const handleApplyAIPersona = ({ personaDetail, personaSimple }: AIPersonaPayload) => {
     // ▼【追加】文字列JSONのまま渡ってきても安全に取り込む
     try {
-      const obj = typeof personaDetail === "string" && personaDetail.trim()
-        ? JSON.parse(personaDetail)
-        : personaDetail || {};
+      const obj =
+        typeof personaDetail === "string" && personaDetail.trim()
+          ? JSON.parse(personaDetail)
+          : personaDetail || {};
       setPersona({ ...emptyPersona, ...(obj || {}) });
     } catch {
       setPersona({ ...emptyPersona });
@@ -401,13 +402,19 @@ export default function SNSAccountModal({
           secondStageContent: secondStageContent || "", // ← 追加
         }),
       });
-      const data = await res.json();
+      // [FIX] 成否判定を res.ok / data.ok で行う（APIは {ok:true} を返す）
+      let data: any = {};
+      try {
+        data = await res.json();
+      } catch {
+        data = {};
+      }
       setSaving(false);
-      if (data.success) {
+      if (res.ok || data.ok) { // [FIX]
         if (reloadAccounts) reloadAccounts();
         onClose();
       } else {
-        setError(data.error || "保存に失敗しました");
+        setError(data.error || "保存に失敗しました"); // [FIX]
       }
     } catch (e: unknown) {
       setError("通信エラー: " + String(e));
@@ -435,8 +442,12 @@ export default function SNSAccountModal({
         className="bg-white p-8 rounded shadow-lg min-w-[600px] max-h-[90vh] overflow-y-auto relative"
         onSubmit={handleSubmit}
       >
-        <button type="button" className="absolute top-2 right-2 text-gray-400" onClick={onClose}>×</button>
-        <h2 className="text-xl font-bold mb-4">{mode === "edit" ? "アカウント編集" : "新規アカウント追加"}</h2>
+        <button type="button" className="absolute top-2 right-2 text-gray-400" onClick={onClose}>
+          ×
+        </button>
+        <h2 className="text-xl font-bold mb-4">
+          {mode === "edit" ? "アカウント編集" : "新規アカウント追加"}
+        </h2>
 
         {error && <div className="mb-3 text-red-500">{error}</div>}
 
@@ -445,7 +456,7 @@ export default function SNSAccountModal({
         <input
           className="mb-2 border rounded px-2 py-1 w-full"
           value={displayName}
-          onChange={e => setDisplayName(e.target.value)}
+          onChange={(e) => setDisplayName(e.target.value)}
           placeholder="例）営業用公式アカウント"
         />
 
@@ -453,7 +464,7 @@ export default function SNSAccountModal({
         <input
           className="mb-2 border rounded px-2 py-1 w-full"
           value={accountId}
-          onChange={e => setAccountId(e.target.value)}
+          onChange={(e) => setAccountId(e.target.value)}
           placeholder="@account_id"
         />
 
@@ -461,7 +472,7 @@ export default function SNSAccountModal({
         <input
           className="mb-2 border rounded px-2 py-1 w-full"
           value={accessToken}
-          onChange={e => setAccessToken(e.target.value)}
+          onChange={(e) => setAccessToken(e.target.value)}
         />
 
         <label className="block">キャラクターイメージ</label>
@@ -511,24 +522,108 @@ export default function SNSAccountModal({
             className="border rounded p-2 w-full mb-3 min-h-[80px] resize-y"
             placeholder="簡易ペルソナ（例：このアカウントは〇〇な性格で、〇〇が好きな女性...）"
             value={personaSimple}
-            onChange={e => setPersonaSimple(e.target.value)}
+            onChange={(e) => setPersonaSimple(e.target.value)}
           />
         ) : (
           <div className="grid grid-cols-2 gap-x-3 gap-y-2 mb-3">
-            <input className="border px-2 py-1 rounded" name="name" value={persona.name} onChange={handlePersonaChange} placeholder="名前" />
-            <input className="border px-2 py-1 rounded" name="age" value={persona.age} onChange={handlePersonaChange} placeholder="年齢" />
-            <input className="border px-2 py-1 rounded" name="gender" value={persona.gender} onChange={handlePersonaChange} placeholder="性別" />
-            <input className="border px-2 py-1 rounded" name="job" value={persona.job} onChange={handlePersonaChange} placeholder="職業" />
-            <input className="border px-2 py-1 rounded" name="lifestyle" value={persona.lifestyle} onChange={handlePersonaChange} placeholder="生活スタイル" />
-            <input className="border px-2 py-1 rounded" name="character" value={persona.character} onChange={handlePersonaChange} placeholder="投稿キャラ" />
-            <input className="border px-2 py-1 rounded" name="tone" value={persona.tone} onChange={handlePersonaChange} placeholder="口調・内面" />
-            <input className="border px-2 py-1 rounded" name="vocab" value={persona.vocab} onChange={handlePersonaChange} placeholder="語彙傾向" />
-            <input className="border px-2 py-1 rounded" name="emotion" value={persona.emotion} onChange={handlePersonaChange} placeholder="感情パターン" />
-            <input className="border px-2 py-1 rounded" name="erotic" value={persona.erotic} onChange={handlePersonaChange} placeholder="エロ表現" />
-            <input className="border px-2 py-1 rounded" name="target" value={persona.target} onChange={handlePersonaChange} placeholder="ターゲット層" />
-            <input className="border px-2 py-1 rounded" name="purpose" value={persona.purpose} onChange={handlePersonaChange} placeholder="投稿目的" />
-            <input className="border px-2 py-1 rounded" name="distance" value={persona.distance} onChange={handlePersonaChange} placeholder="絡みの距離感" />
-            <input className="border px-2 py-1 rounded" name="ng" value={persona.ng} onChange={handlePersonaChange} placeholder="NG要素" />
+            <input
+              className="border px-2 py-1 rounded"
+              name="name"
+              value={persona.name}
+              onChange={handlePersonaChange}
+              placeholder="名前"
+            />
+            <input
+              className="border px-2 py-1 rounded"
+              name="age"
+              value={persona.age}
+              onChange={handlePersonaChange}
+              placeholder="年齢"
+            />
+            <input
+              className="border px-2 py-1 rounded"
+              name="gender"
+              value={persona.gender}
+              onChange={handlePersonaChange}
+              placeholder="性別"
+            />
+            <input
+              className="border px-2 py-1 rounded"
+              name="job"
+              value={persona.job}
+              onChange={handlePersonaChange}
+              placeholder="職業"
+            />
+            <input
+              className="border px-2 py-1 rounded"
+              name="lifestyle"
+              value={persona.lifestyle}
+              onChange={handlePersonaChange}
+              placeholder="生活スタイル"
+            />
+            <input
+              className="border px-2 py-1 rounded"
+              name="character"
+              value={persona.character}
+              onChange={handlePersonaChange}
+              placeholder="投稿キャラ"
+            />
+            <input
+              className="border px-2 py-1 rounded"
+              name="tone"
+              value={persona.tone}
+              onChange={handlePersonaChange}
+              placeholder="口調・内面"
+            />
+            <input
+              className="border px-2 py-1 rounded"
+              name="vocab"
+              value={persona.vocab}
+              onChange={handlePersonaChange}
+              placeholder="語彙傾向"
+            />
+            <input
+              className="border px-2 py-1 rounded"
+              name="emotion"
+              value={persona.emotion}
+              onChange={handlePersonaChange}
+              placeholder="感情パターン"
+            />
+            <input
+              className="border px-2 py-1 rounded"
+              name="erotic"
+              value={persona.erotic}
+              onChange={handlePersonaChange}
+              placeholder="エロ表現"
+            />
+            <input
+              className="border px-2 py-1 rounded"
+              name="target"
+              value={persona.target}
+              onChange={handlePersonaChange}
+              placeholder="ターゲット層"
+            />
+            <input
+              className="border px-2 py-1 rounded"
+              name="purpose"
+              value={persona.purpose}
+              onChange={handlePersonaChange}
+              placeholder="投稿目的"
+            />
+            <input
+              className="border px-2 py-1 rounded"
+              name="distance"
+              value={persona.distance}
+              onChange={handlePersonaChange}
+              placeholder="絡みの距離感"
+            />
+            <input
+              className="border px-2 py-1 rounded"
+              name="ng"
+              value={persona.ng}
+              onChange={handlePersonaChange}
+              placeholder="NG要素"
+            />
           </div>
         )}
 
@@ -536,7 +631,7 @@ export default function SNSAccountModal({
         <select
           className="mb-4 border px-2 py-1 rounded w-full"
           value={groupId}
-          onChange={e => setGroupId(e.target.value)}
+          onChange={(e) => setGroupId(e.target.value)}
         >
           <option value="">選択してください</option>
           {groups.map((g: AutoPostGroupType) => (
@@ -547,9 +642,7 @@ export default function SNSAccountModal({
         </select>
 
         {/* ▼追加UI: 2段階投稿（Threads用テキスト） */}
-        <label className="block font-semibold mt-4">
-          2段階投稿（Threads用テキスト）
-        </label>
+        <label className="block font-semibold mt-4">2段階投稿（Threads用テキスト）</label>
         <textarea
           className="border rounded p-2 w-full mb-4 min-h-[80px] resize-y"
           placeholder="例: 1回目投稿の◯分後にThreadsへ投稿する文章"
