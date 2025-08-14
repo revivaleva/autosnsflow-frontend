@@ -1,13 +1,16 @@
 // /src/lib/env.ts
-// [MOD] login/page.tsx が参照する preview.* に合わせて型と返却値を修正
-//      - preview: { clientIdHead, userPoolIdHead, region } に変更
-//      - 互換のため previewEnabled(boolean) を追加
+// [MOD] env / getClientEnvStatus の整備
+// - [ADD] AUTOSNSFLOW_ACCESS_KEY_ID / AUTOSNSFLOW_SECRET_ACCESS_KEY を追加（サーバ専用）
+// - preview は { clientIdHead, userPoolIdHead, region } のまま（前回修正を踏襲）
 
 export const env = {
+  // クライアント・サーバ双方から参照するリージョン
   AWS_REGION:
     process.env.NEXT_PUBLIC_AWS_REGION ||
     process.env.AWS_REGION ||
     "",
+
+  // Cognito 設定（どちらのENV名でも可）
   COGNITO_USER_POOL_ID:
     process.env.COGNITO_USER_POOL_ID ||
     process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID ||
@@ -16,23 +19,31 @@ export const env = {
     process.env.COGNITO_CLIENT_ID ||
     process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID ||
     "",
+
+  // 管理者グループ名（未設定なら "Admins"）
   ADMIN_GROUP: (process.env.ADMIN_GROUP || "Admins").trim(),
+
+  // [ADD] サーバ用の固定クレデンシャル（Amplify側で .env.production に入れている想定）
+  AUTOSNSFLOW_ACCESS_KEY_ID:
+    process.env.AUTOSNSFLOW_ACCESS_KEY_ID || "",       // [ADD]
+  AUTOSNSFLOW_SECRET_ACCESS_KEY:
+    process.env.AUTOSNSFLOW_SECRET_ACCESS_KEY || "",   // [ADD]
 } as const;
 
 export type ClientEnvStatus = {
   ok: boolean;
   missing: string[];
   values: Record<string, string>;
-  preview: {                       // [MOD] boolean → オブジェクト
+  preview: {
     clientIdHead: string;
     userPoolIdHead: string;
     region: string;
   };
-  previewEnabled: boolean;         // [ADD] 旧booleanの互換用
+  previewEnabled: boolean;
 };
 
+// クライアント側で参照したいENVの存在チェック（秘密値は含めない）
 export function getClientEnvStatus(): ClientEnvStatus {
-  // 画面で使う公開ENV（NEXT_PUBLIC_*）を優先、なければサーバー側ENVをフォールバック
   const region =
     process.env.NEXT_PUBLIC_AWS_REGION ??
     process.env.AWS_REGION ??
@@ -53,6 +64,7 @@ export function getClientEnvStatus(): ClientEnvStatus {
     NEXT_PUBLIC_COGNITO_USER_POOL_ID: userPoolId,
     NEXT_PUBLIC_COGNITO_CLIENT_ID: clientId,
     ADMIN_GROUP: process.env.ADMIN_GROUP ?? "Admins",
+    // ※ [意図的に除外] AUTOSNSFLOW_* はフロントへ表示しない
   };
 
   const requiredKeys = [
@@ -63,14 +75,12 @@ export function getClientEnvStatus(): ClientEnvStatus {
 
   const missing = requiredKeys.filter((k) => !values[k]);
 
-  // [ADD] 旧booleanの互換フラグ（ON/OFF表示等で使う想定）
   const previewEnabled =
     ["1", "true", "on"].includes(
       String(process.env.NEXT_PUBLIC_PREVIEW ?? process.env.PREVIEW ?? "")
         .toLowerCase()
     );
 
-  // [MOD] login/page.tsx が参照する preview.* を生成（頭数文字だけ見せる）
   const head = (s: string, n = 6) => (s ? s.slice(0, n) : "");
   const preview = {
     clientIdHead: head(clientId),
@@ -82,7 +92,7 @@ export function getClientEnvStatus(): ClientEnvStatus {
     ok: missing.length === 0,
     missing,
     values,
-    preview,           // [MOD]
-    previewEnabled,    // [ADD]
+    preview,
+    previewEnabled,
   };
 }
