@@ -42,8 +42,6 @@ export async function verifyUserFromRequest(req: any): Promise<VerifiedUser> {
     throw e;
   }
 }
-// [MOD] 管理者判定を env.ADMIN_GROUP（既定: "Admins"）で統一
-import { env } from "./env"; // 既に import 済みなら変更不要
 
 export function assertAdmin(user: VerifiedUser) {
   const groups = (user["cognito:groups"] as string[]) || [];
