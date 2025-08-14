@@ -20,8 +20,10 @@ export const env = {
     process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID ||
     "",
 
-  // 管理者グループ名（未設定なら "Admins"）
-  ADMIN_GROUP: (process.env.ADMIN_GROUP || "Admins").trim(),
+  ADMIN_GROUP:
+    process.env.ADMIN_GROUP ||
+    process.env.NEXT_PUBLIC_ADMIN_GROUP || // クライアントと合わせて参照できるように
+    "Admins",
 
   // [ADD] サーバ用の固定クレデンシャル（Amplify側で .env.production に入れている想定）
   AUTOSNSFLOW_ACCESS_KEY_ID:

@@ -42,16 +42,13 @@ export async function verifyUserFromRequest(req: any): Promise<VerifiedUser> {
     throw e;
   }
 }
+// [MOD] 管理者判定を env.ADMIN_GROUP（既定: "Admins"）で統一
+import { env } from "./env"; // 既に import 済みなら変更不要
 
 export function assertAdmin(user: VerifiedUser) {
-  // [ADD] 環境変数で上書き可能。未設定は "Admins" 固定。
-  const ADMIN_GROUP = (process.env.ADMIN_GROUP || "Admins").trim();
-
-  // [MOD] groups は array/string 両対応に正規化
-  const raw = user["cognito:groups"];
-  const groups = Array.isArray(raw) ? raw : typeof raw === "string" ? [raw] : [];
-
-  if (!groups.includes(ADMIN_GROUP)) {
+  const groups = (user["cognito:groups"] as string[]) || [];
+  const expected = env.ADMIN_GROUP || "Admins"; // [MOD]
+  if (!groups.includes(expected)) {
     const e: any = new Error("forbidden");
     e.statusCode = 403;
     throw e;

@@ -1,4 +1,6 @@
 // /src/components/AppLayout.jsx
+// [MOD] 管理者判定を "Admins"（または NEXT_PUBLIC_ADMIN_GROUP）に統一
+//      ?debugAuth=1 で権限デバッグDLGを表示できるようにした
 
 "use client";
 
@@ -20,6 +22,10 @@ export default function AppLayout({ children }) {
   const pathname = usePathname();
   const router = useRouter();
   const [isAdmin, setIsAdmin] = useState(false); // [admin-menu] 追記: 管理者判定state
+
+  // [admin-menu] 追記: デバッグ用
+  const [authDebugOpen, setAuthDebugOpen] = useState(false);
+  const [authDebug, setAuthDebug] = useState(null);
 
   // [admin-menu] 追記: Cookie取得（最小ユーティリティ）
   function getCookie(name) {
@@ -43,23 +49,44 @@ export default function AppLayout({ children }) {
   // [admin-menu] 追記: adminグループ判定（id_token を LocalStorage/Cookie から取得）
   useEffect(() => {
     try {
+      const ADMIN_GROUP =
+        process.env.NEXT_PUBLIC_ADMIN_GROUP || "Admins"; // [MOD] 既定Admins
+
       const ls = typeof window !== "undefined" ? window.localStorage : null;
       const tokenFromLS = (ls && (ls.getItem("id_token") || ls.getItem("idToken"))) || "";
       const tokenFromCookie = getCookie("id_token") || getCookie("idToken");
       const token = tokenFromLS || tokenFromCookie;
 
-      if (!token) {
-        setIsAdmin(false);
-        return;
-      }
-
-      const payload = decodeJwtPayload(token);
+      const payload = token ? decodeJwtPayload(token) : null;
       const groups = (payload && payload["cognito:groups"]) || [];
-      setIsAdmin(Array.isArray(groups) && groups.includes("admin"));
-    } catch {
+      const admin = Array.isArray(groups) && groups.includes(ADMIN_GROUP);
+
+      setIsAdmin(Boolean(admin));
+
+      // ▼デバッグ（?debugAuth=1 でDLG表示）
+      const qs =
+        typeof window !== "undefined"
+          ? new URLSearchParams(window.location.search)
+          : undefined;
+      const open = qs?.get("debugAuth") === "1";
+      const dbg = {
+        tokenSource: tokenFromLS ? "localStorage" : tokenFromCookie ? "cookie" : "none",
+        adminGroupExpected: ADMIN_GROUP,
+        isAdmin: Boolean(admin),
+        groups,
+        payload,
+        hasToken: Boolean(token),
+        pathname,
+      };
+      setAuthDebug(dbg);
+      if (open) setAuthDebugOpen(true);
+      // コンソールにも出す（確認しやすいように）
+      // eslint-disable-next-line no-console
+      console.log("[auth-debug]", dbg);
+    } catch (e) {
       setIsAdmin(false);
     }
-  }, []);
+  }, [pathname]);
 
   // [admin-menu] 追記: ログアウト処理（API叩いてからクライアント側でもクッキー/LSをクリア）
   async function handleLogout() {
@@ -67,12 +94,10 @@ export default function AppLayout({ children }) {
       await fetch("/api/logout", { method: "POST", credentials: "include" });
     } catch {}
     try {
-      // cookie 双方キーに対応
       document.cookie = "id_token=; Max-Age=0; path=/;";
       document.cookie = "idToken=; Max-Age=0; path=/;";
       document.cookie = "accessToken=; Max-Age=0; path=/;";
       document.cookie = "refreshToken=; Max-Age=0; path=/;";
-      // localStorage も念のため削除
       if (typeof window !== "undefined") {
         window.localStorage.removeItem("id_token");
         window.localStorage.removeItem("idToken");
@@ -127,6 +152,38 @@ export default function AppLayout({ children }) {
         </div>
       </nav>
       <main className="flex-1 bg-gray-100 min-h-screen p-8">{children}</main>
+
+      {/* [admin-menu] 追記: 権限デバッグDLG（?debugAuth=1 で自動表示） */}
+      {authDebugOpen && (
+        <div className="fixed inset-0 z-50">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setAuthDebugOpen(false)}
+          />
+          <div className="absolute inset-0 p-4 flex items-center justify-center">
+            <div
+              className="bg-white rounded-xl shadow-xl w-full max-w-3xl p-6"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex justify-between items-center mb-3">
+                <h3 className="font-bold">権限デバッグ</h3>
+                <button
+                  className="text-gray-500 hover:text-gray-800"
+                  onClick={() => setAuthDebugOpen(false)}
+                >
+                  ×
+                </button>
+              </div>
+              <pre className="text-xs whitespace-pre-wrap break-all bg-gray-50 p-3 rounded max-h-[70vh] overflow-auto">
+                {JSON.stringify(authDebug, null, 2)}
+              </pre>
+              <p className="text-xs text-gray-500 mt-2">
+                ※ このDLGはURLに <code>?debugAuth=1</code> を付けると自動で開きます
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
