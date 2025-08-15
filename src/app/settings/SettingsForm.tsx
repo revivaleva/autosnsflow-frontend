@@ -5,6 +5,7 @@
 
 import { useEffect, useState } from "react";
 
+// ……冒頭の型定義付近……
 type Settings = {
   discordWebhook: string;
   errorDiscordWebhook: string;
@@ -12,7 +13,8 @@ type Settings = {
   selectedModel: string;
   masterPrompt: string;
   replyPrompt: string;
-  autoPost: "active" | "inactive";
+  // [MOD] autoPost: "active" | "inactive" → boolean
+  autoPost: boolean;
   doublePostDelay: string; // minutes as string
 };
 
@@ -23,7 +25,8 @@ const DEFAULTS: Settings = {
   selectedModel: "gpt-3.5-turbo",
   masterPrompt: "",
   replyPrompt: "",
-  autoPost: "active",
+  // [MOD] 既定は false（無効）
+  autoPost: false,
   doublePostDelay: "0",
 };
 
