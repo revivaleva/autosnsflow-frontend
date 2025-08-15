@@ -232,12 +232,15 @@ export default function SettingsForm() {
       <div className="space-y-2">
         <label className="block text-sm font-medium text-gray-700">自動投稿</label>
         <select
-          value={values.autoPost}
-          onChange={(e) => onChange("autoPost", e.target.value as "active" | "inactive")}
+          // [MOD] boolean → "true"/"false" へ変換して渡す
+          value={values.autoPost ? "true" : "false"}
+          // [MOD] "true"/"false" → boolean に戻して state へ保存
+          onChange={(e) => onChange("autoPost", e.target.value === "true")}
           className="w-full rounded border border-gray-300 px-3 py-2 bg-white"
         >
-          <option value="active">有効</option>
-          <option value="inactive">無効</option>
+          {/* [MOD] option 値も "true"/"false" に統一 */}
+          <option value="true">有効</option>
+          <option value="false">無効</option>
         </select>
       </div>
 
