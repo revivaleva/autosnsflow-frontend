@@ -37,17 +37,26 @@ export default function SettingsForm() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // [MOD] 返却 {settings} / 互換キーをまとめて正規化
-  const normalize = (raw: any): Settings => {
-    const src =
-      raw?.settings ??
-      raw?.data ??
-      raw ?? {};
+  // [MOD] 受け取った settings を UI 用に正規化（autoPost を boolean 化）
+  const normalize = (raw?: any): Settings => {
+    const src = raw?.settings ?? raw ?? {};
+
     const list: string[] = Array.isArray(src.discordWebhooks) ? src.discordWebhooks : [];
     const discordWebhook = src.discordWebhook ?? list[0] ?? "";
     const errorDiscordWebhook = src.errorDiscordWebhook ?? list[1] ?? "";
     const openaiApiKey = src.openaiApiKey ?? src.openAiApiKey ?? "";
     const selectedModel = src.selectedModel ?? src.modelDefault ?? DEFAULTS.selectedModel;
+
+    // [ADD] 旧データ（"active"/"inactive" 文字列や "1"/"0"）にも耐えるが保存は boolean に統一
+    const toBool = (v: any): boolean => {
+      if (typeof v === "boolean") return v;
+      if (typeof v === "number") return v !== 0;
+      if (typeof v === "string") {
+        const s = v.toLowerCase();
+        return s === "true" || s === "1" || s === "on" || s === "yes" || s === "active";
+      }
+      return false;
+    };
 
     return {
       discordWebhook,
@@ -56,74 +65,73 @@ export default function SettingsForm() {
       selectedModel,
       masterPrompt: src.masterPrompt ?? "",
       replyPrompt: src.replyPrompt ?? "",
-      autoPost: (src.autoPost ?? DEFAULTS.autoPost) as "active" | "inactive",
+      // [MOD] ここを boolean に
+      autoPost: toBool(src.autoPost ?? DEFAULTS.autoPost),
       doublePostDelay: String(src.doublePostDelay ?? "0"),
     };
   };
 
-  // 初期ロード（GET /api/user-settings）
   useEffect(() => {
     let alive = true;
     (async () => {
-      setLoading(true);
-      setMessage(null);
-      setError(null);
       try {
+        setLoading(true);
+        setMessage(null);
+        setError(null);
+
         const res = await fetch("/api/user-settings", {
-          credentials: "include",        // [MOD]
-          cache: "no-store",             // [ADD] 取得が古くならないように
+          method: "GET",
+          credentials: "include",
+          // [MOD] 取得が古くならないように
+          cache: "no-store",
         });
-        if (!res.ok) throw new Error(`GET failed: ${res.status} ${await res.text()}`);
+        if (!res.ok) throw new Error(`GET failed: ${res.status}`);
+
         const data = await res.json();
         if (!alive) return;
-        setValues(normalize(data));
+        setValues(prev => ({ ...prev, ...normalize(data) }));
       } catch (e: any) {
         if (!alive) return;
         setError(e?.message ?? "設定の取得に失敗しました");
-        // 取得失敗でも編集可能なように既定値を残す
-        setValues((prev) => ({ ...prev }));
       } finally {
         if (alive) setLoading(false);
       }
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, []);
 
   const onChange = <K extends keyof Settings>(key: K, v: Settings[K]) => {
     setValues((prev) => ({ ...prev, [key]: v }));
   };
 
-  // 保存（PUT /api/user-settings）
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
     setMessage(null);
     setError(null);
     try {
-      // [MOD] サーバ互換のダブルキーで送る（将来の後方互換）
-      const payload = {
-        // 画面の項目（そのまま）
-        discordWebhook: values.discordWebhook,
-        errorDiscordWebhook: values.errorDiscordWebhook,
-        openaiApiKey: values.openaiApiKey,
-        selectedModel: values.selectedModel,
-        masterPrompt: values.masterPrompt,
-        replyPrompt: values.replyPrompt,
-        autoPost: values.autoPost,
-        doublePostDelay: values.doublePostDelay,
-        // 互換キー
-        discordWebhooks: [values.discordWebhook, values.errorDiscordWebhook].filter(Boolean),
-        openAiApiKey: values.openaiApiKey,
-        modelDefault: values.selectedModel,
-      };
-
       const res = await fetch("/api/user-settings", {
-        method: "PUT",
+        // [MOD] 保存は PATCH に統一
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          discordWebhook: values.discordWebhook,
+          errorDiscordWebhook: values.errorDiscordWebhook,
+          openaiApiKey: values.openaiApiKey,
+          selectedModel: values.selectedModel,
+          masterPrompt: values.masterPrompt,
+          replyPrompt: values.replyPrompt,
+          // [MOD] boolean のまま送る（"active"/"inactive" は送らない）
+          autoPost: values.autoPost,
+          doublePostDelay: Number(values.doublePostDelay || 0),
+        }),
       });
-      if (!res.ok) throw new Error(`PUT failed: ${res.status} ${await res.text()}`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || `PATCH failed: ${res.status}`);
+      }
       setMessage("保存しました");
     } catch (e: any) {
       setError(e?.message ?? "保存に失敗しました");
@@ -131,6 +139,7 @@ export default function SettingsForm() {
       setSaving(false);
     }
   };
+
 
   if (loading) {
     return <div className="text-gray-600">読込中...</div>;
