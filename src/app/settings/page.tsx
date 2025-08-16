@@ -1,40 +1,22 @@
-// app/(protected)/settings/page.tsx
-"use client";
-import { useEffect, useState } from "react";
+// /src/app/settings/page.tsx
+// [MOD] サーバ側のCookie判定・redirectを削除し、middlewareで一元管理
+// [ADD] dynamic を追加して静的最適化を回避
+
+import SettingsForm from "./SettingsForm";
+import AppLayout from "@/components/AppLayout";
+
+// [ADD] Cookie依存のため強制的に動的レンダリング
+export const dynamic = "force-dynamic";
 
 export default function SettingsPage() {
-  const [loading, setLoading] = useState(true);
-  const [error, setError]   = useState<string | null>(null);
-  const [values, setValues] = useState<Settings>(DEFAULTS);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const r = await fetch("/api/settings", {
-          credentials: "include",
-          cache: "no-store",
-        });
-        if (!r.ok) {
-          // 401でもここではページ遷移せず、メッセージ表示に留める
-          throw new Error(`HTTP ${r.status}`);
-        }
-        const { settings } = await r.json();
-        setValues(settings);
-      } catch (e) {
-        setError("セッションが無効か権限がありません。もう一度ログインしてください。");
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, []);
-
-  if (loading) return <div>読み込み中…</div>;
-  if (error) return (
-    <div className="p-4">
-      <p className="text-red-600">{error}</p>
-      <a className="underline" href={`/login?next=${encodeURIComponent("/settings")}`}>ログインへ</a>
-    </div>
+  // [DEL] サーバ側の cookies() / redirect("/login") は削除
+  return (
+    <AppLayout>
+      <div className="mx-auto max-w-4xl p-4">
+        {/* [ADD] タイトル（任意・UI変更のみ） */}
+        <h1 className="mb-4 text-2xl font-bold">ユーザー設定</h1>
+        <SettingsForm />
+      </div>
+    </AppLayout>
   );
-
-  return <SettingsForm initialValues={values} />;
 }
