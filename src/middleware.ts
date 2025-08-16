@@ -1,30 +1,29 @@
-// /src/middleware.ts
-// [ADD] 認証必須ページをCookie存在で判定し、未ログインは /login へ誘導
+// middleware.ts
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-const PROTECTED_PREFIXES = [
-  "/", "/dashboard", "/settings", "/accounts",
-  "/scheduled-posts", "/replies", "/admin",
-];
+const PROTECTED = ["/settings", "/admin"]; // ここだけ保護
 
 export function middleware(req: NextRequest) {
-  const { pathname } = req.nextUrl;
-  const needsAuth = PROTECTED_PREFIXES.some((p) =>
-    pathname === p || pathname.startsWith(p + "/")
-  );
-  if (!needsAuth) return NextResponse.next();
+  const { pathname, searchParams } = req.nextUrl;
 
-  const hasId = req.cookies.get("idToken");
-  if (!hasId) {
-    const url = req.nextUrl.clone();
-    url.pathname = "/login";
-    url.searchParams.set("next", pathname);
-    return NextResponse.redirect(url);
+  if (!PROTECTED.some((p) => pathname.startsWith(p))) {
+    return NextResponse.next();
   }
-  return NextResponse.next();
+
+  const token = req.cookies.get("session")?.value; // ← クッキー名を統一
+  if (token) return NextResponse.next();
+
+  const url = req.nextUrl.clone();
+  url.pathname = "/login";
+  url.searchParams.set(
+    "next",
+    pathname + (searchParams.toString() ? `?${searchParams}` : "")
+  );
+  return NextResponse.redirect(url);
 }
 
+// /api は巻き込まない。静的や_nextも除外
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!_next/|favicon.ico|assets/|api/).*)"],
 };
