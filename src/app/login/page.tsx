@@ -1,6 +1,8 @@
 // /src/app/login/page.tsx
 // [MOD] 環境変数診断の参照方法を修正（missing.* → missing.includes(...)）
 //      既存コメントは変更せず、追記コメントのみ追加
+// [MOD] ログイン成功時に ?next= を尊重して遷移（なければ "/" に遷移）を追加
+// [ADD] fetch に credentials: "include" を付与（Set-Cookie 受領のため）
 
 "use client";
 
@@ -31,10 +33,14 @@ export default function LoginPage() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password }),
+      credentials: "include", // [ADD] Set-Cookie 受領のため
     });
 
     if (res.ok) {
-      router.push("/"); // トップページ等へリダイレクト
+      // [MOD] ?next= を尊重して遷移（なければ "/"）
+      const params = new URLSearchParams(window.location.search); // [ADD]
+      const next = params.get("next"); // [ADD]
+      router.push(next && next.startsWith("/") ? next : "/"); // [MOD]
     } else {
       const data = await res.json();
       setError(data.error || "ログイン失敗");
