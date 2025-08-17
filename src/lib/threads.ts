@@ -1,19 +1,24 @@
-// src/lib/threads.ts
-// [MOD] 最小実装：userId(=ハンドル)が無い/使えない場合は /me/threads にフォールバック
-import fetch from "node-fetch";
+// /src/lib/threads.ts
 
+/**
+ * Threads に本文テキストを実投稿します。
+ * userId: SK のハンドル（ACCOUNT#xxxxx の xxxxx 部分）。未指定なら /me/threads を使用
+ * accessToken: アカウントのアクセストークン
+ * text: 投稿本文
+ */
 export async function postToThreads({
   userId,
   accessToken,
   text,
 }: {
-  userId?: string;             // ← SKのハンドル文字列（任意）
+  userId?: string; // ← ハンドル（例: "remigiozarcorb618"）
   accessToken: string;
   text: string;
 }): Promise<{ postId: string }> {
-  const base = process.env.THREADS_GRAPH_BASE || "https://graph.threads.net/v1.0";
+  const base =
+    process.env.THREADS_GRAPH_BASE || "https://graph.threads.net/v1.0";
 
-  // まずは user 指定のエンドポイントを試す（環境により不要なら /me を直接呼んでもOK）
+  // Next.js のサーバ環境が提供するグローバル fetch をそのまま使用
   const tryPost = async (path: string) => {
     const r = await fetch(`${base}/${path}`, {
       method: "POST",
@@ -38,9 +43,10 @@ export async function postToThreads({
       // 例: /me/threads
       id = await tryPost(`me/threads`);
     }
-  } catch (_) {
+  } catch {
     // フォールバック
     id = await tryPost(`me/threads`);
   }
+
   return { postId: id };
 }
