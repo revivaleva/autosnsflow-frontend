@@ -65,13 +65,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return;
     }
 
+
     // 実投稿（/me/threads -> /me/threads_publish）
     let postId = "";
     try {
       const r = await postToThreads({ accessToken, text: content });
       postId = r.postId;
     } catch (e: any) {
-      // [MOD] 失敗段階が分かるメッセージをそのまま返す
       res.status(502).json({ error: String(e?.message || e) });
       return;
     }
@@ -80,11 +80,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return;
     }
 
-    // ご指定フォーマットのURL
-    const postUrl = `https://www.threads.com/@${encodeURIComponent(accountId)}/post/${encodeURIComponent(postId)}`;
+    // [ADD] 公開URLを取得（API → 失敗時は postId→shortcode 変換）
+    const { url: postUrl } = await getThreadsPermalink({
+      accessToken,
+      postId,
+      handle: accountId, // ハンドル
+    });
+
     const now = Math.floor(Date.now() / 1000);
 
-    // 成功した場合のみ posted へ更新（creation_id を誤保存しない）
     await ddb.send(
       new UpdateItemCommand({
         TableName: TBL_SCHEDULED,
@@ -98,7 +102,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           ":posted": { S: "posted" },
           ":ts": { N: String(now) },
           ":pid": { S: postId },
-          ":purl": { S: postUrl },
+          ":purl": { S: postUrl }, // ← 正しいURL（shortcode付き）
           ":f": { BOOL: false },
         },
       })

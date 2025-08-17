@@ -1,72 +1,62 @@
 // src/lib/threads.ts
-// [MOD] Threads実投稿を「/me だけ」で実行（作成→公開の2段階）
-//      media_type=TEXT を明示。必要なら THREADS_TEXT_APP_ID を送る。
-//      どの段階で失敗したかが分かるようエラーメッセージを詳細化。
-
-export async function postToThreads({
+// [ADD] 公開URL(permalink)の取得。失敗時は postId→shortcode 変換で生成
+export async function getThreadsPermalink({
   accessToken,
-  text,
+  postId,
+  handle, // 例: "remigiozarcorb618"
 }: {
   accessToken: string;
-  text: string;
-}): Promise<{ postId: string }> {
+  postId: string;
+  handle: string;
+}): Promise<{ url: string; code: string }> {
   const base = process.env.THREADS_GRAPH_BASE || "https://graph.threads.net/v1.0";
-  const textPostAppId = process.env.THREADS_TEXT_APP_ID;
 
-  const create = async () => {
-    const body: Record<string, any> = {
-      media_type: "TEXT",       // [ADD] 必須パラメータ
-      text,
-      access_token: accessToken,
-    };
-    if (textPostAppId) body.text_post_app_id = textPostAppId;
+  // 1) Graph API から permalink_url を取得（推奨）
+  try {
+    const r = await fetch(
+      `${base}/${encodeURIComponent(postId)}?fields=permalink_url&access_token=${encodeURIComponent(
+        accessToken
+      )}`
+    );
+    const tx = await r.text();
+    if (r.ok) {
+      const j = JSON.parse(tx) as { permalink_url?: string };
+      if (j?.permalink_url) {
+        // /@handle/post/<code> 形式なら最後のセグメントが shortcode
+        const m = j.permalink_url.match(/\/post\/([^/?#]+)/);
+        const code = m?.[1] || "";
+        if (code) {
+          return { url: j.permalink_url, code };
+        }
+      }
+    }
+  } catch {
+    /* fallbackへ */
+  }
 
-    const r = await fetch(`${base}/me/threads`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const tx = await r.text().catch(() => "");
-    if (!r.ok) {
-      throw new Error(`threads_create_failed: ${r.status} ${tx}`);
-    }
-    let j: any = {};
-    try {
-      j = JSON.parse(tx);
-    } catch {
-      /* noop */
-    }
-    const creationId = j?.id;
-    if (!creationId) throw new Error("threads_create_failed: creation_id missing");
-    return creationId as string;
-  };
+  // 2) Fallback: 数値ID → shortcode へ変換（Instagram/Threads互換）
+  const alphabet =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  let n = 0n;
+  try {
+    n = BigInt(postId);
+  } catch {
+    // 変換不可なら最終フォールバック：そのまま返す
+    const url = `https://www.threads.com/@${encodeURIComponent(
+      handle
+    )}/post/${encodeURIComponent(postId)}`;
+    return { url, code: postId };
+  }
+  let code = "";
+  while (n > 0n) {
+    const rem = Number(n % 64n);
+    code = alphabet[rem] + code;
+    n = n / 64n;
+  }
+  if (!code) code = "0"; // 念のため
 
-  const publish = async (creationId: string) => {
-    const r = await fetch(`${base}/me/threads_publish`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        creation_id: creationId,
-        access_token: accessToken,
-      }),
-    });
-    const tx = await r.text().catch(() => "");
-    if (!r.ok) {
-      throw new Error(`threads_publish_failed: ${r.status} ${tx}`);
-    }
-    let j: any = {};
-    try {
-      j = JSON.parse(tx);
-    } catch {
-      /* noop */
-    }
-    const postId = j?.id;
-    if (!postId) throw new Error("threads_publish_failed: post id missing");
-    return postId as string;
-  };
-
-  // [MOD] /me のみで実行（ユーザーID指定は使わない）
-  const creationId = await create();
-  const postId = await publish(creationId);
-  return { postId };
+  const url = `https://www.threads.com/@${encodeURIComponent(
+    handle
+  )}/post/${encodeURIComponent(code)}`;
+  return { url, code };
 }
