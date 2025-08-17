@@ -246,7 +246,8 @@ export default function ScheduledPostsTable() {
                       : ""}
                   </td>
                   <td className="border p-1">
-                    {post.threadsPostId || post.scheduledPostId}
+                    {/* [MOD] 未投稿のときは表示しない。投稿済みのみ postId を表示 */}
+                    {post.status === "posted" && (post as any).postId ? (post as any).postId : ""}
                   </td>
                   <td className="border p-1">
                     <button
