@@ -1,8 +1,10 @@
-// /src/lib/threads.ts
+// src/lib/threads.ts
+// [MOD] node-fetch 依存なし。Threads への実投稿で media_type=TEXT を付与
+//      環境変数 THREADS_TEXT_APP_ID があれば text_post_app_id も送信
 
 /**
  * Threads に本文テキストを実投稿します。
- * userId: SK のハンドル（ACCOUNT#xxxxx の xxxxx 部分）。未指定なら /me/threads を使用
+ * userId: SKのハンドル（ACCOUNT#xxxxx の xxxxx 部分）。未指定なら /me/threads を使用
  * accessToken: アカウントのアクセストークン
  * text: 投稿本文
  */
@@ -11,21 +13,30 @@ export async function postToThreads({
   accessToken,
   text,
 }: {
-  userId?: string; // ← ハンドル（例: "remigiozarcorb618"）
+  userId?: string;   // 例: "remigiozarcorb618"
   accessToken: string;
   text: string;
 }): Promise<{ postId: string }> {
-  const base =
-    process.env.THREADS_GRAPH_BASE || "https://graph.threads.net/v1.0";
+  const base = process.env.THREADS_GRAPH_BASE || "https://graph.threads.net/v1.0";
+  const textPostAppId = process.env.THREADS_TEXT_APP_ID; // ← 任意。必要な環境のみ設定
 
-  // Next.js のサーバ環境が提供するグローバル fetch をそのまま使用
+  // Next.js サーバーのグローバル fetch を使用
   const tryPost = async (path: string) => {
+    const body: Record<string, any> = {
+      media_type: "TEXT",        // [ADD] これが必須
+      text,
+      access_token: accessToken,
+    };
+    if (textPostAppId) body.text_post_app_id = textPostAppId; // 任意
+
     const r = await fetch(`${base}/${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, access_token: accessToken }),
+      body: JSON.stringify(body),
     });
+
     if (!r.ok) {
+      // エラー内容をそのまま返す（デバッグしやすくする）
       const tx = await r.text().catch(() => "");
       throw new Error(`${r.status} ${tx}`);
     }
@@ -47,6 +58,5 @@ export async function postToThreads({
     // フォールバック
     id = await tryPost(`me/threads`);
   }
-
   return { postId: id };
 }
