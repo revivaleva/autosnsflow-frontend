@@ -1,12 +1,13 @@
 // src/lib/threads.ts
-// [MOD] node-fetch 依存なし。Threads への実投稿で media_type=TEXT を付与
-//      環境変数 THREADS_TEXT_APP_ID があれば text_post_app_id も送信
+// [MOD] Threads投稿を「作成 -> 公開」の2段階で実施。media_type=TEXT 付与。
+//      ユーザーID（ハンドル=SKの後半）指定と /me フォールバックを実装。
 
 /**
- * Threads に本文テキストを実投稿します。
- * userId: SKのハンドル（ACCOUNT#xxxxx の xxxxx 部分）。未指定なら /me/threads を使用
+ * Threads に本文テキストを実投稿します（作成 -> 公開）。
+ * userId: SKのハンドル（ACCOUNT#xxxxx の xxxxx 部分）。未指定なら /me を使用
  * accessToken: アカウントのアクセストークン
  * text: 投稿本文
+ * 戻り: 公開後の postId
  */
 export async function postToThreads({
   userId,
@@ -18,45 +19,69 @@ export async function postToThreads({
   text: string;
 }): Promise<{ postId: string }> {
   const base = process.env.THREADS_GRAPH_BASE || "https://graph.threads.net/v1.0";
-  const textPostAppId = process.env.THREADS_TEXT_APP_ID; // ← 任意。必要な環境のみ設定
+  const textPostAppId = process.env.THREADS_TEXT_APP_ID; // 必要な環境のみ設定
 
-  // Next.js サーバーのグローバル fetch を使用
-  const tryPost = async (path: string) => {
+  // 作成（creation_id を取得）
+  const create = async (path: string) => {
     const body: Record<string, any> = {
-      media_type: "TEXT",        // [ADD] これが必須
+      media_type: "TEXT",
       text,
       access_token: accessToken,
     };
-    if (textPostAppId) body.text_post_app_id = textPostAppId; // 任意
+    if (textPostAppId) body.text_post_app_id = textPostAppId;
 
     const r = await fetch(`${base}/${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-
-    if (!r.ok) {
-      // エラー内容をそのまま返す（デバッグしやすくする）
-      const tx = await r.text().catch(() => "");
-      throw new Error(`${r.status} ${tx}`);
-    }
-    const j = (await r.json()) as { id?: string };
-    if (!j?.id) throw new Error("no post id");
-    return j.id as string;
+    const tx = await r.text().catch(() => "");
+    if (!r.ok) throw new Error(`create ${r.status} ${tx}`);
+    const j = JSON.parse(tx) as { id?: string };
+    if (!j?.id) throw new Error("creation_id missing");
+    return j.id;
   };
 
-  let id: string;
+  // 公開（postId を取得）
+  const publish = async (path: string, creationId: string) => {
+    const r = await fetch(`${base}/${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        creation_id: creationId,
+        access_token: accessToken,
+      }),
+    });
+    const tx = await r.text().catch(() => "");
+    if (!r.ok) throw new Error(`publish ${r.status} ${tx}`);
+    const j = JSON.parse(tx) as { id?: string };
+    if (!j?.id) throw new Error("post id missing on publish");
+    return j.id;
+  };
+
+  // userId があれば /{userId}/threads(_publish)、なければ /me/... を使用
+  const createPath = userId
+    ? `${encodeURIComponent(userId)}/threads`
+    : `me/threads`;
+  const publishPath = userId
+    ? `${encodeURIComponent(userId)}/threads_publish`
+    : `me/threads_publish`;
+
+  let creationId: string;
   try {
-    if (userId) {
-      // 例: /{userId}/threads
-      id = await tryPost(`${encodeURIComponent(userId)}/threads`);
-    } else {
-      // 例: /me/threads
-      id = await tryPost(`me/threads`);
-    }
+    creationId = await create(createPath);
   } catch {
     // フォールバック
-    id = await tryPost(`me/threads`);
+    creationId = await create("me/threads");
   }
-  return { postId: id };
+
+  let postId: string;
+  try {
+    postId = await publish(publishPath, creationId);
+  } catch {
+    // フォールバック
+    postId = await publish("me/threads_publish", creationId);
+  }
+
+  return { postId };
 }
