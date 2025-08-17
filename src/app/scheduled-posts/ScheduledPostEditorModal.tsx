@@ -9,7 +9,7 @@ export type ScheduledPostType = {
   scheduledPostId: string;
   accountName: string;
   accountId: string;
-  scheduledAt: string | number; // 受入時は number(UNIX秒) or 文字列を許容
+  scheduledAt: string | number;
   content: string;
   theme?: string;
   autoPostGroupId?: string;
@@ -20,13 +20,14 @@ export type ScheduledPostType = {
   replyCount?: number;
 };
 
+// [MOD] APIで使う型を拡張（autoPostGroupId / persona 付き）
 type AccountItem = {
   accountId: string;
   displayName: string;
-  // ある場合は自動反映に使う
-  personaStatic?: string; // 静
-  personaDynamic?: string; // 動
-  personaSimple?: string;
+  // [ADD] 既定グループ・ペルソナ（API拡張と対応）
+  autoPostGroupId?: string;
+  personaStatic?: string;
+  personaDynamic?: string;
 };
 
 type AutoPostGroup = {
@@ -43,7 +44,6 @@ type AutoPostGroup = {
 type Props = {
   open: boolean;
   mode: "add" | "edit";
-  // add のとき initial は未指定可、edit のとき必須
   initial?: ScheduledPostType | null;
   onClose: () => void;
   onSave: (data: ScheduledPostType) => Promise<void> | void;
@@ -51,7 +51,7 @@ type Props = {
 
 // === ユーティリティ ===
 
-// [ADD] Date→datetime-local 値（yyyy-MM-ddTHH:mm）へ（ローカルタイム基準）
+// [既存] Date→datetime-local
 function toLocalDatetimeValue(epochSec?: number | string) {
   const n = Number(epochSec || 0);
   if (!n) return "";
@@ -65,45 +65,27 @@ function toLocalDatetimeValue(epochSec?: number | string) {
   return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
 }
 
-// [ADD] datetime-local → UNIX秒（ローカルタイムをそのまま）
+// [既存] datetime-local → UNIX秒
 function datetimeLocalToEpochSec(v: string) {
   if (!v) return 0;
-  // v は "YYYY-MM-DDTHH:mm"
   const d = new Date(v);
   return Math.floor(d.getTime() / 1000);
 }
 
-// [ADD] group と type(1/2/3) からテーマとラベルを生成
-function buildAutoPostLabel(g: AutoPostGroup | null, t: 1 | 2 | 3 | null) {
-  if (!g || !t) return { label: "", theme: "" };
-  const label = `${g.groupName}-自動投稿${t}`;
-  const theme =
-    t === 1 ? (g.theme1 || "") : t === 2 ? (g.theme2 || "") : (g.theme3 || "");
-  return { label, theme };
-}
-
-// [ADD] AI生成を叩く（/api/ai-gateway purpose=post-generate）
-async function generateByAI({
-  persona,
-  theme,
-}: {
-  persona: string;
-  theme: string;
-}): Promise<string> {
-  const res = await fetch("/api/ai-gateway", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify({
-      purpose: "post-generate",
-      input: { persona, theme },
-    }),
-  });
-  const data = await res.json();
-  if (!res.ok || data?.error) {
-    throw new Error(data?.error || "AI生成に失敗しました");
-  }
-  return String(data?.text || "");
+// [ADD] "HH:MM-HH:MM" などからランダムな時刻（HH:MM）を返す
+function randomTimeInRange(range?: string | null): string | null {
+  if (!range) return null;
+  const [s, e] = String(range).split(/-|～|~/).map((x) => x.trim());
+  if (!s || !e) return null;
+  const [sh, sm] = s.split(":").map(Number);
+  const [eh, em] = e.split(":").map(Number);
+  const start = sh * 60 + (sm || 0);
+  const end = eh * 60 + (em || 0);
+  if (end < start) return null;
+  const r = start + Math.floor(Math.random() * (end - start + 1));
+  const hh = String(Math.floor(r / 60)).padStart(2, "0");
+  const mm = String(r % 60).padStart(2, "0");
+  return `${hh}:${mm}`;
 }
 
 export default function ScheduledPostEditorModal({
@@ -120,111 +102,119 @@ export default function ScheduledPostEditorModal({
   // 入力項目
   const [accountId, setAccountId] = useState(initial?.accountId || "");
   const [accountName, setAccountName] = useState(initial?.accountName || "");
+  // [MOD] グループは「アカウントに紐づくもの」を自動セット、UIは読み取り専用表示
+  const [groupId, setGroupId] = useState<string>("");
+  // [MOD] 種別は 1/2/3/（null=「-」）
+  const [autoType, setAutoType] = useState<1 | 2 | 3 | null>(null);
+
+  const [theme, setTheme] = useState(initial?.theme || "");
+  const [content, setContent] = useState(initial?.content || "");
+
+  // [MOD] 予約日時は上位に配置 & 種別選択時に自動セット
   const [scheduledAtLocal, setScheduledAtLocal] = useState(
     mode === "edit" ? toLocalDatetimeValue(initial?.scheduledAt) : ""
   );
-  const [content, setContent] = useState(initial?.content || "");
-  const [theme, setTheme] = useState(initial?.theme || "");
-  const [autoPostGroupId, setAutoPostGroupId] = useState(
-    initial?.autoPostGroupId || ""
-  );
 
-  // ペルソナ（静/動）
-  const [personaMode, setPersonaMode] = useState<"static" | "dynamic">("static");
-  const [personaStatic, setPersonaStatic] = useState("");
-  const [personaDynamic, setPersonaDynamic] = useState("");
-
-  // 自動投稿グループの「どの枠か」(1/2/3)
-  const [autoType, setAutoType] = useState<1 | 2 | 3 | null>(null);
-
-  // 選択アカウント
   const selectedAccount = useMemo(
     () => accounts.find((a) => a.accountId === accountId) || null,
     [accounts, accountId]
   );
+  const selectedGroup = useMemo(
+    () => groups.find((g) => g.groupId === groupId) || null,
+    [groups, groupId]
+  );
 
-  // === 初期ロード：アカウント & 自動投稿グループ ===
+  // === 初期ロード ===
   useEffect(() => {
     if (!open) return;
 
-    // アカウント
+    // アカウント一覧（autoPostGroupId / persona付き）
     (async () => {
       try {
-        const r = await fetch("/api/threads-accounts", {
-          credentials: "include",
-        });
+        const r = await fetch("/api/accounts", { credentials: "include" });
         const j = await r.json();
-        // 期待: { accounts: [{ accountId, displayName, ... }]}
         const list: AccountItem[] = j?.accounts || j?.items || [];
         setAccounts(list);
 
-        // 編集時、アカウント名が無い場合に補完
+        // 編集時の補完（アカウント名）
         if (mode === "edit" && initial?.accountId && !initial?.accountName) {
           const a = list.find((x) => x.accountId === initial.accountId);
           if (a) setAccountName(a.displayName);
         }
-
-        // ペルソナ初期化（あれば引き継ぎ）
-        const a = list.find((x) => x.accountId === (initial?.accountId || ""));
-        setPersonaStatic(a?.personaStatic || "");
-        setPersonaDynamic(a?.personaDynamic || "");
       } catch (e) {
-        console.log("threads-accounts load error:", e);
+        console.log("accounts load error:", e);
       }
     })();
 
-    // 自動投稿グループ
+    // 自動投稿グループ一覧
     (async () => {
       try {
         const r = await fetch("/api/auto-post-groups", {
           credentials: "include",
         });
         const j = await r.json();
-        // 期待: { groups: [{ groupId, groupName, time1, theme1, ... }]}
         setGroups(j?.groups || j?.items || []);
-
-        // 編集時の type 推定（自動投稿ラベルの末尾 1/2/3 を読み取る）
-        if (mode === "edit" && initial?.autoPostGroupId) {
-          const m = String(initial.autoPostGroupId).match(/自動投稿([123])$/);
-          if (m) setAutoType(Number(m[1]) as 1 | 2 | 3);
-        }
       } catch (e) {
         console.log("auto-post-groups load error:", e);
       }
     })();
+
+    // 新規時はデフォルトで「今+30分」
+    if (mode === "add" && !scheduledAtLocal) {
+      const now = new Date();
+      now.setMinutes(now.getMinutes() + 30);
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const s = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(
+        now.getDate()
+      )}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+      setScheduledAtLocal(s);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // アカウント選択 → アカウント名/ID自動セット & ペルソナ補完
+  // [ADD] アカウント変更 → アカウント既定の自動投稿グループを自動セット（UIは表示のみ）
   useEffect(() => {
-    if (!selectedAccount) return;
+    if (!selectedAccount || groups.length === 0) return;
+    const gid = selectedAccount.autoPostGroupId || "";
+    const exists = groups.find((g) => g.groupId === gid);
+    if (exists) setGroupId(gid);
+    else setGroupId(""); // グループ無しアカウントの場合
+    // アカウント名も自動反映
     setAccountName(selectedAccount.displayName);
-    // ペルソナ（静/動）が空なら補完
-    if (!personaStatic && selectedAccount.personaStatic) {
-      setPersonaStatic(selectedAccount.personaStatic);
-    }
-    if (!personaDynamic && selectedAccount.personaDynamic) {
-      setPersonaDynamic(selectedAccount.personaDynamic);
-    }
-  }, [selectedAccount]); // eslint-disable-line
+  }, [selectedAccount, groups]);
 
-  // グループ + 種別 → ラベル & テーマ自動セット
+  // [ADD] 種別選択 → テーマの自動入力 + 時刻帯からランダム時刻を予約日時に反映
   useEffect(() => {
-    const g =
-      groups.find((x) =>
-        autoPostGroupId ? autoPostGroupId.startsWith(x.groupName) : false
-      ) || null;
-    const { label, theme: t } = buildAutoPostLabel(g, autoType);
-    if (label) setAutoPostGroupId(label);
-    if (t && !theme) setTheme(t);
+    if (!selectedGroup || !autoType) return;
+    const t =
+      autoType === 1
+        ? selectedGroup.theme1
+        : autoType === 2
+        ? selectedGroup.theme2
+        : selectedGroup.theme3;
+    if (t) setTheme(t);
+
+    const timeRange =
+      autoType === 1
+        ? selectedGroup.time1
+        : autoType === 2
+        ? selectedGroup.time2
+        : selectedGroup.time3;
+    const hhmm = randomTimeInRange(timeRange || "");
+    if (hhmm) {
+      // 既存の「日付」を維持し、時刻だけ差し替え
+      const base = scheduledAtLocal || toLocalDatetimeValue(Math.floor(Date.now() / 1000));
+      const datePart = base.split("T")[0] || "";
+      if (datePart) setScheduledAtLocal(`${datePart}T${hhmm}`);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoType]);
+  }, [autoType, selectedGroup]);
 
   // 保存
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // 新規IDはフロントで生成（既存仕様踏襲）
+    // scheduledPostId: 新規はフロントで生成、編集は既存
     const scheduledPostId =
       mode === "add"
         ? Math.random().toString(36).slice(2, 12)
@@ -233,6 +223,14 @@ export default function ScheduledPostEditorModal({
     const unix = scheduledAtLocal
       ? datetimeLocalToEpochSec(scheduledAtLocal)
       : 0;
+
+    // [MOD] autoPostGroupId の決定
+    //  - 種別「-」(null) の場合は空文字（自動投稿グループなし）
+    //  - それ以外は「{groupName}-自動投稿{n}」
+    let autoPostGroupId = "";
+    if (selectedGroup && autoType) {
+      autoPostGroupId = `${selectedGroup.groupName}-自動投稿${autoType}`;
+    }
 
     const payload: ScheduledPostType = {
       scheduledPostId,
@@ -248,15 +246,27 @@ export default function ScheduledPostEditorModal({
     onClose();
   };
 
+  // [MOD] AI生成（アカウントのペルソナを自動使用、UI入力/選択は廃止）
   const handleClickGenerate = async () => {
-    const persona =
-      personaMode === "static" ? personaStatic || "" : personaDynamic || "";
     if (!theme) {
       alert("テーマを入力/選択してください");
       return;
     }
+    // アカウントのペルソナ（静優先→動）を使う
+    const persona =
+      (selectedAccount?.personaStatic || "").trim() ||
+      (selectedAccount?.personaDynamic || "").trim() ||
+      "";
     try {
-      const text = await generateByAI({ persona, theme });
+      const res = await fetch("/api/ai-generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ theme, accountName, persona }),
+      });
+      const data = await res.json();
+      if (!res.ok || data?.error) throw new Error(data?.error || "AI生成に失敗しました");
+      const text = String(data?.text || "");
       if (!text) {
         alert("生成結果が空でした");
         return;
@@ -279,92 +289,57 @@ export default function ScheduledPostEditorModal({
           {mode === "add" ? "予約投稿の追加" : "予約投稿の編集"}
         </h3>
 
-        {/* アカウント選択 */}
-        <div className="grid grid-cols-2 gap-2">
-          <div className="col-span-2">
-            <label className="block text-xs text-gray-600 mb-1">
-              アカウント
-            </label>
-            <select
-              className="w-full border rounded px-2 py-1"
-              value={accountId}
-              onChange={(e) => setAccountId(e.target.value)}
-              required
-            >
-              <option value="">選択してください</option>
-              {accounts.map((a) => (
-                <option key={a.accountId} value={a.accountId}>
-                  {a.displayName}（id:{a.accountId}）
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-xs text-gray-600 mb-1">
-              アカウント名
-            </label>
-            <input
-              className="w-full border rounded px-2 py-1 bg-gray-100"
-              value={accountName}
-              readOnly
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-600 mb-1">
-              アカウントID
-            </label>
-            <input
-              className="w-full border rounded px-2 py-1 bg-gray-100"
-              value={accountId}
-              readOnly
-            />
-          </div>
-        </div>
-
-        {/* 日時 */}
-        <div className="mt-3">
-          <label className="block text-xs text-gray-600 mb-1">予約日時</label>
-          <input
-            type="datetime-local"
+        {/* アカウント（選択でグループ自動セット） */}
+        <div className="mb-3">
+          <label className="block text-xs text-gray-600 mb-1">アカウント</label>
+          <select
             className="w-full border rounded px-2 py-1"
-            value={scheduledAtLocal}
-            onChange={(e) => setScheduledAtLocal(e.target.value)}
+            value={accountId}
+            onChange={(e) => setAccountId(e.target.value)}
             required
-          />
+          >
+            <option value="">選択してください</option>
+            {accounts.map((a) => (
+              <option key={a.accountId} value={a.accountId}>
+                {a.displayName}（id:{a.accountId}）
+              </option>
+            ))}
+          </select>
+          <div className="grid grid-cols-2 gap-2 mt-2">
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">
+                アカウント名
+              </label>
+              <input
+                className="w-full border rounded px-2 py-1 bg-gray-100"
+                value={accountName}
+                readOnly
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">
+                アカウントID
+              </label>
+              <input
+                className="w-full border rounded px-2 py-1 bg-gray-100"
+                value={accountId}
+                readOnly
+              />
+            </div>
+          </div>
         </div>
 
-        {/* 自動投稿グループ + 種別 */}
-        <div className="mt-3 grid grid-cols-3 gap-2">
+        {/* [MOD] 自動投稿グループ（上段へ移動 & 表示のみ）＋ 種別 */}
+        <div className="mb-3 grid grid-cols-3 gap-2">
           <div className="col-span-2">
             <label className="block text-xs text-gray-600 mb-1">
-              自動投稿グループ
+              自動投稿グループ（アカウント既定）
             </label>
-            <select
-              className="w-full border rounded px-2 py-1"
-              value={
-                autoPostGroupId
-                  ? groups.find((g) => autoPostGroupId.startsWith(g.groupName))
-                      ?.groupId || ""
-                  : ""
-              }
-              onChange={(e) => {
-                const g = groups.find((x) => x.groupId === e.target.value);
-                if (!g) {
-                  setAutoPostGroupId("");
-                  return;
-                }
-                // 既定は type 未選択
-                setAutoPostGroupId(`${g.groupName}`);
-              }}
-            >
-              <option value="">（任意）選択してください</option>
-              {groups.map((g) => (
-                <option key={g.groupId} value={g.groupId}>
-                  {g.groupName}
-                </option>
-              ))}
-            </select>
+            <input
+              className="w-full border rounded px-2 py-1 bg-gray-100"
+              value={selectedGroup?.groupName || "（なし）"}
+              readOnly
+            />
           </div>
           <div>
             <label className="block text-xs text-gray-600 mb-1">種別</label>
@@ -377,6 +352,7 @@ export default function ScheduledPostEditorModal({
                 )
               }
             >
+              {/* [MOD] 「-」を残す（グループなし自動投稿） */}
               <option value="">-</option>
               <option value="1">自動投稿1</option>
               <option value="2">自動投稿2</option>
@@ -385,8 +361,8 @@ export default function ScheduledPostEditorModal({
           </div>
         </div>
 
-        {/* テーマ */}
-        <div className="mt-3">
+        {/* [MOD] テーマ（種別選択で自動入力、編集可） */}
+        <div className="mb-3">
           <label className="block text-xs text-gray-600 mb-1">テーマ</label>
           <input
             className="w-full border rounded px-2 py-1"
@@ -396,34 +372,33 @@ export default function ScheduledPostEditorModal({
           />
         </div>
 
-        {/* 本文 + AI生成 */}
-        <div className="mt-3">
+        {/* [MOD] 予約日時（上段→ここはグループの次。種別選択で時刻を自動生成し、手動編集可） */}
+        <div className="mb-3">
+          <label className="block text-xs text-gray-600 mb-1">予約日時</label>
+          <input
+            type="datetime-local"
+            className="w-full border rounded px-2 py-1"
+            value={scheduledAtLocal}
+            onChange={(e) => setScheduledAtLocal(e.target.value)}
+            required
+          />
+        </div>
+
+        {/* 本文 + AI生成（ペルソナUIなし・アカウントのペルソナで生成） */}
+        <div className="mb-3">
           <div className="flex items-center justify-between">
             <label className="block text-xs text-gray-600 mb-1">
               本文テキスト
             </label>
-            <div className="flex items-center gap-2">
-              <span className="text-xs">ペルソナ</span>
-              <select
-                className="border rounded px-2 py-1 text-xs"
-                value={personaMode}
-                onChange={(e) =>
-                  setPersonaMode(e.target.value as "static" | "dynamic")
-                }
-              >
-                <option value="static">静</option>
-                <option value="dynamic">動</option>
-              </select>
-              <button
-                type="button"
-                className="bg-blue-500 text-white rounded px-3 py-1 hover:bg-blue-600"
-                onClick={handleClickGenerate}
-              >
-                AIで生成
-              </button>
-            </div>
+            <button
+              type="button"
+              className="bg-blue-500 text-white rounded px-3 py-1 hover:bg-blue-600"
+              onClick={handleClickGenerate}
+              disabled={!selectedAccount}
+            >
+              AIで生成
+            </button>
           </div>
-
           <textarea
             className="w-full border rounded px-2 py-1"
             rows={5}
@@ -432,36 +407,8 @@ export default function ScheduledPostEditorModal({
           />
         </div>
 
-        {/* ペルソナ入力欄（任意） */}
-        <div className="grid grid-cols-2 gap-2 mt-2">
-          <div>
-            <label className="block text-xs text-gray-600 mb-1">
-              ペルソナ（静）任意
-            </label>
-            <textarea
-              className="w-full border rounded px-2 py-1 text-xs"
-              rows={3}
-              value={personaStatic}
-              onChange={(e) => setPersonaStatic(e.target.value)}
-              placeholder="アカウントの『静』キャラ（丁寧/落ち着きなど）"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-600 mb-1">
-              ペルソナ（動）任意
-            </label>
-            <textarea
-              className="w-full border rounded px-2 py-1 text-xs"
-              rows={3}
-              value={personaDynamic}
-              onChange={(e) => setPersonaDynamic(e.target.value)}
-              placeholder="アカウントの『動』キャラ（元気/勢いなど）"
-            />
-          </div>
-        </div>
-
         {/* ボタン */}
-        <div className="flex justify-end gap-2 mt-4">
+        <div className="flex justify-end gap-2 mt-1">
           <button
             type="button"
             className="bg-gray-300 text-gray-800 rounded px-4 py-2"

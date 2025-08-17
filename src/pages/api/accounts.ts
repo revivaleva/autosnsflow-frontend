@@ -1,12 +1,12 @@
-// /src/pages/api/accounts.ts
-// [ADD] ユーザー配下の投稿アカウントを返却（予約モーダルのドロップダウン用）
+// src/pages/api/accounts.ts
+// [MOD] 自動投稿グループID(autoPostGroupId)とペルソナ情報を返すよう拡張
 import type { NextApiRequest, NextApiResponse } from "next";
 import { QueryCommand } from "@aws-sdk/client-dynamodb";
 import { createDynamoClient } from "@/lib/ddb";
 import { verifyUserFromRequest } from "@/lib/auth";
 
 const ddb = createDynamoClient();
-const TBL = process.env.TBL_THREADS || "ThreadsAccounts";
+const TBL = "ThreadsAccounts"; // [NOTE] 既存と同名。環境変数なし方針に合わせ固定
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
@@ -19,13 +19,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         ":pk": { S: `USER#${userId}` },
         ":pfx": { S: "ACCOUNT#" },
       },
-      ProjectionExpression: "SK, displayName",
+      // [MOD] persona / autoPostGroupId も取得
+      ProjectionExpression: "SK, displayName, autoPostGroupId, personaStatic, personaDynamic",
       ScanIndexForward: true,
       Limit: 200,
     }));
     const accounts = (out.Items || []).map(it => ({
       accountId: String(it.SK?.S || "").replace("ACCOUNT#", ""),
       displayName: it.displayName?.S || "",
+      autoPostGroupId: it.autoPostGroupId?.S || "",
+      personaStatic: it.personaStatic?.S || "",
+      personaDynamic: it.personaDynamic?.S || "",
     }));
     res.status(200).json({ accounts });
   } catch (e: any) {
