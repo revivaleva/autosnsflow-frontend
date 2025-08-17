@@ -7,7 +7,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { GetItemCommand, UpdateItemCommand } from "@aws-sdk/client-dynamodb";
 import { createDynamoClient } from "@/lib/ddb";
 import { verifyUserFromRequest } from "@/lib/auth";
-import { postToThreads } from "@/lib/threads";
+import { postToThreads, getThreadsPermalink } from "@/lib/threads";
 
 const ddb = createDynamoClient();
 const TBL_SCHEDULED = "ScheduledPosts";
