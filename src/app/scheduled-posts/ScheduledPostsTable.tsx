@@ -294,13 +294,25 @@ export default function ScheduledPostsTable() {
     if (scheduledAt && String(scheduledAt).length < 11) {
       scheduledAt = Number(scheduledAt);
     }
-    await fetch(`/api/scheduled-posts`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ ...newPost, scheduledAt }),
-    });
-    setPosts((prev) => [...prev, { ...newPost, scheduledAt }]);
+
+    try {
+      const resp = await fetch(`/api/scheduled-posts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ ...newPost, scheduledAt }),
+      });
+      // [FIX] 成否チェック（APIは success:true を返す）
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || !data?.success) {
+        alert(`保存に失敗しました: ${data?.error || resp.statusText}`);
+        return; // ← [FIX] 失敗時はローカル追加しない
+      }
+      // [FIX] 成功時のみローカルへ反映
+      setPosts((prev) => [...prev, { ...newPost, scheduledAt }]);
+    } catch (e: any) {
+      alert(`保存エラー: ${e?.message || e}`);
+    }
   };
 
   const handleEdit = (id: string) => {
