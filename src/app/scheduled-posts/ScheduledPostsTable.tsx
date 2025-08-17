@@ -1,4 +1,4 @@
-// src/app/scheduled-posts/ScheduledPostsTable.tsx
+// /src/app/scheduled-posts/ScheduledPostsTable.tsx
 // [MOD] 投稿IDセル：投稿済みのときのみクリックで別タブ（postUrlがあればアンカー表示）
 "use client";
 
@@ -59,7 +59,7 @@ export default function ScheduledPostsTable() {
     setEditorOpen(true);
   };
 
-  // [MOD] 追加保存（既存POST）
+  // [FIX] 追加保存：レスポンスの data.post を使って反映
   const handleAddSave = async (newPost: ScheduledPostType) => {
     const resp = await fetch(`/api/scheduled-posts`, {
       method: "POST",
@@ -72,7 +72,7 @@ export default function ScheduledPostsTable() {
       alert(`保存に失敗しました: ${data?.error || resp.statusText}`);
       return;
     }
-    setPosts((prev) => [...prev, newPost]);
+    setPosts((prev) => [...prev, data.post]); // [FIX]
   };
 
   // [MOD] 編集
@@ -146,40 +146,38 @@ export default function ScheduledPostsTable() {
       return 0;
     });
 
-  // [MOD] 即時投稿（実投稿API呼び出し）
-  const handleManualRun = async (scheduledPostId: string) => {
-    if (postingId) return;
-    setPostingId(scheduledPostId);
+  // [FIX] 即時投稿：実行中フラグのセット/解除と成功後の反映
+  const handleManualRun = async (p: ScheduledPostType) => {
+    if (!confirm("即時投稿を実行しますか？")) return;
     try {
-      const resp = await fetch(`/api/scheduled-posts/manual-post`, {
+      setPostingId(p.scheduledPostId); // [FIX] 実行中フラグON
+      const resp = await fetch("/api/scheduled-posts/manual-post", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ scheduledPostId }),
+        body: JSON.stringify({ scheduledPostId: p.scheduledPostId }),
       });
-      const data = await resp.json().catch(() => ({} as any));
+      const data = await resp.json().catch(() => ({}));
       if (!resp.ok || !data?.ok) {
-        throw new Error(data?.error || resp.statusText);
+        alert(`即時投稿に失敗しました: ${data?.error || resp.statusText}`);
+        return;
       }
-      const updated = data.post || {};
+      // 成功したら postUrl / postId / postedAt / status を反映
       setPosts((prev) =>
-        prev.map((p) =>
-          p.scheduledPostId === scheduledPostId
+        prev.map((x) =>
+          x.scheduledPostId === p.scheduledPostId
             ? {
-                ...p,
+                ...x,
                 status: "posted",
-                postedAt: updated.postedAt || Math.floor(Date.now() / 1000),
-                // [ADD] postId/postUrl は any で保持（表示側で参照）
-                ...(updated.postId ? { ...(p as any), postId: updated.postId } : {}),
-                ...(updated.postUrl ? { ...(p as any), postUrl: updated.postUrl } : {}),
+                postedAt: data.post.postedAt,
+                postUrl: data.post.postUrl,
+                postId: data.post.postId,
               }
-            : p
+            : x
         )
       );
-    } catch (e: any) {
-      alert(`即時投稿に失敗しました: ${e?.message || "unknown error"}`);
     } finally {
-      setPostingId("");
+      setPostingId(""); // [FIX] 実行中フラグOFF
     }
   };
 
@@ -263,8 +261,10 @@ export default function ScheduledPostsTable() {
               const repliesNum = Number(post.replyCount ?? 0);
               const repliesStatus = `${0}/${repliesNum}`;
               const isPosting = postingId === post.scheduledPostId;
-              const postId = (post as any).postId;
-              const postUrl = (post as any).postUrl;
+
+              // [FIX] 型エラー回避のため any キャストで postUrl を取得
+              const pUrl = (post as any).postUrl as string | undefined;
+
               return (
                 <tr key={post.scheduledPostId}>
                   <td className="border p-1">{post.accountName}</td>
@@ -287,23 +287,18 @@ export default function ScheduledPostsTable() {
                       : ""}
                   </td>
                   <td className="border p-1">
-                    {/* [MOD] 投稿済みのみ表示。URLがあれば別タブで開けるリンク */}
-                    {post.status === "posted" && postId ? (
-                      postUrl ? (
-                        <a
-                          href={postUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-blue-600 underline hover:opacity-80"
-                          title="Threadsで開く"
-                        >
-                          {postId}
-                        </a>
-                      ) : (
-                        postId
-                      )
+                    {/* [MOD] postUrl がある＝正しいURLが保存済みのときだけリンク表示 */}
+                    {post.status === "posted" && pUrl ? (
+                      <a
+                        href={pUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-blue-600 underline"
+                      >
+                        {pUrl.split("/post/").pop() /* ショートコードだけ表示 */}
+                      </a>
                     ) : (
-                      ""
+                      "" /* 未投稿/URL未確定なら空 */
                     )}
                   </td>
                   <td className="border p-1">
@@ -322,7 +317,7 @@ export default function ScheduledPostsTable() {
                         className={`text-white px-2 py-1 rounded ${
                           isPosting ? "bg-green-300 cursor-not-allowed" : "bg-green-500 hover:bg-green-600"
                         }`}
-                        onClick={() => handleManualRun(post.scheduledPostId)}
+                        onClick={() => handleManualRun(post)}
                         disabled={isPosting}
                       >
                         {isPosting ? "実行中…" : "即時投稿"}

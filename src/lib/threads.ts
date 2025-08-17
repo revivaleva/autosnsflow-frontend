@@ -1,13 +1,8 @@
 // /src/lib/threads.ts
-// [MOD] postToThreads をエクスポート（/me で作成→公開の2段階）
-// [MOD] getThreadsPermalink をエクスポート（API取得→失敗時は postId→shortcode 変換）
-// [MOD] BigInt リテラル(0n/64n) を使わないように修正（ES2020未満でもビルド可）
+// [MOD] postToThreads: /me で作成→公開（postId を取得）
+// [MOD] getThreadsPermalink: 1) GraphAPIからpermalink取得 2) 失敗時はpostId→shortcode変換
+// [MOD] BigIntリテラル未使用（ES2020未満でもOK）
 
-/**
- * Threads に本文テキストを実投稿します。
- * - /me/threads で creation_id を作成
- * - /me/threads_publish で公開して postId を取得
- */
 export async function postToThreads({
   accessToken,
   text,
@@ -15,8 +10,7 @@ export async function postToThreads({
   accessToken: string;
   text: string;
 }): Promise<{ postId: string }> {
-  const base =
-    process.env.THREADS_GRAPH_BASE || "https://graph.threads.net/v1.0";
+  const base = process.env.THREADS_GRAPH_BASE || "https://graph.threads.net/v1.0";
   const textPostAppId = process.env.THREADS_TEXT_APP_ID;
 
   const create = async () => {
@@ -35,12 +29,9 @@ export async function postToThreads({
     const tx = await r.text().catch(() => "");
     if (!r.ok) throw new Error(`threads_create_failed: ${r.status} ${tx}`);
     let j: any = {};
-    try {
-      j = JSON.parse(tx);
-    } catch {}
+    try { j = JSON.parse(tx); } catch {}
     const creationId = j?.id;
-    if (!creationId)
-      throw new Error("threads_create_failed: creation_id missing");
+    if (!creationId) throw new Error("threads_create_failed: creation_id missing");
     return creationId as string;
   };
 
@@ -48,17 +39,12 @@ export async function postToThreads({
     const r = await fetch(`${base}/me/threads_publish`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        creation_id: creationId,
-        access_token: accessToken,
-      }),
+      body: JSON.stringify({ creation_id: creationId, access_token: accessToken }),
     });
     const tx = await r.text().catch(() => "");
     if (!r.ok) throw new Error(`threads_publish_failed: ${r.status} ${tx}`);
     let j: any = {};
-    try {
-      j = JSON.parse(tx);
-    } catch {}
+    try { j = JSON.parse(tx); } catch {}
     const postId = j?.id;
     if (!postId) throw new Error("threads_publish_failed: post id missing");
     return postId as string;
@@ -69,11 +55,6 @@ export async function postToThreads({
   return { postId };
 }
 
-/**
- * 公開URL(permalink) を取得します。
- * 1) Graph API `/{postId}?fields=permalink_url` で取得を試行
- * 2) 失敗時は postId を base64(64進アルファベット) で shortcode に変換して URL を合成
- */
 export async function getThreadsPermalink({
   accessToken,
   postId,
@@ -83,15 +64,12 @@ export async function getThreadsPermalink({
   postId: string;
   handle: string;
 }): Promise<{ url: string; code: string }> {
-  const base =
-    process.env.THREADS_GRAPH_BASE || "https://graph.threads.net/v1.0";
+  const base = process.env.THREADS_GRAPH_BASE || "https://graph.threads.net/v1.0";
 
-  // 1) APIで取得
+  // 1) Graph API で permalink を取得
   try {
     const r = await fetch(
-      `${base}/${encodeURIComponent(
-        postId
-      )}?fields=permalink_url&access_token=${encodeURIComponent(accessToken)}`
+      `${base}/${encodeURIComponent(postId)}?fields=permalink_url&access_token=${encodeURIComponent(accessToken)}`
     );
     const tx = await r.text();
     if (r.ok) {
@@ -102,27 +80,17 @@ export async function getThreadsPermalink({
         if (code) return { url: j.permalink_url, code };
       }
     }
-  } catch {
-    // fallbackへ
-  }
+  } catch { /* fallback */ }
 
-  // 2) Fallback: postId -> shortcode 変換（BigIntリテラル不使用）
-  const alphabet =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  // 2) 失敗時: 数値 postId → shortcode 変換（Instagram/Threads 互換）
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
   let n: bigint;
-  try {
-    n = BigInt(postId);
-  } catch {
-    // 変換できなければ最終フォールバック
-    const url = `https://www.threads.com/@${encodeURIComponent(
-      handle
-    )}/post/${encodeURIComponent(postId)}`;
+  try { n = BigInt(postId); } catch {
+    const url = `https://www.threads.com/@${encodeURIComponent(handle)}/post/${encodeURIComponent(postId)}`;
     return { url, code: postId };
   }
-
   const ZERO = BigInt(0);
   const SIXTY_FOUR = BigInt(64);
-
   let code = "";
   while (n > ZERO) {
     const rem = Number(n % SIXTY_FOUR);
@@ -131,8 +99,6 @@ export async function getThreadsPermalink({
   }
   if (!code) code = "0";
 
-  const url = `https://www.threads.com/@${encodeURIComponent(
-    handle
-  )}/post/${encodeURIComponent(code)}`;
+  const url = `https://www.threads.com/@${encodeURIComponent(handle)}/post/${encodeURIComponent(code)}`;
   return { url, code };
 }
