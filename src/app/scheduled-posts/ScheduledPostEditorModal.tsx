@@ -1,9 +1,9 @@
 // src/app/scheduled-posts/ScheduledPostEditorModal.tsx
 "use client";
 
+// [MOD] 要件反映版：グループ自動セット/種別→テーマ&時刻自動/AIボタン位置変更
 import React, { useEffect, useMemo, useState } from "react";
 
-// === 型（ScheduledPostsTable.tsx と整合） ===
 type ScheduledPostStatus = "" | "pending" | "posted";
 export type ScheduledPostType = {
   scheduledPostId: string;
@@ -20,11 +20,10 @@ export type ScheduledPostType = {
   replyCount?: number;
 };
 
-// [MOD] APIで使う型を拡張（autoPostGroupId / persona 付き）
+// [MOD] アカウントに autoPostGroupId / persona を持たせる
 type AccountItem = {
   accountId: string;
   displayName: string;
-  // [ADD] 既定グループ・ペルソナ（API拡張と対応）
   autoPostGroupId?: string;
   personaStatic?: string;
   personaDynamic?: string;
@@ -49,30 +48,24 @@ type Props = {
   onSave: (data: ScheduledPostType) => Promise<void> | void;
 };
 
-// === ユーティリティ ===
+// ==== utils ====
+const pad = (n: number) => String(n).padStart(2, "0");
 
-// [既存] Date→datetime-local
 function toLocalDatetimeValue(epochSec?: number | string) {
   const n = Number(epochSec || 0);
   if (!n) return "";
   const d = new Date(n * 1000);
-  const pad = (v: number) => String(v).padStart(2, "0");
-  const yyyy = d.getFullYear();
-  const mm = pad(d.getMonth() + 1);
-  const dd = pad(d.getDate());
-  const hh = pad(d.getHours());
-  const mi = pad(d.getMinutes());
-  return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
+    d.getHours()
+  )}:${pad(d.getMinutes())}`;
 }
 
-// [既存] datetime-local → UNIX秒
 function datetimeLocalToEpochSec(v: string) {
   if (!v) return 0;
-  const d = new Date(v);
-  return Math.floor(d.getTime() / 1000);
+  return Math.floor(new Date(v).getTime() / 1000);
 }
 
-// [ADD] "HH:MM-HH:MM" などからランダムな時刻（HH:MM）を返す
+// [ADD] "HH:MM-HH:MM" / "HH:MM～HH:MM" / "HH:MM~HH:MM" → ランダム時刻(HH:MM)
 function randomTimeInRange(range?: string | null): string | null {
   if (!range) return null;
   const [s, e] = String(range).split(/-|～|~/).map((x) => x.trim());
@@ -83,9 +76,22 @@ function randomTimeInRange(range?: string | null): string | null {
   const end = eh * 60 + (em || 0);
   if (end < start) return null;
   const r = start + Math.floor(Math.random() * (end - start + 1));
-  const hh = String(Math.floor(r / 60)).padStart(2, "0");
-  const mm = String(r % 60).padStart(2, "0");
-  return `${hh}:${mm}`;
+  return `${pad(Math.floor(r / 60))}:${pad(r % 60)}`;
+}
+
+// [ADD] アカウントに紐づくグループを groups から解決（groupId / groupName どちらでもOK）
+function resolveGroupForAccount(
+  account: AccountItem | null,
+  groups: AutoPostGroup[]
+): AutoPostGroup | null {
+  if (!account) return null;
+  const key = (account.autoPostGroupId || "").trim();
+  if (!key) return null;
+  return (
+    groups.find((g) => g.groupId === key) ||
+    groups.find((g) => g.groupName === key) ||
+    null
+  );
 }
 
 export default function ScheduledPostEditorModal({
@@ -95,22 +101,22 @@ export default function ScheduledPostEditorModal({
   onClose,
   onSave,
 }: Props) {
-  // === ローカル状態 ===
   const [accounts, setAccounts] = useState<AccountItem[]>([]);
   const [groups, setGroups] = useState<AutoPostGroup[]>([]);
 
-  // 入力項目
   const [accountId, setAccountId] = useState(initial?.accountId || "");
   const [accountName, setAccountName] = useState(initial?.accountName || "");
-  // [MOD] グループは「アカウントに紐づくもの」を自動セット、UIは読み取り専用表示
+
+  // [MOD] グループは自動セット用に内部 id を保持（表示は groupName のみ）
   const [groupId, setGroupId] = useState<string>("");
-  // [MOD] 種別は 1/2/3/（null=「-」）
+
+  // [MOD] 種別は 1/2/3 or null(=「-」)
   const [autoType, setAutoType] = useState<1 | 2 | 3 | null>(null);
 
   const [theme, setTheme] = useState(initial?.theme || "");
   const [content, setContent] = useState(initial?.content || "");
 
-  // [MOD] 予約日時は上位に配置 & 種別選択時に自動セット
+  // [MOD] 予約日時はグループより下に置くが、種別選択時に自動セット
   const [scheduledAtLocal, setScheduledAtLocal] = useState(
     mode === "edit" ? toLocalDatetimeValue(initial?.scheduledAt) : ""
   );
@@ -124,16 +130,26 @@ export default function ScheduledPostEditorModal({
     [groups, groupId]
   );
 
-  // === 初期ロード ===
+  // ==== 初期ロード ====
   useEffect(() => {
     if (!open) return;
 
-    // アカウント一覧（autoPostGroupId / persona付き）
+    // [MOD] アカウントは /threads-accounts を優先、空なら /accounts をフォールバック
     (async () => {
       try {
-        const r = await fetch("/api/accounts", { credentials: "include" });
-        const j = await r.json();
-        const list: AccountItem[] = j?.accounts || j?.items || [];
+        let list: AccountItem[] = [];
+        const r1 = await fetch("/api/threads-accounts", { credentials: "include" });
+        if (r1.ok) {
+          const j = await r1.json();
+          list = j?.accounts || j?.items || [];
+        }
+        if (!Array.isArray(list) || list.length === 0) {
+          const r2 = await fetch("/api/accounts", { credentials: "include" });
+          if (r2.ok) {
+            const j2 = await r2.json();
+            list = j2?.accounts || j2?.items || [];
+          }
+        }
         setAccounts(list);
 
         // 編集時の補完（アカウント名）
@@ -146,12 +162,9 @@ export default function ScheduledPostEditorModal({
       }
     })();
 
-    // 自動投稿グループ一覧
     (async () => {
       try {
-        const r = await fetch("/api/auto-post-groups", {
-          credentials: "include",
-        });
+        const r = await fetch("/api/auto-post-groups", { credentials: "include" });
         const j = await r.json();
         setGroups(j?.groups || j?.items || []);
       } catch (e) {
@@ -159,50 +172,37 @@ export default function ScheduledPostEditorModal({
       }
     })();
 
-    // 新規時はデフォルトで「今+30分」
+    // 新規時デフォルト日時（今+30分）
     if (mode === "add" && !scheduledAtLocal) {
       const now = new Date();
       now.setMinutes(now.getMinutes() + 30);
-      const pad = (n: number) => String(n).padStart(2, "0");
-      const s = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(
-        now.getDate()
-      )}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
-      setScheduledAtLocal(s);
+      setScheduledAtLocal(
+        `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(
+          now.getHours()
+        )}:${pad(now.getMinutes())}`
+      );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // [ADD] アカウント変更 → アカウント既定の自動投稿グループを自動セット（UIは表示のみ）
+  // [MOD] アカウント or groups が変わったら、アカウント既定の自動投稿グループを自動セット
   useEffect(() => {
-    if (!selectedAccount || groups.length === 0) return;
-    const gid = selectedAccount.autoPostGroupId || "";
-    const exists = groups.find((g) => g.groupId === gid);
-    if (exists) setGroupId(gid);
-    else setGroupId(""); // グループ無しアカウントの場合
-    // アカウント名も自動反映
-    setAccountName(selectedAccount.displayName);
+    const g = resolveGroupForAccount(selectedAccount, groups);
+    setGroupId(g?.groupId || "");
+    setAccountName(selectedAccount?.displayName || "");
   }, [selectedAccount, groups]);
 
-  // [ADD] 種別選択 → テーマの自動入力 + 時刻帯からランダム時刻を予約日時に反映
+  // [MOD] 種別選択 → テーマ自動入力 + 時刻帯からランダム時刻を予約に反映（「-」は何もしない）
   useEffect(() => {
     if (!selectedGroup || !autoType) return;
-    const t =
-      autoType === 1
-        ? selectedGroup.theme1
-        : autoType === 2
-        ? selectedGroup.theme2
-        : selectedGroup.theme3;
-    if (t) setTheme(t);
 
-    const timeRange =
-      autoType === 1
-        ? selectedGroup.time1
-        : autoType === 2
-        ? selectedGroup.time2
-        : selectedGroup.time3;
+    const ty = autoType;
+    const autoTheme = ty === 1 ? selectedGroup.theme1 : ty === 2 ? selectedGroup.theme2 : selectedGroup.theme3;
+    if (autoTheme) setTheme(autoTheme);
+
+    const timeRange = ty === 1 ? selectedGroup.time1 : ty === 2 ? selectedGroup.time2 : selectedGroup.time3;
     const hhmm = randomTimeInRange(timeRange || "");
     if (hhmm) {
-      // 既存の「日付」を維持し、時刻だけ差し替え
       const base = scheduledAtLocal || toLocalDatetimeValue(Math.floor(Date.now() / 1000));
       const datePart = base.split("T")[0] || "";
       if (datePart) setScheduledAtLocal(`${datePart}T${hhmm}`);
@@ -210,23 +210,16 @@ export default function ScheduledPostEditorModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoType, selectedGroup]);
 
-  // 保存
+  // ==== 保存 ====
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // scheduledPostId: 新規はフロントで生成、編集は既存
     const scheduledPostId =
-      mode === "add"
-        ? Math.random().toString(36).slice(2, 12)
-        : (initial?.scheduledPostId as string);
+      mode === "add" ? Math.random().toString(36).slice(2, 12) : (initial?.scheduledPostId as string);
 
-    const unix = scheduledAtLocal
-      ? datetimeLocalToEpochSec(scheduledAtLocal)
-      : 0;
+    const unix = scheduledAtLocal ? datetimeLocalToEpochSec(scheduledAtLocal) : 0;
 
-    // [MOD] autoPostGroupId の決定
-    //  - 種別「-」(null) の場合は空文字（自動投稿グループなし）
-    //  - それ以外は「{groupName}-自動投稿{n}」
+    // [MOD] 種別が「-」（null）のときは自動投稿グループなし
     let autoPostGroupId = "";
     if (selectedGroup && autoType) {
       autoPostGroupId = `${selectedGroup.groupName}-自動投稿${autoType}`;
@@ -246,23 +239,22 @@ export default function ScheduledPostEditorModal({
     onClose();
   };
 
-  // [MOD] AI生成（アカウントのペルソナを自動使用、UI入力/選択は廃止）
+  // [MOD] AI生成：アカウントのペルソナを自動使用、purpose=post-generate
   const handleClickGenerate = async () => {
     if (!theme) {
       alert("テーマを入力/選択してください");
       return;
     }
-    // アカウントのペルソナ（静優先→動）を使う
     const persona =
       (selectedAccount?.personaStatic || "").trim() ||
       (selectedAccount?.personaDynamic || "").trim() ||
       "";
     try {
-      const res = await fetch("/api/ai-generate", {
+      const res = await fetch("/api/ai-gateway", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ theme, accountName, persona }),
+        body: JSON.stringify({ purpose: "post-generate", input: { theme, persona } }),
       });
       const data = await res.json();
       if (!res.ok || data?.error) throw new Error(data?.error || "AI生成に失敗しました");
@@ -281,13 +273,8 @@ export default function ScheduledPostEditorModal({
 
   return (
     <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
-      <form
-        className="bg-white rounded-xl shadow-xl p-5 w-[520px] max-w-[95vw]"
-        onSubmit={handleSubmit}
-      >
-        <h3 className="text-lg font-bold mb-3">
-          {mode === "add" ? "予約投稿の追加" : "予約投稿の編集"}
-        </h3>
+      <form className="bg-white rounded-xl shadow-xl p-5 w-[520px] max-w-[95vw]" onSubmit={handleSubmit}>
+        <h3 className="text-lg font-bold mb-3">{mode === "add" ? "予約投稿の追加" : "予約投稿の編集"}</h3>
 
         {/* アカウント（選択でグループ自動セット） */}
         <div className="mb-3">
@@ -307,34 +294,20 @@ export default function ScheduledPostEditorModal({
           </select>
           <div className="grid grid-cols-2 gap-2 mt-2">
             <div>
-              <label className="block text-xs text-gray-600 mb-1">
-                アカウント名
-              </label>
-              <input
-                className="w-full border rounded px-2 py-1 bg-gray-100"
-                value={accountName}
-                readOnly
-              />
+              <label className="block text-xs text-gray-600 mb-1">アカウント名</label>
+              <input className="w-full border rounded px-2 py-1 bg-gray-100" value={accountName} readOnly />
             </div>
             <div>
-              <label className="block text-xs text-gray-600 mb-1">
-                アカウントID
-              </label>
-              <input
-                className="w-full border rounded px-2 py-1 bg-gray-100"
-                value={accountId}
-                readOnly
-              />
+              <label className="block text-xs text-gray-600 mb-1">アカウントID</label>
+              <input className="w-full border rounded px-2 py-1 bg-gray-100" value={accountId} readOnly />
             </div>
           </div>
         </div>
 
-        {/* [MOD] 自動投稿グループ（上段へ移動 & 表示のみ）＋ 種別 */}
+        {/* [MOD] 自動投稿グループ（予約日時より上に配置 / 表示のみ）＋ 種別 */}
         <div className="mb-3 grid grid-cols-3 gap-2">
           <div className="col-span-2">
-            <label className="block text-xs text-gray-600 mb-1">
-              自動投稿グループ（アカウント既定）
-            </label>
+            <label className="block text-xs text-gray-600 mb-1">自動投稿グループ（アカウント既定）</label>
             <input
               className="w-full border rounded px-2 py-1 bg-gray-100"
               value={selectedGroup?.groupName || "（なし）"}
@@ -346,13 +319,9 @@ export default function ScheduledPostEditorModal({
             <select
               className="w-full border rounded px-2 py-1"
               value={autoType || ""}
-              onChange={(e) =>
-                setAutoType(
-                  e.target.value ? (Number(e.target.value) as 1 | 2 | 3) : null
-                )
-              }
+              onChange={(e) => setAutoType(e.target.value ? (Number(e.target.value) as 1 | 2 | 3) : null)}
             >
-              {/* [MOD] 「-」を残す（グループなし自動投稿） */}
+              {/* 「-」はグループ無しの自動投稿 */}
               <option value="">-</option>
               <option value="1">自動投稿1</option>
               <option value="2">自動投稿2</option>
@@ -361,9 +330,19 @@ export default function ScheduledPostEditorModal({
           </div>
         </div>
 
-        {/* [MOD] テーマ（種別選択で自動入力、編集可） */}
+        {/* [MOD] テーマ（右側に AI 生成ボタン → 予約日時より上） */}
         <div className="mb-3">
-          <label className="block text-xs text-gray-600 mb-1">テーマ</label>
+          <div className="flex items-center justify-between">
+            <label className="block text-xs text-gray-600 mb-1">テーマ</label>
+            <button
+              type="button"
+              className="bg-blue-500 text-white rounded px-3 py-1 hover:bg-blue-600"
+              onClick={handleClickGenerate}
+              disabled={!selectedAccount}
+            >
+              AIで生成
+            </button>
+          </div>
           <input
             className="w-full border rounded px-2 py-1"
             value={theme}
@@ -372,7 +351,7 @@ export default function ScheduledPostEditorModal({
           />
         </div>
 
-        {/* [MOD] 予約日時（上段→ここはグループの次。種別選択で時刻を自動生成し、手動編集可） */}
+        {/* [MOD] 予約日時（グループより下。種別選択で自動セット、手動編集可） */}
         <div className="mb-3">
           <label className="block text-xs text-gray-600 mb-1">予約日時</label>
           <input
@@ -384,21 +363,9 @@ export default function ScheduledPostEditorModal({
           />
         </div>
 
-        {/* 本文 + AI生成（ペルソナUIなし・アカウントのペルソナで生成） */}
+        {/* 本文 */}
         <div className="mb-3">
-          <div className="flex items-center justify-between">
-            <label className="block text-xs text-gray-600 mb-1">
-              本文テキスト
-            </label>
-            <button
-              type="button"
-              className="bg-blue-500 text-white rounded px-3 py-1 hover:bg-blue-600"
-              onClick={handleClickGenerate}
-              disabled={!selectedAccount}
-            >
-              AIで生成
-            </button>
-          </div>
+          <label className="block text-xs text-gray-600 mb-1">本文テキスト</label>
           <textarea
             className="w-full border rounded px-2 py-1"
             rows={5}
@@ -407,19 +374,11 @@ export default function ScheduledPostEditorModal({
           />
         </div>
 
-        {/* ボタン */}
         <div className="flex justify-end gap-2 mt-1">
-          <button
-            type="button"
-            className="bg-gray-300 text-gray-800 rounded px-4 py-2"
-            onClick={onClose}
-          >
+          <button type="button" className="bg-gray-300 text-gray-800 rounded px-4 py-2" onClick={onClose}>
             キャンセル
           </button>
-          <button
-            type="submit"
-            className="bg-green-600 text-white rounded px-5 py-2 hover:bg-green-700"
-          >
+          <button type="submit" className="bg-green-600 text-white rounded px-5 py-2 hover:bg-green-700">
             保存
           </button>
         </div>
