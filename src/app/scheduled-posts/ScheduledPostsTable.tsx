@@ -1,5 +1,5 @@
 // src/app/scheduled-posts/ScheduledPostsTable.tsx
-// [MOD] 旧モーダルUIを削除し、新モーダルを利用
+// [MOD] 投稿IDセル：投稿済みのときのみクリックで別タブ（postUrlがあればアンカー表示）
 "use client";
 
 import React, { useEffect, useState } from "react";
@@ -34,6 +34,9 @@ export default function ScheduledPostsTable() {
   const [repliesModalOpen, setRepliesModalOpen] = useState(false);
   const [repliesModalTarget, setRepliesModalTarget] = useState<string>("");
   const [repliesModalItems, setRepliesModalItems] = useState<ReplyType[]>([]);
+
+  // [ADD] 即時投稿の実行中フラグ（多重押し防止）
+  const [postingId, setPostingId] = useState<string>("");
 
   // 一覧取得（既存API）
   useEffect(() => {
@@ -143,7 +146,42 @@ export default function ScheduledPostsTable() {
       return 0;
     });
 
-  const handleManualRun = (id: string) => alert(`即時投稿: ${id}`);
+  // [MOD] 即時投稿（実投稿API呼び出し）
+  const handleManualRun = async (scheduledPostId: string) => {
+    if (postingId) return;
+    setPostingId(scheduledPostId);
+    try {
+      const resp = await fetch(`/api/scheduled-posts/manual-post`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ scheduledPostId }),
+      });
+      const data = await resp.json().catch(() => ({} as any));
+      if (!resp.ok || !data?.ok) {
+        throw new Error(data?.error || resp.statusText);
+      }
+      const updated = data.post || {};
+      setPosts((prev) =>
+        prev.map((p) =>
+          p.scheduledPostId === scheduledPostId
+            ? {
+                ...p,
+                status: "posted",
+                postedAt: updated.postedAt || Math.floor(Date.now() / 1000),
+                // [ADD] postId/postUrl は any で保持（表示側で参照）
+                ...(updated.postId ? { ...(p as any), postId: updated.postId } : {}),
+                ...(updated.postUrl ? { ...(p as any), postUrl: updated.postUrl } : {}),
+              }
+            : p
+        )
+      );
+    } catch (e: any) {
+      alert(`即時投稿に失敗しました: ${e?.message || "unknown error"}`);
+    } finally {
+      setPostingId("");
+    }
+  };
 
   if (loading) return <div className="p-6 text-center">読み込み中...</div>;
 
@@ -224,6 +262,9 @@ export default function ScheduledPostsTable() {
               const autoPostLabel = post.autoPostGroupId || "";
               const repliesNum = Number(post.replyCount ?? 0);
               const repliesStatus = `${0}/${repliesNum}`;
+              const isPosting = postingId === post.scheduledPostId;
+              const postId = (post as any).postId;
+              const postUrl = (post as any).postUrl;
               return (
                 <tr key={post.scheduledPostId}>
                   <td className="border p-1">{post.accountName}</td>
@@ -246,8 +287,24 @@ export default function ScheduledPostsTable() {
                       : ""}
                   </td>
                   <td className="border p-1">
-                    {/* [MOD] 未投稿のときは表示しない。投稿済みのみ postId を表示 */}
-                    {post.status === "posted" && (post as any).postId ? (post as any).postId : ""}
+                    {/* [MOD] 投稿済みのみ表示。URLがあれば別タブで開けるリンク */}
+                    {post.status === "posted" && postId ? (
+                      postUrl ? (
+                        <a
+                          href={postUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-blue-600 underline hover:opacity-80"
+                          title="Threadsで開く"
+                        >
+                          {postId}
+                        </a>
+                      ) : (
+                        postId
+                      )
+                    ) : (
+                      ""
+                    )}
                   </td>
                   <td className="border p-1">
                     <button
@@ -262,10 +319,13 @@ export default function ScheduledPostsTable() {
                   <td className="border p-1 space-x-1">
                     {post.status !== "posted" && !post.isDeleted && (
                       <button
-                        className="bg-green-500 text-white px-2 py-1 rounded hover:bg-green-600"
-                        onClick={() => alert(`即時投稿: ${post.scheduledPostId}`)}
+                        className={`text-white px-2 py-1 rounded ${
+                          isPosting ? "bg-green-300 cursor-not-allowed" : "bg-green-500 hover:bg-green-600"
+                        }`}
+                        onClick={() => handleManualRun(post.scheduledPostId)}
+                        disabled={isPosting}
                       >
-                        即時投稿
+                        {isPosting ? "実行中…" : "即時投稿"}
                       </button>
                     )}
                     {post.status !== "posted" && !post.isDeleted && (
