@@ -287,18 +287,31 @@ export default function ScheduledPostsTable() {
                       : ""}
                   </td>
                   <td className="border p-1">
-                    {/* [MOD] postUrl がある＝正しいURLが保存済みのときだけリンク表示 */}
-                    {post.status === "posted" && pUrl ? (
-                      <a
-                        href={pUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-blue-600 underline"
-                      >
-                        {pUrl.split("/post/").pop() /* ショートコードだけ表示 */}
-                      </a>
+                    {/* [ADD] postUrl が無い場合はプロフィールURLへフォールバック */}
+                    {post.status === "posted" ? (
+                      pUrl ? (
+                        <a
+                          href={pUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-blue-600 underline"
+                          title="Threadsで開く"
+                        >
+                          {pUrl.split("/post/").pop() /* ショートコードだけ表示 */}
+                        </a>
+                      ) : (
+                        <a
+                          href={`https://www.threads.com/@${encodeURIComponent(post.accountId || "")}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-blue-600 underline"
+                          title="プロフィールで確認"
+                        >
+                          プロフィール
+                        </a>
+                      )
                     ) : (
-                      "" /* 未投稿/URL未確定なら空 */
+                      "" /* 未投稿 */
                     )}
                   </td>
                   <td className="border p-1">

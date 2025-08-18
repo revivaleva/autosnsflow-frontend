@@ -1,7 +1,6 @@
 // /src/lib/threads.ts
-// [MOD] postToThreads: /me で作成→公開（postId を取得）
-// [MOD] getThreadsPermalink: 1) GraphAPIからpermalink取得 2) 失敗時はpostId→shortcode変換
-// [MOD] BigIntリテラル未使用（ES2020未満でもOK）
+// [MOD] getThreadsPermalink: fields=permalink を取得できたときのみ URL を返す
+//      取得できない場合は null を返す（疑似ショートコード生成は廃止）
 
 export async function postToThreads({
   accessToken,
@@ -55,50 +54,42 @@ export async function postToThreads({
   return { postId };
 }
 
+// [MOD] permalink のみを返す。取得できなければ null（DB保存もしない方針）
 export async function getThreadsPermalink({
   accessToken,
   postId,
-  handle, // 例: "remigiozarcorb618"
 }: {
   accessToken: string;
   postId: string;
-  handle: string;
-}): Promise<{ url: string; code: string }> {
+}): Promise<{ url: string; code: string } | null> {
   const base = process.env.THREADS_GRAPH_BASE || "https://graph.threads.net/v1.0";
-
-  // 1) Graph API で permalink を取得
   try {
     const r = await fetch(
-      `${base}/${encodeURIComponent(postId)}?fields=permalink_url&access_token=${encodeURIComponent(accessToken)}`
+      `${base}/${encodeURIComponent(postId)}?fields=permalink&access_token=${encodeURIComponent(accessToken)}`
     );
     const tx = await r.text();
-    if (r.ok) {
-      const j = JSON.parse(tx) as { permalink_url?: string };
-      if (j?.permalink_url) {
-        const m = j.permalink_url.match(/\/post\/([^/?#]+)/);
-        const code = m?.[1] || "";
-        if (code) return { url: j.permalink_url, code };
+    if (!r.ok) return null;
+    const j = JSON.parse(tx) as { permalink?: string };
+    if (!j?.permalink) return null;
+
+    const m = j.permalink.match(/\/post\/([^/?#]+)/);
+    const code = m?.[1] || "";
+    if (!code) return null;
+
+    // 必要ならドメインを強制（例: THREADS_PERMALINK_DOMAIN=www.threads.com）
+    const prefer = process.env.THREADS_PERMALINK_DOMAIN;
+    if (prefer) {
+      try {
+        const u = new URL(j.permalink);
+        u.host = prefer;
+        u.protocol = "https:";
+        return { url: u.toString(), code };
+      } catch {
+        /* 失敗時は元URL */
       }
     }
-  } catch { /* fallback */ }
-
-  // 2) 失敗時: 数値 postId → shortcode 変換（Instagram/Threads 互換）
-  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-  let n: bigint;
-  try { n = BigInt(postId); } catch {
-    const url = `https://www.threads.com/@${encodeURIComponent(handle)}/post/${encodeURIComponent(postId)}`;
-    return { url, code: postId };
+    return { url: j.permalink, code };
+  } catch {
+    return null;
   }
-  const ZERO = BigInt(0);
-  const SIXTY_FOUR = BigInt(64);
-  let code = "";
-  while (n > ZERO) {
-    const rem = Number(n % SIXTY_FOUR);
-    code = alphabet[rem] + code;
-    n = n / SIXTY_FOUR;
-  }
-  if (!code) code = "0";
-
-  const url = `https://www.threads.com/@${encodeURIComponent(handle)}/post/${encodeURIComponent(code)}`;
-  return { url, code };
 }
