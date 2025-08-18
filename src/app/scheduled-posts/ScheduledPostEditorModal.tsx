@@ -50,11 +50,32 @@ type Props = {
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
+// 既存：epoch秒 → datetime-local
 function toLocalDatetimeValue(epochSec?: number | string) {
   const n = Number(epochSec || 0);
   if (!n) return "";
   const d = new Date(n * 1000);
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// [ADD] 任意Date → datetime-local へ整形
+function formatDateToLocal(d: Date) {
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// [ADD] 文字列/数値どちらでも扱える安全版
+function toLocalDatetimeValueAny(v?: string | number) {
+  if (v === undefined || v === null || v === "") return "";
+  if (typeof v === "number") return toLocalDatetimeValue(v);
+  const s = String(v).trim();
+  if (!s) return "";
+  if (/^\d+$/.test(s)) return toLocalDatetimeValue(Number(s));
+  let d = new Date(s);
+  if (isNaN(d.getTime())) {
+    const s2 = s.replace(/\//g, "-").replace(" ", "T");
+    d = new Date(s2);
+  }
+  return isNaN(d.getTime()) ? "" : formatDateToLocal(d);
 }
 
 function datetimeLocalToEpochSec(v: string) {
@@ -97,7 +118,7 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
   const [theme, setTheme] = useState(initial?.theme || "");
   const [content, setContent] = useState(initial?.content || "");
   const [scheduledAtLocal, setScheduledAtLocal] = useState(
-    mode === "edit" ? toLocalDatetimeValue(initial?.scheduledAt) : ""
+    mode === "edit" ? toLocalDatetimeValueAny(initial?.scheduledAt) : "" // [FIX] Any対応
   );
 
   const selectedAccount = useMemo(
@@ -189,6 +210,20 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
       if (datePart) setScheduledAtLocal(`${datePart}T${hhmm}`);
     }
   }, [autoType, selectedGroup]); // eslint-disable-line
+
+  // [FIX] 追加：open/mode/initial の変化時にフォームへ同期（編集時）
+  useEffect(() => {
+    if (!open) return;
+    if (mode === "edit" && initial) {
+      setAccountId(initial.accountId || "");
+      setAccountName(initial.accountName || "");
+      setTheme(initial.theme || "");
+      setContent(initial.content || "");
+      setScheduledAtLocal(toLocalDatetimeValueAny(initial.scheduledAt)); // [FIX]
+      setAutoType(null); // 種別は再選択前提で初期化
+      setGroupId("");    // グループは selectedAccount から再解決
+    }
+  }, [open, mode, initial]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

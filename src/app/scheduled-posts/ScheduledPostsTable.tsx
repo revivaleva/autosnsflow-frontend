@@ -189,7 +189,7 @@ export default function ScheduledPostsTable() {
       <ScheduledPostEditorModal
         open={editorOpen}
         mode={editorMode}
-        initial={editorInitial}
+        initial={editorInitial}            {/* [FIX] 編集対象を渡す */}
         onClose={() => setEditorOpen(false)}
         onSave={editorMode === "add" ? handleAddSave : handleEditSave}
       />
