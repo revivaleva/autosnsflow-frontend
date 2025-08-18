@@ -22,14 +22,12 @@ export default function ScheduledPostsTable() {
   const [loading, setLoading] = useState<boolean>(true);
   const [sortKey, setSortKey] = useState<"scheduledAt" | "status">("scheduledAt");
   const [sortAsc, setSortAsc] = useState<boolean>(true);
-  const [filterStatus, setFilterStatus] =
-    useState<ScheduledPostStatus>("");
+  const [filterStatus, setFilterStatus] = useState<ScheduledPostStatus>("");
 
   // [MOD] 新モーダルの管理
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorMode, setEditorMode] = useState<"add" | "edit">("add");
-  const [editorInitial, setEditorInitial] =
-    useState<ScheduledPostType | null>(null);
+  const [editorInitial, setEditorInitial] = useState<ScheduledPostType | null>(null);
 
   const [repliesModalOpen, setRepliesModalOpen] = useState(false);
   const [repliesModalTarget, setRepliesModalTarget] = useState<string>("");
@@ -186,8 +184,8 @@ export default function ScheduledPostsTable() {
   return (
     <div className="p-4">
       {/* [ADD] エディタモーダル */}
+      {/* [FIX] 編集対象を渡す（属性列にはコメントを置かない） */}
       <ScheduledPostEditorModal
-        /* [FIX] 編集対象を渡す（JSX属性列では {/**/} ではなくブロックコメントにする） */
         open={editorOpen}
         mode={editorMode}
         initial={editorInitial}
