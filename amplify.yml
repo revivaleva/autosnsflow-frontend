@@ -1,16 +1,21 @@
+# /amplify.yml
 version: 1
 frontend:
   phases:
     preBuild:
       commands:
-        - npm ci
-        # 環境変数を明示的に .env.production に書き出す（必要なものだけ）
+        - node -v
+        - npm -v
+        - npm ci                              # [KEEP]
+        - npm config set fund false           # [ADD] 寄付問い合わせを抑止
+        - npm config set audit false          # [ADD] 監査を抑止してインストール短縮
+        # 環境変数を明示的に .env.production に書き出す（必要なものだけ）[KEEP]
         - echo "AUTOSNSFLOW_ACCESS_KEY_ID=$AUTOSNSFLOW_ACCESS_KEY_ID" >> .env.production
         - echo "AUTOSNSFLOW_SECRET_ACCESS_KEY=$AUTOSNSFLOW_SECRET_ACCESS_KEY" >> .env.production
         - echo "NEXT_PUBLIC_AWS_REGION=$NEXT_PUBLIC_AWS_REGION" >> .env.production
     build:
       commands:
-        - npm run build
+        - NEXT_TELEMETRY_DISABLED=1 npm run build   # [MOD] Nextのテレメトリ無効化でわずかに短縮
   artifacts:
     baseDirectory: .next
     files:
@@ -18,3 +23,5 @@ frontend:
   cache:
     paths:
       - node_modules/**/*
+      - .next/cache/**/*      # [ADD] Nextのビルドキャッシュを保持（効果大）
+      - ~/.npm/**/*           # [ADD] npmのDLキャッシュを保持（2回目以降が速い）
