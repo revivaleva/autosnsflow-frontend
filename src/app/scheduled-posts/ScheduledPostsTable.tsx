@@ -187,9 +187,10 @@ export default function ScheduledPostsTable() {
     <div className="p-4">
       {/* [ADD] エディタモーダル */}
       <ScheduledPostEditorModal
+        /* [FIX] 編集対象を渡す（JSX属性列では {/**/} ではなくブロックコメントにする） */
         open={editorOpen}
         mode={editorMode}
-        initial={editorInitial}            {/* [FIX] 編集対象を渡す */}
+        initial={editorInitial}
         onClose={() => setEditorOpen(false)}
         onSave={editorMode === "add" ? handleAddSave : handleEditSave}
       />
