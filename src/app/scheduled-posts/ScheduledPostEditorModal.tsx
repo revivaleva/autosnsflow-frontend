@@ -27,6 +27,7 @@ type AccountItem = {
   // [KEEP] サーバ側で使用。フロントでは送信しない
   personaSimple?: string;
   personaDetail?: string;
+  personaMode?: "simple" | "detail"; // [ADD]
 };
 
 type AutoPostGroup = {
@@ -114,9 +115,59 @@ function resolveGroupForAccount(account: AccountItem | null, groups: AutoPostGro
   );
 }
 
+// [ADD] detail(JSON文字列) → 日本語の行テキストへ整形
+function formatPersonaDetail(detail?: string): string {
+  if (!detail) return "";
+  try {
+    const obj = JSON.parse(detail);
+    const labels: Record<string, string> = {
+      name: "名前",
+      age: "年齢",
+      gender: "性別",
+      job: "職業",
+      lifestyle: "生活スタイル",
+      character: "口調・内面",
+      vocabulary: "語彙傾向",
+      emotionPattern: "感情パターン",
+      erotic: "エロ表現",
+      target: "ターゲット層",
+      purpose: "投稿目的",
+      distance: "絡みの距離感",
+      ng: "NG要素",
+    };
+    const order = [
+      "name",
+      "age",
+      "gender",
+      "job",
+      "lifestyle",
+      "character",
+      "vocabulary",
+      "emotionPattern",
+      "erotic",
+      "target",
+      "purpose",
+      "distance",
+      "ng",
+    ];
+    const lines = order
+      .map((k) => {
+        const v = obj?.[k];
+        if (v === undefined || v === null || v === "") return "";
+        return `${labels[k] || k}: ${String(v)}`;
+      })
+      .filter(Boolean);
+    return lines.join("\n");
+  } catch {
+    // JSONでなければそのまま返す
+    return detail;
+  }
+}
+
 export default function ScheduledPostEditorModal({ open, mode, initial, onClose, onSave }: Props) {
   const [accounts, setAccounts] = useState<AccountItem[]>([]);
   const [groups, setGroups] = useState<AutoPostGroup[]>([]);
+  const [masterPrompt, setMasterPrompt] = useState<string>(""); // [ADD]
 
   const [accountId, setAccountId] = useState(initial?.accountId || "");
   const [accountName, setAccountName] = useState(initial?.accountName || "");
@@ -186,6 +237,23 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
       }
     })();
 
+    // [ADD] 設定（マスタープロンプト）取得
+    (async () => {
+      try {
+        const r = await fetch("/api/settings", {
+          credentials: "include",
+          cache: "no-store",
+        });
+        if (r.ok) {
+          const j = await r.json();
+          const s = j?.settings || j;
+          setMasterPrompt(s?.masterPrompt || "");
+        }
+      } catch (e) {
+        console.log("settings load error:", e);
+      }
+    })();
+
     if (mode === "add" && !scheduledAtLocal) {
       const now = new Date();
       now.setMinutes(now.getMinutes() + 30);
@@ -218,23 +286,16 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
     setAccountName(selectedAccount?.displayName || "");
   }, [selectedAccount, groups, mode, initial?.autoPostGroupId]); // [MOD] 依存に mode/initial を追加
 
-  // [MOD] テーマ/時間の自動反映は「追加時のみ」。編集時は既存値を保持
+  // [MOD] 種別変更時：テーマのみ自動反映。予約日時は「AIで生成」時にセットする仕様へ変更
   useEffect(() => {
     if (!selectedGroup || !autoType) return;
-    if (mode === "edit") return; // [ADD] 既存の日時/テーマを上書きしない
 
     const ty = autoType;
     const autoTheme = ty === 1 ? selectedGroup.theme1 : ty === 2 ? selectedGroup.theme2 : selectedGroup.theme3;
     if (autoTheme) setTheme(autoTheme);
 
-    const timeRange = ty === 1 ? selectedGroup.time1 : ty === 2 ? selectedGroup.time2 : selectedGroup.time3;
-    const hhmm = randomTimeInRange(timeRange || "");
-    if (hhmm) {
-      const base = scheduledAtLocal || toLocalDatetimeValue(Math.floor(Date.now() / 1000));
-      const datePart = base.split("T")[0] || "";
-      if (datePart) setScheduledAtLocal(`${datePart}T${hhmm}`);
-    }
-  }, [autoType, selectedGroup, mode]); // eslint-disable-line
+    // [DEL] 種別選択時に予約時刻を自動設定していた処理を削除
+  }, [autoType, selectedGroup]); // eslint-disable-line
 
   // [FIX] 追加：open/mode/initial の変化時にフォームへ同期（編集時）
   useEffect(() => {
@@ -287,6 +348,46 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
       return;
     }
 
+    // [ADD] 予約日時のセットは「AIで生成」押下時に実施
+    if (selectedGroup && autoType) {
+      const timeRange =
+        autoType === 1 ? selectedGroup.time1 : autoType === 2 ? selectedGroup.time2 : selectedGroup.time3;
+      const hhmm = randomTimeInRange(timeRange || "");
+      if (hhmm) {
+        const base = scheduledAtLocal || toLocalDatetimeValue(Math.floor(Date.now() / 1000));
+        const datePart = base.split("T")[0] || "";
+        if (datePart) setScheduledAtLocal(`${datePart}T${hhmm}`);
+      }
+    }
+
+    // [ADD] ペルソナ選択（personaMode により simple/detail を使い分け）
+    const a = selectedAccount;
+    let personaText = "";
+    let personaModeUsed: "simple" | "detail" | "" = "";
+    if (a?.personaMode === "detail" && a?.personaDetail) {
+      personaText = formatPersonaDetail(a.personaDetail);
+      personaModeUsed = "detail";
+    } else if (a?.personaMode === "simple" && a?.personaSimple) {
+      personaText = a.personaSimple;
+      personaModeUsed = "simple";
+    } else if (a?.personaDetail) {
+      // フォールバック：detailがあるなら整形して使用
+      personaText = formatPersonaDetail(a.personaDetail);
+      personaModeUsed = "detail";
+    } else if (a?.personaSimple) {
+      personaText = a.personaSimple;
+      personaModeUsed = "simple";
+    }
+
+    // [ADD] マスタープロンプト + ペルソナ + テーマ を結合して送信
+    const prompt = [
+      masterPrompt?.trim() ? masterPrompt.trim() : "",
+      personaText ? `# ペルソナ\n${personaText}` : "",
+      `# テーマ\n${theme}`,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+
     try {
       const res = await fetch("/api/ai-gateway", {
         method: "POST",
@@ -294,7 +395,9 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
         credentials: "include",
         body: JSON.stringify({
           purpose: "post-generate",
-          input: { theme, accountId }, // [MOD] persona を送らない
+          // [MOD] サーバ側でのログ紐付けのため accountId は送る
+          //       実際の生成テキストは prompt をメイン入力にする
+          input: { accountId, theme, prompt, personaModeUsed }, // [MOD]
         }),
       });
       const data = await res.json();
