@@ -30,7 +30,7 @@ type AccountItem = {
 };
 
 type AutoPostGroup = {
-  groupId: string;   // [KEEP] 取得時に groupKey→groupId へ正規化
+  groupId: string; // [KEEP] 取得時に groupKey→groupId へ正規化
   groupName: string;
   time1?: string;
   time2?: string;
@@ -94,6 +94,13 @@ function randomTimeInRange(range?: string | null): string | null {
   if (end < start) return null;
   const r = start + Math.floor(Math.random() * (end - start + 1));
   return `${pad(Math.floor(r / 60))}:${pad(r % 60)}`;
+}
+
+// [ADD] 予約投稿の autoPostGroupId ("グループ名-自動投稿2") を分解
+function parseAutoPostGroupId(v?: string): { groupName: string; type: 1 | 2 | 3 | null } {
+  const m = String(v || "").match(/^(.*?)-自動投稿([123])$/);
+  if (!m) return { groupName: "", type: null };
+  return { groupName: m[1], type: Number(m[2]) as 1 | 2 | 3 };
 }
 
 function resolveGroupForAccount(account: AccountItem | null, groups: AutoPostGroup[]): AutoPostGroup | null {
@@ -190,14 +197,32 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
     }
   }, [open]); // eslint-disable-line
 
+  // [MOD] 編集モードでは initial.autoPostGroupId を優先して初期選択
   useEffect(() => {
+    if (!selectedAccount && !groups.length) return;
+
+    if (mode === "edit" && initial?.autoPostGroupId) {
+      const { groupName, type } = parseAutoPostGroupId(initial.autoPostGroupId); // [ADD]
+      const g =
+        groups.find((x) => x.groupName === groupName) ||
+        groups.find((x) => x.groupId === groupName) ||
+        null;
+      if (g) setGroupId(g.groupId); // [ADD]
+      setAutoType(type); // [ADD]
+      setAccountName(selectedAccount?.displayName || initial?.accountName || "");
+      return; // [ADD] ここで確定（アカウント既定に上書きしない）
+    }
+
     const g = resolveGroupForAccount(selectedAccount, groups);
     setGroupId(g?.groupId || "");
     setAccountName(selectedAccount?.displayName || "");
-  }, [selectedAccount, groups]);
+  }, [selectedAccount, groups, mode, initial?.autoPostGroupId]); // [MOD] 依存に mode/initial を追加
 
+  // [MOD] テーマ/時間の自動反映は「追加時のみ」。編集時は既存値を保持
   useEffect(() => {
     if (!selectedGroup || !autoType) return;
+    if (mode === "edit") return; // [ADD] 既存の日時/テーマを上書きしない
+
     const ty = autoType;
     const autoTheme = ty === 1 ? selectedGroup.theme1 : ty === 2 ? selectedGroup.theme2 : selectedGroup.theme3;
     if (autoTheme) setTheme(autoTheme);
@@ -209,7 +234,7 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
       const datePart = base.split("T")[0] || "";
       if (datePart) setScheduledAtLocal(`${datePart}T${hhmm}`);
     }
-  }, [autoType, selectedGroup]); // eslint-disable-line
+  }, [autoType, selectedGroup, mode]); // eslint-disable-line
 
   // [FIX] 追加：open/mode/initial の変化時にフォームへ同期（編集時）
   useEffect(() => {
@@ -220,8 +245,9 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
       setTheme(initial.theme || "");
       setContent(initial.content || "");
       setScheduledAtLocal(toLocalDatetimeValueAny(initial.scheduledAt)); // [FIX]
-      setAutoType(null); // 種別は再選択前提で初期化
-      setGroupId("");    // グループは selectedAccount から再解決
+      // [MOD] 種別/グループは initial.autoPostGroupId 側で復元するためここではクリア
+      setAutoType(null);
+      setGroupId("");
     }
   }, [open, mode, initial]);
 
@@ -334,7 +360,7 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
           <div>
             <label className="block text-sm font-medium">種別</label>
             <select
-              value={autoType ?? ""}
+              value={autoType ?? ""} // [MOD] 制御化で選択状態を反映
               onChange={(e) => setAutoType(e.target.value ? (Number(e.target.value) as 1 | 2 | 3) : null)}
               className="mt-1 w-full border rounded-md px-3 py-2"
             >
@@ -366,7 +392,7 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
         </div>
 
         <div className="mt-4">
-          <label className="block text-sm font-medium">予約日時</label>
+          <label className="block text-sm font厚-medium">予約日時</label>
           <input
             type="datetime-local"
             className="mt-1 w-full border rounded-md px-3 py-2"
