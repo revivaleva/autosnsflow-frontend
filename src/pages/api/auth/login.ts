@@ -1,43 +1,50 @@
 // /src/pages/api/auth/login.ts
-// [MOD] サーバサイドは COGNITO_* を優先し、なければ NEXT_PUBLIC_* を利用
+// [ADD] Cognitoで認証 → セッションクッキーを発行（または任意のトークンを保存）
 import type { NextApiRequest, NextApiResponse } from "next";
-import { env } from "@/lib/env"; // [ADD]
-import { setAdminFlagFromServerOnce } from "@/lib/adminFlag";
 import {
   CognitoIdentityProviderClient,
-  InitiateAuthCommand
+  InitiateAuthCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
 
-const client = new CognitoIdentityProviderClient({ region: env.AWS_REGION });
+const REGION = process.env.COGNITO_REGION || process.env.NEXT_PUBLIC_AWS_REGION || "ap-northeast-1";
+const USER_POOL_CLIENT_ID =
+  process.env.COGNITO_CLIENT_ID || process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID || "";
+
+const client = new CognitoIdentityProviderClient({ region: REGION });
+
+function cookieSerialize(name: string, value: string, maxAgeSec: number) {
+  const attrs = [
+    `Path=/`,
+    `HttpOnly`,
+    `Secure`,
+    `SameSite=Lax`, // [FIX] 同一サイト遷移で付与される
+    `Max-Age=${maxAgeSec}`,
+  ];
+  return `${name}=${encodeURIComponent(value)}; ${attrs.join("; ")}`;
+}
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method Not Allowed" });
-
-  const USER_POOL_ID = env.COGNITO_USER_POOL_ID;   // [MOD]
-  const CLIENT_ID    = env.COGNITO_CLIENT_ID;      // [MOD]
-  if (!USER_POOL_ID) return res.status(500).json({ error: "Cognito UserPoolId is missing" }); // [ADD]
-  if (!CLIENT_ID)    return res.status(500).json({ error: "Cognito ClientId is missing" });   // [ADD]
-
   const { email, password } = req.body || {};
-  if (!email || !password) return res.status(400).json({ error: "email/password required" });
+  if (!email || !password) return res.status(400).json({ error: "email / password is required" });
 
   try {
-    const resp = await client.send(new InitiateAuthCommand({
-      AuthFlow: "USER_PASSWORD_AUTH",
-      ClientId: CLIENT_ID,
-      AuthParameters: { USERNAME: email, PASSWORD: password },
-    }));
+    // Cognito 認証（USER_PASSWORD_AUTH）
+    const out = await client.send(
+      new InitiateAuthCommand({
+        AuthFlow: "USER_PASSWORD_AUTH",
+        ClientId: USER_POOL_CLIENT_ID,
+        AuthParameters: { USERNAME: email, PASSWORD: password },
+      })
+    );
 
-    const idToken = resp.AuthenticationResult?.IdToken;
-    if (!idToken) return res.status(401).json({ error: "Unauthorized" });
+    const idToken = out.AuthenticationResult?.IdToken;
+    if (!idToken) return res.status(401).json({ error: "Invalid credentials" });
 
-    // HttpOnly Cookie 発行
-    res.setHeader("Set-Cookie", [
-      `idToken=${encodeURIComponent(idToken)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=3600`
-    ]);
-    await setAdminFlagFromServerOnce(); // ← これだけでサーバ側の管理者フラグを設定
+    // [FIX] Cookie設定（1日）
+    res.setHeader("Set-Cookie", cookieSerialize("session", idToken, 60 * 60 * 24));
     return res.status(200).json({ ok: true });
   } catch (e: any) {
-    return res.status(401).json({ error: e?.message || "auth_failed" });
+    return res.status(401).json({ error: "Invalid credentials" });
   }
 }

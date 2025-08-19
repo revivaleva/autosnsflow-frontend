@@ -1,25 +1,28 @@
-// /middleware.ts
-// [MOD] 認証Cookie名を 'idToken' に統一（移行フォールバックで 'session' も許可）
-//      既存コメントは変更せず、追記コメントのみ追加
-
+// /src/middleware.ts
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
+// [KEEP] 認証保護の対象
 const PROTECTED = ["/settings", "/admin"]; // ここだけ保護
-const COOKIE_NAME = "idToken"; // [MOD] 参照するCookie名を統一
 
 export function middleware(req: NextRequest) {
   const { pathname, searchParams } = req.nextUrl;
 
-  if (!PROTECTED.some((p) => pathname === p || pathname.startsWith(p + "/"))) {
+  // [ADD] ログイン/ログアウト/認証コールバックは常に素通し（ループ防止）
+  if (
+    pathname.startsWith("/login") ||
+    pathname.startsWith("/logout") ||
+    pathname.startsWith("/auth/callback")
+  ) {
     return NextResponse.next();
   }
 
-  // [MOD] 'idToken' を参照。移行期間のみ 'session' もフォールバックで許容
-  const token =
-    req.cookies.get(COOKIE_NAME)?.value ||
-    req.cookies.get("session")?.value; // [ADD] 移行フォールバック（不要になったら削除可）
+  if (!PROTECTED.some((p) => pathname.startsWith(p))) {
+    return NextResponse.next();
+  }
 
+  // [KEEP] Cookie名は "session"
+  const token = req.cookies.get("session")?.value;
   if (token) return NextResponse.next();
 
   const url = req.nextUrl.clone();

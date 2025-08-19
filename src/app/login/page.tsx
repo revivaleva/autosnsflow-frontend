@@ -1,120 +1,79 @@
 // /src/app/login/page.tsx
-// [MOD] 環境変数診断の参照方法を修正（missing.* → missing.includes(...)）
-//      既存コメントは変更せず、追記コメントのみ追加
-// [MOD] ログイン成功時に ?next= を尊重して遷移（なければ "/" に遷移）を追加
-// [ADD] fetch に credentials: "include" を付与（Set-Cookie 受領のため）
-
 "use client";
 
+import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
-import { useRouter } from "next/navigation";
-import SignUpModal from "./SignUpModal";
-
-// [ADD] 環境変数診断ユーティリティの導入
-import { getClientEnvStatus } from "@/lib/env"; // [ADD]
 
 export default function LoginPage() {
+  const router = useRouter();
+  const sp = useSearchParams();
+  const next = sp.get("next") || "/settings";
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const router = useRouter();
-  const [signupOpen, setSignupOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
 
-  // [ADD] クライアント環境変数の状態を取得
-  const { missing, preview } = getClientEnvStatus(); // [ADD]
-  const isClientIdMissing = missing.includes("NEXT_PUBLIC_COGNITO_CLIENT_ID"); // [ADD]
-  const isUserPoolIdMissing = missing.includes("NEXT_PUBLIC_COGNITO_USER_POOL_ID"); // [ADD]
-
-  const handleLogin = async (e: React.FormEvent) => {
+  const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError("");
-
-    const res = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-      credentials: "include", // [ADD] Set-Cookie 受領のため
-    });
-
-    if (res.ok) {
-      // [MOD] ?next= を尊重して遷移（なければ "/"）
-      const params = new URLSearchParams(window.location.search); // [ADD]
-      const next = params.get("next"); // [ADD]
-      router.push(next && next.startsWith("/") ? next : "/"); // [MOD]
-    } else {
-      const data = await res.json();
-      setError(data.error || "ログイン失敗");
+    setLoading(true);
+    setErr("");
+    try {
+      const r = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include", // [IMPORTANT] Cookieを受け取る
+        body: JSON.stringify({ email, password }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j?.error || "ログインに失敗しました");
+      // [FIX] Cookieが付与された前提で遷移
+      router.replace(next);
+    } catch (e: any) {
+      setErr(e?.message || "ログインに失敗しました");
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
-    <div className="mx-auto max-w-md p-6">
-      <h2 className="text-2xl font-bold mb-4">ログイン</h2>
-
-      {/* [ADD] 環境変数の診断結果を常時表示（先頭数文字だけ） */}
-      {(isClientIdMissing || isUserPoolIdMissing) && (
-        <div className="mb-4 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-700">
-          <p className="font-semibold mb-1">
-            {isClientIdMissing ? "Cognito ClientId is missing" : null}
-          </p>
-          <p className="font-semibold mb-1">
-            {isUserPoolIdMissing ? "Cognito UserPoolId is missing" : null}
-          </p>
-          <div className="mt-1 text-xs text-red-600/80">
-            <div>clientId: {preview.clientIdHead || "(empty)"}...</div>
-            <div>userPoolId: {preview.userPoolIdHead || "(empty)"}...</div>
-            <div>region: {preview.region || "(empty)"}</div>
-          </div>
-        </div>
-      )}
-
-      <form onSubmit={handleLogin} className="space-y-4">
-        <div>
-          <label className="block text-sm mb-1">メールアドレス</label>
-          <input
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="w-full p-2 border rounded-lg"
-            type="email"
-            required
-            autoFocus
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm mb-1">パスワード</label>
-          <input
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="w-full p-2 border rounded-lg"
-            type="password"
-            required
-          />
-        </div>
-
-        {error && (
-          <div className="rounded border border-red-300 bg-red-50 p-2 text-sm text-red-700">
-            {error}
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
+      <form
+        onSubmit={onSubmit}
+        className="w-full max-w-md bg-white shadow rounded-xl p-6"
+      >
+        <h1 className="text-xl font-semibold mb-4">ログイン</h1>
+        {err && (
+          <div className="mb-3 text-sm text-red-600 bg-red-50 border border-red-200 rounded p-2">
+            {err}
           </div>
         )}
+        <label className="block text-sm text-gray-600">メールアドレス</label>
+        <input
+          className="mt-1 w-full border rounded-md px-3 py-2"
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          required
+        />
+
+        <label className="block text-sm text-gray-600 mt-4">パスワード</label>
+        <input
+          className="mt-1 w-full border rounded-md px-3 py-2"
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          required
+        />
 
         <button
           type="submit"
-          className="w-full rounded-lg border px-4 py-2 font-medium hover:bg-gray-50"
+          disabled={loading}
+          className="mt-6 w-full bg-blue-600 text-white rounded px-4 py-2 hover:bg-blue-700 disabled:opacity-60"
         >
-          ログイン
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setSignupOpen(true)}
-          className="w-full rounded-lg border px-4 py-2 font-medium hover:bg-gray-50"
-        >
-          アカウントを作成
+          {loading ? "ログイン中..." : "ログイン"}
         </button>
       </form>
-
-      <SignUpModal open={signupOpen} onClose={() => setSignupOpen(false)} />
     </div>
   );
 }
