@@ -1,0 +1,25 @@
+{
+  "name": "@autosnsflow/backend-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@autosnsflow/shared": "file:../shared",
+    "@aws-sdk/client-dynamodb": "^3.632.0",
+    "@aws-sdk/util-dynamodb": "^3.632.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.11",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.5.4"
+  }
+}

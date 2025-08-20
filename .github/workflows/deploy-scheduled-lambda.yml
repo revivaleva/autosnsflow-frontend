@@ -1,0 +1,54 @@
+name: Deploy Scheduled Lambda
+
+on:
+  push:
+    branches: ["lambda"]
+    paths:
+      - "lambda/**"
+      - "packages/**"
+      - ".github/workflows/deploy-scheduled-lambda.yml"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install (root only for workspaces)
+        run: |
+          npm ci
+          npm -w @autosnsflow/shared run build
+          npm -w @autosnsflow/backend-core run build
+
+      - name: Build & Zip Lambda
+        run: |
+          npm -w lambda/scheduled-autosnsflow run build
+          npm -w lambda/scheduled-autosnsflow run zip
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-northeast-1
+
+      - name: Deploy to Lambda (scheduled-autosnsflow)
+        run: npm -w lambda/scheduled-autosnsflow run deploy:cli
+        env:
+          LAMBDA_FUNCTION_NAME: scheduled-autosnsflow
+
+      - name: Smoke test (invoke)
+        run: |
+          set +e
+          aws lambda invoke \
+            --function-name scheduled-autosnsflow \
+            --payload '{"userId":"c7e43ae8-0031-70c5-a8ec-0f7962ee250f"}' \
+            --cli-binary-format raw-in-base64-out \
+            out.json || true
+          echo "--- Lambda response ---"
+          cat out.json || true

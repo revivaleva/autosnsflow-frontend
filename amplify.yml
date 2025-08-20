@@ -4,6 +4,9 @@ frontend:
   phases:
     preBuild:
       commands:
+        # [ADD] 早期終了ガード（差分検出だけを先に実行）
+        - chmod +x scripts/should-build-frontend.sh || true
+        - bash scripts/should-build-frontend.sh
         - node -v
         - npm -v
         - npm ci                              # [KEEP]
@@ -15,6 +18,8 @@ frontend:
         - echo "NEXT_PUBLIC_AWS_REGION=$NEXT_PUBLIC_AWS_REGION" >> .env.production
     build:
       commands:
+        # [ADD] フラグがあれば即時成功終了
+        - if [ -f /tmp/AMPLIFY_SKIP_BUILD ]; then echo "No frontend changes. Skip build."; exit 0; fi
         - NEXT_TELEMETRY_DISABLED=1 npm run build   # [MOD] Nextのテレメトリ無効化でわずかに短縮
   artifacts:
     baseDirectory: .next

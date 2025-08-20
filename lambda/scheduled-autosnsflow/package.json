@@ -1,0 +1,21 @@
+{
+  "name": "scheduled-autosnsflow",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "zip": "cd dist && zip -r ../bundle.zip .",
+    "deploy:cli": "aws lambda update-function-code --function-name \"$LAMBDA_FUNCTION_NAME\" --zip-file fileb://bundle.zip",
+    "deploy": "npm run build && npm run zip && npm run deploy:cli"
+  },
+  "dependencies": {
+    "@autosnsflow/backend-core": "file:../../packages/backend-core",
+    "@autosnsflow/shared": "file:../../packages/shared"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.11",
+    "esbuild": "^0.23.0",
+    "typescript": "^5.5.4"
+  }
+}
