@@ -6,8 +6,8 @@ import { useState } from "react";
 
 export default function LoginPage() {
   const router = useRouter();
-  const sp = useSearchParams();
-  const next = sp.get("next") || "/settings";
+  const sp = useSearchParams(); // [KEEP]
+  const nextPath = sp?.get("next") ?? "/settings"; // [MOD] nullセーフに
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -22,13 +22,12 @@ export default function LoginPage() {
       const r = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include", // [IMPORTANT] Cookieを受け取る
+        credentials: "include", // [KEEP] Cookie受信必須
         body: JSON.stringify({ email, password }),
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j?.error || "ログインに失敗しました");
-      // [FIX] Cookieが付与された前提で遷移
-      router.replace(next);
+      router.replace(nextPath); // [MOD]
     } catch (e: any) {
       setErr(e?.message || "ログインに失敗しました");
     } finally {
@@ -38,10 +37,7 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
-      <form
-        onSubmit={onSubmit}
-        className="w-full max-w-md bg-white shadow rounded-xl p-6"
-      >
+      <form onSubmit={onSubmit} className="w-full max-w-md bg-white shadow rounded-xl p-6">
         <h1 className="text-xl font-semibold mb-4">ログイン</h1>
         {err && (
           <div className="mb-3 text-sm text-red-600 bg-red-50 border border-red-200 rounded p-2">
