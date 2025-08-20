@@ -48,15 +48,15 @@ function extractUserId(req: NextApiRequest): string | null {
   return null;
 }
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (req.method !== "POST") return res.status(405).end();
+export default async function handler(req: NextApiRequest, res: NextApiResponse): Promise<void> {  // [MOD] 戻り値を Promise<void> に固定
+  if (req.method !== "POST") { res.status(405).end(); return; }  // [MOD] Next APIはvoidを返す
 
   const userId = extractUserId(req);
   const purpose = (req.body?.purpose ?? req.query?.purpose ?? '').toString();
   const input = req.body?.input ?? {};
 
   if (!userId || !purpose) {
-    return res.status(400).json({ error: "userid and purpose required", detail: { hasUserId: !!userId, hasPurpose: !!purpose } });
+    res.status(400).json({ error: "userid and purpose required", detail: { hasUserId: !!userId, hasPurpose: !!purpose } }); return;  // [MOD] Next API は void を返す
   }
 
   let openaiApiKey = "", selectedModel = "gpt-3.5-turbo", masterPrompt = "";
@@ -77,7 +77,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     masterPrompt = result.Item?.masterPrompt?.S || "";
     if (!openaiApiKey) throw new Error("APIキー未設定です");
   } catch (e: unknown) {
-    return res.status(500).json({ error: "APIキーの取得に失敗: " + String(e) });
+    res.status(500).json({ error: "APIキーの取得に失敗: " + String(e) }); return;  // [MOD] Next API は void を返す
   }
 
   let systemPrompt = "";
@@ -88,7 +88,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // ====== ここを全面的に刷新 ======
     const accountId = (input?.accountId ?? "").toString();
     if (!accountId) {
-      return res.status(400).json({ error: "accountId is required" });
+      res.status(400).json({ error: "accountId is required" }); return;  // [MOD] Next API は void を返す
     }
 
     // personaMode によって使い分け
@@ -155,7 +155,7 @@ ${input?.theme ?? ""}
     max_tokens = 800;
 
   } else {
-    return res.status(400).json({ error: `unsupported purpose: ${purpose}` });
+    res.status(400).json({ error: `unsupported purpose: ${purpose}` }); return;  // [MOD] Next API は void を返す
   }
 
   try {
@@ -179,19 +179,19 @@ ${input?.theme ?? ""}
     const data = await openaiRes.json();
     if (!openaiRes.ok) {
       const msg = data?.error?.message || JSON.stringify(data);
-      return res.status(502).json({ error: `OpenAI API error: ${msg}` });
+      res.status(502).json({ error: `OpenAI API error: ${msg}` }); return;  // [MOD] Next API は void を返す
     }
 
     if (purpose === "persona-generate") {
       const text = data.choices?.[0]?.message?.content || "";
       // （既存の抽出処理はそのまま）
-      return res.status(200).json({ text });
+      res.status(200).json({ text }); return;  // [MOD] Next API は void を返す
     }
 
     const text = data.choices?.[0]?.message?.content || "";
-    return res.status(200).json({ text });
+    res.status(200).json({ text }); return;  // [MOD] Next API は void を返す
 
   } catch (e: unknown) {
-    return res.status(500).json({ error: "OpenAI API呼び出し失敗: " + String(e) });
+    res.status(500).json({ error: "OpenAI API呼び出し失敗: " + String(e) }); return;  // [MOD] Next API は void を返す
   }
 }

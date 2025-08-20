@@ -5,6 +5,7 @@ frontend:
     preBuild:
       commands:
         # [ADD] 早期終了ガード（差分検出だけを先に実行）
+        - nvm install 20 && nvm use 20
         - chmod +x scripts/should-build-frontend.sh || true
         - bash scripts/should-build-frontend.sh
         - node -v
