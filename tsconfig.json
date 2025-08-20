@@ -28,15 +28,29 @@
       ]
     }
   },
+
+  // [MOD] フロント配下のみ型チェック対象にする（広すぎる **/*.ts はやめる）
   "include": [
-    "**/*.ts",
-    "**/*.tsx",
     "next-env.d.ts",
-    "node_modules",
+    "src/**/*",
+    "app/**/*",
+    "pages/**/*",
+    "components/**/*",
+    "lib/**/*",
+    "middleware.ts",
+    // 既存の型ファイル/生成型
     "src/types/**/*.d.ts",
-    ".next/types/**/*.ts"
-, "src/components/NavMenu.jsx", "src/ui-components/SNSAccountModal.jsx"  ],
+    ".next/types/**/*.ts",
+    // 明示指定されていた JSX（src 配下に含まれるが念のため残す）
+    "src/components/NavMenu.jsx",
+    "src/ui-components/SNSAccountModal.jsx"
+  ],
+
+  // [MOD] フロント以外のワークスペースを除外（ビルド失敗の原因を遮断）
   "exclude": [
-    "node_modules"
+    "node_modules",
+    ".next",
+    "lambda/**",
+    "packages/**"
   ]
 }
