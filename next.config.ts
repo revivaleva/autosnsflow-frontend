@@ -19,9 +19,6 @@ const nextConfig: NextConfig = {
       process.env.NODE_ENV === "production" ? { exclude: ["error"] } : false,
   },
 
-  // [ADD] SWC最適化（既定で有効だが明示）
-  swcMinify: true,
-
   // [ADD] Reactの厳格モード（開発体験向上・副作用検知）
   reactStrictMode: true,
 
