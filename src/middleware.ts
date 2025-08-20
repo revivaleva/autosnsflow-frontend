@@ -21,8 +21,8 @@ export function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
-  // [KEEP] Cookie名は "session"
-  const token = req.cookies.get("session")?.value;
+  // [KEEP] Cookie名は "idToken"
+  const token = req.cookies.get("idToken")?.value;
   if (token) return NextResponse.next();
 
   const url = req.nextUrl.clone();

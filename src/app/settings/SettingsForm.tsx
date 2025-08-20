@@ -37,7 +37,7 @@ export default function SettingsForm() {
   useEffect(() => {
     (async () => {
       try {
-        const r = await fetch("/api/settings", { credentials: "include", cache: "no-store" });
+        const r = await fetch("/api/user-settings", { method: "GET", credentials: "include", cache: "no-store" });
         if (r.ok) {
           const j = await r.json();
           const s = j?.settings || j || {};
@@ -62,8 +62,8 @@ export default function SettingsForm() {
     setSaving(true);
     setMessage("");
     try {
-      const r = await fetch("/api/settings", {
-        method: "POST",
+      const r = await fetch("/api/user-settings", {
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify(values),

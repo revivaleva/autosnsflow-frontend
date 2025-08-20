@@ -42,7 +42,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (!idToken) return res.status(401).json({ error: "Invalid credentials" });
 
     // [FIX] Cookie設定（1日）
-    res.setHeader("Set-Cookie", cookieSerialize("session", idToken, 60 * 60 * 24));
+    res.setHeader("Set-Cookie", cookieSerialize("idToken", idToken, 60 * 60 * 24));
     return res.status(200).json({ ok: true });
   } catch (e: any) {
     return res.status(401).json({ error: "Invalid credentials" });
