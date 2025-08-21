@@ -8,6 +8,17 @@ const PROTECTED = ["/settings", "/admin"]; // ここだけ保護
 export function middleware(req: NextRequest) {
   const { pathname, searchParams } = req.nextUrl;
 
+  // [MOD] ログイン済みで /login に来た場合は "/" へリダイレクト（要件B）
+  if (pathname.startsWith("/login")) {
+    const tokenOnLogin = req.cookies.get("idToken")?.value;
+    if (tokenOnLogin) {
+      const to = req.nextUrl.clone();
+      to.pathname = "/";
+      to.search = "";
+      return NextResponse.redirect(to);
+    }
+  }
+
   // [ADD] ログイン/ログアウト/認証コールバックは常に素通し（ループ防止）
   if (
     pathname.startsWith("/login") ||
@@ -17,7 +28,8 @@ export function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
-  if (!PROTECTED.some((p) => pathname.startsWith(p))) {
+  // [MOD] "/" も保護対象に含める
+  if (!(pathname === "/" || PROTECTED.some((p) => pathname.startsWith(p)))) {
     return NextResponse.next();
   }
 
