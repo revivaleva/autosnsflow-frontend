@@ -150,17 +150,19 @@ async function getActiveUserIds() {
         ProjectionExpression: "PK, SK, autoPost, masterOverride, autoPostAdminStop",
         FilterExpression:
           "#sk = :sk AND (" +
-            "(attribute_type(autoPost, BOOL) AND autoPost = :apB) OR " +
-            "(attribute_type(autoPost, S)    AND autoPost = :apS)" +
+            "(attribute_type(autoPost, :boolType) AND autoPost = :apB) OR " +
+            "(attribute_type(autoPost, :stringType) AND autoPost = :apS)" +
           ") AND (attribute_not_exists(masterOverride) OR masterOverride = :mo)" +
           " AND (attribute_not_exists(autoPostAdminStop) OR autoPostAdminStop = :f)",
         ExpressionAttributeNames: { "#sk": "SK" },
         ExpressionAttributeValues: {
-          ":sk":  { S: "SETTINGS" },
-          ":apS": { S: "active" },
-          ":apB": { BOOL: true },
-          ":mo":  { S: "none" },
-          ":f":   { BOOL: false },
+          ":sk":        { S: "SETTINGS" },
+          ":apS":       { S: "active" },
+          ":apB":       { BOOL: true },
+          ":mo":        { S: "none" },
+          ":f":         { BOOL: false },
+          ":boolType":  { S: "BOOL" },
+          ":stringType": { S: "S" },
         },
         ExclusiveStartKey: lastKey,
       })
