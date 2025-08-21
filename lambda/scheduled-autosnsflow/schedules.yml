@@ -1,0 +1,68 @@
+# 定期実行スケジュール設定
+# 各スケジュールは特定のタスクを実行するように設定
+
+schedules:
+  # アカウント通知（1時間ごと）
+  accountNotification:
+    expression: "rate(1 hour)"
+    description: "Threadsアカウント一覧をDiscordに通知"
+    enabled: true
+    tasks:
+      - accountNotification
+    
+  # 自動投稿（30分ごと）
+  autoPost:
+    expression: "rate(30 minutes)"
+    description: "設定された投稿を自動実行"
+    enabled: false  # 初期は無効
+    tasks:
+      - autoPost
+    
+  # 統計情報収集（6時間ごと）
+  statsCollection:
+    expression: "rate(6 hours)"
+    description: "アカウントの統計情報を収集・通知"
+    enabled: true
+    tasks:
+      - statsCollection
+    
+  # エラー監視（15分ごと）
+  errorMonitoring:
+    expression: "rate(15 minutes)"
+    description: "システムエラーを監視・アラート"
+    enabled: true
+    tasks:
+      - errorMonitoring
+    
+  # 日次レポート（毎日午前9時）
+  dailyReport:
+    expression: "cron(0 9 * * ? *)"
+    description: "日次レポートの生成・通知"
+    enabled: true
+    tasks:
+      - accountNotification
+      - statsCollection
+    
+  # 週次レポート（毎週月曜日午前10時）
+  weeklyReport:
+    expression: "cron(0 10 ? * MON *)"
+    description: "週次レポートの生成・通知"
+    enabled: true
+    tasks:
+      - accountNotification
+      - statsCollection
+      - errorMonitoring
+
+# 環境別設定
+environments:
+  development:
+    logging:
+      level: "debug"
+      enableCloudWatch: true
+      enableDiscordLog: true
+    
+  production:
+    logging:
+      level: "info"
+      enableCloudWatch: true
+      enableDiscordLog: false  # 本番環境ではDiscordログを無効化
