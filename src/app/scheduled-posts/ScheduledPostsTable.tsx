@@ -250,6 +250,7 @@ export default function ScheduledPostsTable() {
               <th className="border p-1">本文テキスト</th>
               <th className="border p-1">投稿日時</th>
               <th className="border p-1">投稿ID</th>
+              <th className="border p-1">二段階投稿</th>
               <th className="border p-1">リプ状況</th>
               <th className="border p-1">アクション</th>
             </tr>
@@ -314,6 +315,36 @@ export default function ScheduledPostsTable() {
                     )}
                   </td>
                   <td className="border p-1">
+                    {/* 二段階投稿状況 */}
+                    {post.status === "posted" && post.doublePostStatus ? (
+                      post.doublePostStatus === "done" ? (
+                        <div className="text-xs">
+                          <div className="text-green-600 font-medium">完了</div>
+                          {post.secondStageAt && (
+                            <div className="text-gray-500">
+                              {typeof post.secondStageAt === "number"
+                                ? new Date(post.secondStageAt * 1000).toLocaleString()
+                                : new Date(post.secondStageAt).toLocaleString()}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="text-xs">
+                          <div className="text-yellow-600 font-medium">待機中</div>
+                          {post.timeRange && (
+                            <div className="text-gray-500 text-xs">
+                              範囲: {post.timeRange}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    ) : post.status === "posted" ? (
+                      <div className="text-xs text-gray-500">未設定</div>
+                    ) : (
+                      ""
+                    )}
+                  </td>
+                  <td className="border p-1">
                     <button
                       className="px-2 py-1 rounded text-xs bg-gray-200 text-gray-800 hover:bg-blue-200"
                       onClick={() =>
@@ -357,7 +388,7 @@ export default function ScheduledPostsTable() {
             })}
             {sortedPosts.length === 0 && (
               <tr>
-                <td colSpan={10} className="text-center text-gray-500 p-4">
+                <td colSpan={11} className="text-center text-gray-500 p-4">
                   データがありません
                 </td>
               </tr>

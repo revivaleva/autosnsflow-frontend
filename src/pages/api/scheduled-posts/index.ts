@@ -46,6 +46,11 @@ function mapItem(it: any) {
     postUrl: getS("postUrl"),
     isDeleted: getB("isDeleted"),
     replyCount: getN("replyCount") ?? 0,
+    // 二段階投稿関連
+    doublePostStatus: getS("doublePostStatus"),
+    secondStagePostId: getS("secondStagePostId"),
+    secondStageAt: getN("secondStageAt"),
+    timeRange: getS("timeRange"),
   };
 }
 

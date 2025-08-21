@@ -18,6 +18,11 @@ export type ScheduledPostType = {
   threadsPostId?: string;
   isDeleted?: boolean;
   replyCount?: number;
+  // 二段階投稿関連
+  doublePostStatus?: string;
+  secondStagePostId?: string;
+  secondStageAt?: string | number;
+  timeRange?: string;
 };
 
 type AccountItem = {
