@@ -2,6 +2,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+    // packages/shared や backend-core をフロントで使う場合のため
+    transpilePackages: ["@autosnsflow/shared", "@autosnsflow/backend-core"],
+
   // 本番ビルド時にESLintエラーを無視する
   eslint: {
     ignoreDuringBuilds: true,

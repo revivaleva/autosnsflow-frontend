@@ -1,27 +1,37 @@
 // /src/pages/api/threads-accounts.ts
-// [MOD] GET: accessToken等も返却。PUT: 主要フィールドを一括更新に対応。
-//       PATCH: そのまま（トグル更新用）。DELETE: body/query両対応。
-//       既存コメントは保持。
+// [MOD] GET を backend-core の fetchThreadsAccountsFull に差し替え
+//       POST/PUT/PATCH/DELETE は「変更なし」で温存
 
 import type { NextApiRequest, NextApiResponse } from "next";
 import {
-  QueryCommand, PutItemCommand, UpdateItemCommand, DeleteItemCommand,
+  QueryCommand,
+  PutItemCommand,
+  UpdateItemCommand,
+  DeleteItemCommand,
 } from "@aws-sdk/client-dynamodb";
-import { createDynamoClient } from "@/lib/ddb"; // [ADD]
-import { verifyUserFromRequest } from "@/lib/auth"; // [ADD]
+import { createDynamoClient } from "@/lib/ddb";
+import { verifyUserFromRequest } from "@/lib/auth";
+
+// [ADD] 共通関数を追加インポート（re-exportされます）
+import { fetchThreadsAccountsFull } from "@autosnsflow/backend-core";
 
 const ddb = createDynamoClient();
 const TBL = process.env.TBL_THREADS_ACCOUNTS || "ThreadsAccounts";
 
-// [ADD] PATCH用の更新許可フィールド
+// [KEEP] PATCH用の更新許可フィールドは現状のまま
 const UPDATABLE_FIELDS = new Set([
-  "displayName", "username",
-  "autoPost", "autoGenerate", "autoReply",
+  "displayName",
+  "username",
+  "autoPost",
+  "autoGenerate",
+  "autoReply",
   "statusMessage",
-  "personaMode", "personaSimple", "personaDetail",
+  "personaMode",
+  "personaSimple",
+  "personaDetail",
   "autoPostGroupId",
   "secondStageContent",
-  "accessToken", // ← PATCHでも認める
+  "accessToken",
 ]);
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -29,34 +39,42 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const user = await verifyUserFromRequest(req);
     const userId = user.sub;
 
+    // ====================
+    // [MOD] GET: 共通化
+    // ====================
     if (req.method === "GET") {
-      const out = await ddb.send(new QueryCommand({
-        TableName: TBL,
-        KeyConditionExpression: "PK = :pk",
-        ExpressionAttributeValues: { ":pk": { S: `USER#${userId}` } },
-        ScanIndexForward: true,
-        Limit: 200,
+      // [MOD] ここだけ backend-core を呼ぶ
+      const list = await fetchThreadsAccountsFull(userId);
+
+      // 既存APIの応答形式（items配列）に揃える
+      // 参考：現行は username / accessToken / auto* / persona* など多数を返却中
+      //       （UIが利用している形を踏襲します）
+      const items = list.map((it) => ({
+        accountId: it.accountId,
+        username: it.username,
+        displayName: it.displayName,
+        createdAt: it.createdAt,
+        updatedAt: it.updatedAt,
+
+        accessToken: it.accessToken, // [KEEP]
+
+        autoPost: it.autoPost,
+        autoGenerate: it.autoGenerate,
+        autoReply: it.autoReply,
+
+        statusMessage: it.statusMessage,
+
+        personaMode: it.personaMode,
+        personaSimple: it.personaSimple,
+        personaDetail: it.personaDetail,
+
+        autoPostGroupId: it.autoPostGroupId,
+        secondStageContent: it.secondStageContent,
       }));
-      const items = (out.Items || []).map((it: any) => ({
-        accountId: it.accountId?.S || (it.SK?.S || "").replace("ACCOUNT#", ""),
-        username: it.username?.S || "",
-        displayName: it.displayName?.S || "",
-        createdAt: Number(it.createdAt?.N || "0"),
-        updatedAt: Number(it.updatedAt?.N || "0"),
-        // ▼ UIで必要な追加項目
-        accessToken: it.accessToken?.S || "",            // [ADD]
-        autoPost: Boolean(it.autoPost?.BOOL || false),
-        autoGenerate: Boolean(it.autoGenerate?.BOOL || false),
-        autoReply: Boolean(it.autoReply?.BOOL || false),
-        statusMessage: it.statusMessage?.S || "",
-        personaMode: it.personaMode?.S || "",
-        personaSimple: it.personaSimple?.S || "",
-        personaDetail: it.personaDetail?.S || "",
-        autoPostGroupId: it.autoPostGroupId?.S || "",
-        secondStageContent: it.secondStageContent?.S || "",
-      }));
+
       return res.status(200).json({ items });
     }
+
 
     if (req.method === "POST") {
       const { accountId, username, displayName, accessToken = "" } = safeBody(req.body);
