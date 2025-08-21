@@ -1,5 +1,6 @@
 // /lambda/scheduled-autosnsflow/src/handler.ts
 // 既存ロジックの最小動作：Threadsアカウント一覧をDiscordへ通知
+// [TEST] Lambda function update for testing deployment pipeline
 import { fetchDiscordWebhooks } from "@autosnsflow/backend-core";
 import { fetchThreadsAccounts } from "@autosnsflow/backend-core";
 import { postDiscord } from "@autosnsflow/backend-core";
