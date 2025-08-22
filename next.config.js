@@ -1,7 +1,7 @@
-// /next.config.ts
-import type { NextConfig } from "next";
+// /next.config.js
 
-const nextConfig: NextConfig = {
+/** @type {import('next').NextConfig} */
+const nextConfig = {
     // packages/shared や backend-core をフロントで使う場合のため
     transpilePackages: ["@autosnsflow/shared", "@autosnsflow/backend-core"],
 
@@ -31,4 +31,4 @@ const nextConfig: NextConfig = {
   /* config options here */
 };
 
-export default nextConfig;
+module.exports = nextConfig;
