@@ -264,6 +264,9 @@ export default function ScheduledPostsTable() {
 
               // [FIX] 型エラー回避のため any キャストで postUrl を取得
               const pUrl = (post as any).postUrl as string | undefined;
+              // postIdからpostURLを生成
+              const postId = (post as any).postId as string | undefined;
+              const generatedUrl = postId ? `https://www.threads.net/post/${postId}` : undefined;
 
               return (
                 <tr key={post.scheduledPostId}>
@@ -287,7 +290,7 @@ export default function ScheduledPostsTable() {
                       : ""}
                   </td>
                   <td className="border p-1">
-                    {/* [ADD] postUrl が無い場合はプロフィールURLへフォールバック */}
+                    {/* [ADD] postUrl が無い場合はpostIdから生成したURLを使用、それもなければプロフィールURLへフォールバック */}
                     {post.status === "posted" ? (
                       pUrl ? (
                         <a
@@ -298,6 +301,16 @@ export default function ScheduledPostsTable() {
                           title="Threadsで開く"
                         >
                           {pUrl.split("/post/").pop() /* ショートコードだけ表示 */}
+                        </a>
+                      ) : generatedUrl ? (
+                        <a
+                          href={generatedUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-blue-600 underline"
+                          title="Threadsで開く"
+                        >
+                          {postId /* postID表示 */}
                         </a>
                       ) : (
                         <a

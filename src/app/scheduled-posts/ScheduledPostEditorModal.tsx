@@ -15,7 +15,7 @@ export type ScheduledPostType = {
   autoPostGroupId?: string;
   status?: ScheduledPostStatus;
   postedAt?: string | number;
-  threadsPostId?: string;
+  postId?: string;
   isDeleted?: boolean;
   replyCount?: number;
   // 二段階投稿関連

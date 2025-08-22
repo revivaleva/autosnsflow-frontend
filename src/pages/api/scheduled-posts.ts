@@ -35,7 +35,7 @@ function toUiPost(it: any) {
     status: (it?.status?.S || "scheduled") === "posted" ? "posted" : "pending",
     postedAt: Number(it?.postedAt?.N || "0"),
     // [FIX] 投稿IDは postId をそのまま返す
-    threadsPostId: it?.postId?.S || "",
+    postId: it?.postId?.S || "",
     isDeleted: it?.isDeleted?.BOOL === true,
     // UIの「0/0」表示用に一応返す
     replyCount: Number(it?.replyCount?.N || "0"),

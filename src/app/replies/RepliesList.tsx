@@ -112,8 +112,8 @@ export default function RepliesList() {
               ? dayjs(r.scheduledAt * 1000).format("YYYY/MM/DD HH:mm")
               : "",
             postContent: r.content,
-            replyContent: r.replyContent || "",
-            responseContent: r.responseContent || "",
+            replyContent: r.incomingReply || "",
+            responseContent: r.replyContent || "",
             responseAt: r.replyAt
               ? dayjs(r.replyAt * 1000).format("YYYY/MM/DD HH:mm")
               : "",

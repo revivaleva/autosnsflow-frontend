@@ -2,8 +2,14 @@
   "name": "frontend",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "dev": "next dev --turbopack",
+    "build:shared-core": "bash -lc \"[ -f ../packages/shared/package.json ] && npm --prefix ../packages/shared run build || true; [ -f ../packages/backend-core/package.json ] && npm --prefix ../packages/backend-core run build || true\"",
+    "prebuild": "npm run build:shared-core",
+    "predev": "npm run build:shared-core",
+    "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"
@@ -20,19 +26,19 @@
     "jose": "5.10.0",
     "js-cookie": "^3.0.5",
     "jsonwebtoken": "^9.0.2",
-    "next": "^15.4.5",
-    "react": "^19.1.1",
-    "react-dom": "^19.1.1"
+    "next": "14.2.9",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
   },
   "devDependencies": {
-    "@eslint/eslintrc": "^3",
+    "@eslint/eslintrc": "^2.1.4",
     "@tailwindcss/postcss": "^4",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^20",
-    "@types/react": "^19.1.9",
-    "@types/react-dom": "^19.1.7",
-    "eslint": "^9",
-    "eslint-config-next": "15.4.5",
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.0",
+    "eslint": "8.57.0",
+    "eslint-config-next": "14.2.9",
     "tailwindcss": "^4",
     "typescript": "^5"
   },

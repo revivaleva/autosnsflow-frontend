@@ -11,7 +11,9 @@
   },
   "dependencies": {
     "@autosnsflow/backend-core": "file:../../packages/backend-core",
-    "@autosnsflow/shared": "file:../../packages/shared"
+    "@autosnsflow/shared": "file:../../packages/shared",
+    "@aws-sdk/client-dynamodb": "^3.0.0",
+    "@aws-sdk/util-dynamodb": "^3.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.19.11",
