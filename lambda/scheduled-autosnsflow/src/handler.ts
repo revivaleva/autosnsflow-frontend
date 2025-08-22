@@ -2,7 +2,6 @@
 // 定期実行で予約投稿の作成・実投稿・返信処理・2段階投稿を行い、必要な通知と計測を行う。
 // 本実装は Threads のみを対象とする（X/Twitter は扱わない）。
 
-import { fetchDiscordWebhooks } from "@autosnsflow/backend-core";
 import { fetchThreadsAccounts } from "@autosnsflow/backend-core";
 import {
   DynamoDBClient,
@@ -12,6 +11,7 @@ import {
   UpdateItemCommand,
   ScanCommand,
   DescribeTableCommand,
+  DeleteItemCommand,
 } from "@aws-sdk/client-dynamodb";
 import crypto from "crypto";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
@@ -432,6 +432,57 @@ async function existsForDate(userId: any, acct: any, groupTypeStr: any, dateJst:
   return (res.Items || []).length > 0;
 }
 
+// 未投稿の自動投稿を物理削除する関数
+async function deleteUnpostedAutoPosts(userId: any, acct: any, groupTypeStr: any, dateJst: any) {
+  const t0 = toEpochSec(startOfDayJst(dateJst));
+  const t1 = toEpochSec(endOfDayJst(dateJst));
+  
+  // 指定日付の未投稿の自動投稿を検索
+  const res = await ddb.send(
+    new QueryCommand({
+      TableName: TBL_SCHEDULED,
+      KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+      ExpressionAttributeValues: {
+        ":pk": { S: `USER#${userId}` },
+        ":pfx": { S: "SCHEDULEDPOST#" },
+        ":acc": { S: acct.accountId },
+        ":grp": { S: groupTypeStr },
+        ":t0": { N: String(t0) },
+        ":t1": { N: String(t1) },
+        ":st": { S: "scheduled" },
+        ":posted": { N: "0" },
+      },
+      FilterExpression:
+        "accountId = :acc AND autoPostGroupId = :grp AND scheduledAt BETWEEN :t0 AND :t1 AND #st = :st AND postedAt = :posted",
+      ExpressionAttributeNames: { "#st": "status" },
+      ProjectionExpression: "PK, SK",
+    })
+  );
+  
+  // 物理削除を実行
+  let deletedCount = 0;
+  for (const item of (res.Items || [])) {
+    try {
+      await ddb.send(new DeleteItemCommand({
+        TableName: TBL_SCHEDULED,
+        Key: { PK: item.PK, SK: item.SK },
+      }));
+      deletedCount++;
+    } catch (e) {
+      console.log(`[warn] 削除失敗: ${item.SK?.S}`, e);
+    }
+  }
+  
+  if (deletedCount > 0) {
+    await putLog({
+      userId, type: "auto-post", accountId: acct.accountId,
+      status: "info", message: `未投稿の自動投稿 ${deletedCount} 件を削除しました (${groupTypeStr})`
+    });
+  }
+  
+  return deletedCount;
+}
+
 async function createScheduledPost(userId: any, { acct, group, type, whenJst }: any) {
   const themeStr = (type === 1 ? group.theme1 : type === 2 ? group.theme2 : group.theme3) || "";
   const groupTypeStr = `${group.groupName}-自動投稿${type}`;
@@ -464,13 +515,59 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
       return;
     }
     
-    // プロンプトの構築を修正
+    // 編集モーダルと共通化したプロンプト構築
     let prompt: string;
     if (settings.masterPrompt?.trim()) {
-      // ユーザー設定のマスタープロンプトがある場合、テーマを置換して使用
-      prompt = settings.masterPrompt
-        .replace(/\{\{theme\}\}/g, themeStr)
-        .replace(/\{\{displayName\}\}/g, acct.displayName || "N/A");
+      // ユーザー設定のマスタープロンプトがある場合
+      const policy = `【運用方針（masterPrompt）】\n${settings.masterPrompt}\n`;
+      
+      // ペルソナ情報を取得（簡易版）
+      let personaText = "";
+      if (acct.accountId) {
+        try {
+          const accRes = await ddb.send(new GetItemCommand({
+            TableName: TBL_THREADS,
+            Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${acct.accountId || ""}` } },
+            ProjectionExpression: "personaMode, personaSimple, personaDetail",
+          }));
+        
+          const mode = (accRes.Item?.personaMode?.S || "").toLowerCase();
+          const simple = accRes.Item?.personaSimple?.S || "";
+          const detail = accRes.Item?.personaDetail?.S || "";
+          
+          if (mode === "detail") {
+            personaText = detail ? `【詳細ペルソナ(JSON)】\n${detail}` : "";
+          } else if (mode === "simple") {
+            personaText = simple ? `【簡易ペルソナ】${simple}` : "";
+          } else if (mode === "off") {
+            personaText = "";
+          } else {
+            // 想定外の値 → detail>simple の順にフォールバック
+            personaText = detail
+              ? `【詳細ペルソナ(JSON)】\n${detail}`
+              : (simple ? `【簡易ペルソナ】${simple}` : "");
+          }
+        } catch (e) {
+          console.log("[warn] ペルソナ取得失敗:", e);
+          personaText = "";
+        }
+      } else {
+        console.log("[warn] accountIdが未設定のためペルソナ取得をスキップ");
+      }
+      
+      prompt = `
+${policy}
+${personaText ? `【アカウントのペルソナ】\n${personaText}\n` : "【アカウントのペルソナ】\n(未設定)\n"}
+【投稿テーマ】
+${themeStr}
+
+【指示】
+上記の方針とペルソナ・テーマに従い、SNS投稿本文を日本語で1つだけ生成してください。
+- 文末表現や語感はペルソナに合わせる
+- 長すぎない（140〜220文字目安）
+- 絵文字は多用しすぎない（0〜3個程度）
+- ハッシュタグは不要
+      `.trim();
     } else {
       // デフォルトプロンプトを使用
       prompt = buildMasterPrompt(themeStr, acct.displayName);
@@ -485,27 +582,25 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
     });
 
     if (text) {
-      // プロンプトの指示部分を除去して投稿本文のみを抽出
+      // 編集モーダルと同様の処理：プロンプトの指示部分を除去
       let cleanText = text.trim();
       
       // プロンプトの指示部分が含まれている場合の除去処理
-      if (cleanText.includes("#Instruction") || cleanText.includes("#Guidelines")) {
-        // 投稿本文の開始位置を特定（最後のハッシュタグ以降）
-        const lastHashIndex = cleanText.lastIndexOf("#");
-        if (lastHashIndex !== -1) {
-          // 最後のハッシュタグ以降のテキストを抽出
-          const afterLastHash = cleanText.substring(lastHashIndex);
-          // 改行で区切って、最初の有効な行を取得
-          const lines = afterLastHash.split('\n').filter((line: string) => 
-            line.trim() && 
-            !line.trim().startsWith('#') && 
-            !line.trim().startsWith('---') &&
-            line.trim().length > 10
-          );
-          if (lines.length > 0) {
-            cleanText = lines[0].trim();
-          }
+      if (cleanText.includes("【指示】") || cleanText.includes("【運用方針】") || cleanText.includes("【アカウントのペルソナ】")) {
+        // 投稿本文の開始位置を特定（最後の指示セクション以降）
+        const instructionIndex = cleanText.lastIndexOf("【指示】");
+        if (instructionIndex !== -1) {
+          // 【指示】以降のテキストを除去
+          cleanText = cleanText.substring(0, instructionIndex).trim();
         }
+        
+        // 他の指示セクションも除去
+        cleanText = cleanText.replace(/【運用方針[^】]*】\n?/g, "");
+        cleanText = cleanText.replace(/【アカウントのペルソナ】\n?[^【]*\n?/g, "");
+        cleanText = cleanText.replace(/【投稿テーマ】\n?[^【]*\n?/g, "");
+        
+        // 空行を整理
+        cleanText = cleanText.replace(/\n\s*\n/g, "\n").trim();
       }
       
       // 最終的なテキストが空でない場合のみ保存
@@ -1000,6 +1095,7 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
   const settings = await getUserSettings(userId);
 
   let created = 0;
+  let deleted = 0;
   // ← ここにタイプ毎の判定結果を積んで、最後に ExecutionLogs にまとめて出します
   const debug: any[] = [];
 
@@ -1017,6 +1113,7 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
 
     // 途中経過トレース
     const trace: any = { type, groupTypeStr, timeRange, exists };
+    
     // timeRange 未設定
     if (!timeRange) {
       debug.push({ ...trace, reason: "no_timeRange" });
@@ -1026,6 +1123,7 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
       });
       continue;
     }
+    
     // 既に明日分が存在
     if (exists) {
       debug.push({ ...trace, reason: "already_exists" });
@@ -1035,6 +1133,12 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
       });
       continue;
     }
+
+    // 前日分の未投稿自動投稿を物理削除
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const deletedCount = await deleteUnpostedAutoPosts(userId, acct, groupTypeStr, yesterday);
+    deleted += deletedCount;
 
     // OpenAI クレジット確保（必要ないなら下の continue を外す）
     try {
@@ -1093,11 +1197,11 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
     accountId: acct.accountId,
     status: "trace",
     message: "ensureNextDay trace",
-    detail: { group: group.groupName, debug }
+    detail: { group: group.groupName, debug, deleted }
   });
 
   // テスト時にレスポンスからも追えるよう debug を返す
-  return { created, skipped: false, debug };
+  return { created, deleted, skipped: false, debug };
 }
 
 /// ========== プラットフォーム直接API（Threads） ======
@@ -1254,9 +1358,9 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
   // 以降の処理で使う値（従来の q.Items[0] 由来の値を置き換える）
   const pk = cand.pk;
   const sk = cand.sk;
-  const text = cand.content || "";
-  const range = cand.timeRange || "";
-  const scheduledAtSec = Number(cand.scheduledAt || 0);
+  const text = (cand as any).content || "";
+  const range = (cand as any).timeRange || "";
+  const scheduledAtSec = Number((cand as any).scheduledAt || 0);
 
   // 本文が空ならスキップ（次回リトライ）
   if (!text) {
