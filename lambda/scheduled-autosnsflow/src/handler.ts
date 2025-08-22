@@ -4,7 +4,6 @@
 
 import { fetchDiscordWebhooks } from "@autosnsflow/backend-core";
 import { fetchThreadsAccounts } from "@autosnsflow/backend-core";
-import { postDiscord } from "@autosnsflow/backend-core";
 import {
   DynamoDBClient,
   QueryCommand,
@@ -104,6 +103,46 @@ async function callOpenAIText({ apiKey, model, temperature, max_tokens, prompt }
 }
 
 /// ========== Discord ==========
+// Discord Webhook送信の独自実装
+async function postDiscord(urls: string[], content: string) {
+  if (!urls || urls.length === 0) {
+    console.log("[info] Discord webhook URLが設定されていないため送信をスキップ");
+    return;
+  }
+
+  const promises = urls.map(async (url) => {
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          content: content,
+          username: "AutoSNSFlow",
+          avatar_url: "",
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Discord webhook error: ${response.status} ${response.statusText}`);
+      }
+
+      console.log(`[info] Discord webhook送信成功: ${url}`);
+      return { success: true, url };
+    } catch (error) {
+      console.error(`[error] Discord webhook送信失敗: ${url}`, error);
+      return { success: false, url, error: String(error) };
+    }
+  });
+
+  const results = await Promise.allSettled(promises);
+  const successCount = results.filter(r => r.status === 'fulfilled' && r.value.success).length;
+  const totalCount = urls.length;
+
+  console.log(`[info] Discord webhook送信完了: ${successCount}/${totalCount} 成功`);
+}
+
 async function getDiscordWebhooks(userId = USER_ID) {
   const out = await ddb.send(
     new GetItemCommand({
@@ -142,9 +181,9 @@ async function getDiscordWebhookSets(userId = USER_ID) {
 
 /// ========== 設定・ユーザー ==========
 async function getActiveUserIds() {
-  let lastKey, ids: any[] = [];
+  let lastKey: any, ids: any[] = [];
   do {
-    const res = await ddb.send(
+    const res: any = await ddb.send(
       new ScanCommand({
         TableName: TBL_SETTINGS,
         ProjectionExpression: "PK, SK, autoPost, masterOverride, autoPostAdminStop",
@@ -275,7 +314,8 @@ async function reserveOpenAiCredits(userId = USER_ID, cost = 1) {
 
   } catch (e) {
     // 条件不成立（上限到達）
-    if (e?.name === "ConditionalCheckFailedException") {
+    const error = e as Error;
+    if (error?.name === "ConditionalCheckFailedException") {
       return { ok: false, remaining: 0 };
     }
     // それ以外は上位に投げる（必要なら putLog してもOK）
@@ -285,9 +325,9 @@ async function reserveOpenAiCredits(userId = USER_ID, cost = 1) {
 
 /// ========== アカウント・グループ ==========
 async function getThreadsAccounts(userId = USER_ID) {
-  let lastKey, items: any[] = [];
+  let lastKey: any, items: any[] = [];
   do {
-    const res = await ddb.send(
+    const res: any = await ddb.send(
       new QueryCommand({
         TableName: TBL_THREADS,
         KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
@@ -473,7 +513,8 @@ async function putLog({
   try {
     await ddb.send(new PutItemCommand({ TableName: TBL_LOGS, Item: item }));
   } catch (e) {
-    console.log("[warn] putLog skipped:", String(e?.name || e));
+    const error = e as Error;
+    console.log("[warn] putLog skipped:", String(error?.name || error));
   }
 }
 
@@ -499,6 +540,7 @@ export const handler = async (event: any = {}) => {
     const results: any[] = [];
 
     for (const acct of accounts) {
+      if (!acct) continue; // nullチェック追加
       try {
         switch (action) {
           case "ensureNextDay": {
@@ -937,7 +979,7 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
     const exists = await existsForDate(userId, acct, groupTypeStr, tomorrow);
 
     // 途中経過トレース
-    const trace = { type, groupTypeStr, timeRange, exists };
+    const trace: any = { type, groupTypeStr, timeRange, exists };
     // timeRange 未設定
     if (!timeRange) {
       debug.push({ ...trace, reason: "no_timeRange" });
@@ -1031,7 +1073,7 @@ async function postToThreads({ accessToken, text, userIdOnPlatform, inReplyTo = 
 
   // --- コンテナ作成（GAS と同じ：media_type は必須） ---
   // GAS 側と同じく TEXT 投稿。返信のときは replied_to_id を付与
-  const createPayload = {
+  const createPayload: any = {
     media_type: "TEXT",
     text,
     access_token: accessToken,
