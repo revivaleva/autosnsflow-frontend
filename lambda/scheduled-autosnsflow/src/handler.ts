@@ -463,9 +463,18 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
       await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "skip", message: "OpenAIキー未設定のため本文生成をスキップ" });
       return;
     }
-    const prompt = settings.masterPrompt?.trim()
-      ? settings.masterPrompt.replace(/\{\{theme\}\}/g, themeStr)
-      : buildMasterPrompt(themeStr, acct.displayName);
+    
+    // プロンプトの構築を修正
+    let prompt: string;
+    if (settings.masterPrompt?.trim()) {
+      // ユーザー設定のマスタープロンプトがある場合、テーマを置換して使用
+      prompt = settings.masterPrompt
+        .replace(/\{\{theme\}\}/g, themeStr)
+        .replace(/\{\{displayName\}\}/g, acct.displayName || "N/A");
+    } else {
+      // デフォルトプロンプトを使用
+      prompt = buildMasterPrompt(themeStr, acct.displayName);
+    }
 
     const { text } = await callOpenAIText({
       apiKey: settings.openaiApiKey,
@@ -476,13 +485,41 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
     });
 
     if (text) {
-      await ddb.send(new UpdateItemCommand({
-        TableName: TBL_SCHEDULED,
-        Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${scheduledPostId}` } },
-        UpdateExpression: "SET content = :c",
-        ExpressionAttributeValues: { ":c": { S: text } },
-      }));
-      await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "ok", message: "本文生成を完了" });
+      // プロンプトの指示部分を除去して投稿本文のみを抽出
+      let cleanText = text.trim();
+      
+      // プロンプトの指示部分が含まれている場合の除去処理
+      if (cleanText.includes("#Instruction") || cleanText.includes("#Guidelines")) {
+        // 投稿本文の開始位置を特定（最後のハッシュタグ以降）
+        const lastHashIndex = cleanText.lastIndexOf("#");
+        if (lastHashIndex !== -1) {
+          // 最後のハッシュタグ以降のテキストを抽出
+          const afterLastHash = cleanText.substring(lastHashIndex);
+          // 改行で区切って、最初の有効な行を取得
+          const lines = afterLastHash.split('\n').filter((line: string) => 
+            line.trim() && 
+            !line.trim().startsWith('#') && 
+            !line.trim().startsWith('---') &&
+            line.trim().length > 10
+          );
+          if (lines.length > 0) {
+            cleanText = lines[0].trim();
+          }
+        }
+      }
+      
+      // 最終的なテキストが空でない場合のみ保存
+      if (cleanText && cleanText.length > 10) {
+        await ddb.send(new UpdateItemCommand({
+          TableName: TBL_SCHEDULED,
+          Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${scheduledPostId}` } },
+          UpdateExpression: "SET content = :c",
+          ExpressionAttributeValues: { ":c": { S: cleanText } },
+        }));
+        await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "ok", message: "本文生成を完了" });
+      } else {
+        await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "error", message: "生成されたテキストが不正です", detail: { originalText: text, cleanedText: cleanText } });
+      }
     }
   } catch (e) {
     await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "error", message: "本文生成に失敗", detail: { error: String(e) } });
