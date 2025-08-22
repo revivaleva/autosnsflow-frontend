@@ -5,6 +5,9 @@ const nextConfig: NextConfig = {
     // packages/shared や backend-core をフロントで使う場合のため
     transpilePackages: ["@autosnsflow/shared", "@autosnsflow/backend-core"],
 
+  // [ADD] Amplify用のスタンドアロンビルド出力
+  output: "standalone",
+
   // 本番ビルド時にESLintエラーを無視する
   eslint: {
     ignoreDuringBuilds: true,

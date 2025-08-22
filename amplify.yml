@@ -24,7 +24,6 @@ frontend:
         # [ADD] フラグがあれば即時成功終了
         - if [ -f /tmp/AMPLIFY_SKIP_BUILD ]; then echo "No frontend changes. Skip build."; exit 0; fi
         - NEXT_TELEMETRY_DISABLED=1 npm run build   # [MOD] Nextのテレメトリ無効化でわずかに短縮
-        - cd frontend && npm ci && npm run build
   artifacts:
     baseDirectory: .next
     files:
