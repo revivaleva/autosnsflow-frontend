@@ -15,6 +15,7 @@ export type ScheduledPostType = {
   autoPostGroupId?: string;
   status?: ScheduledPostStatus;
   postedAt?: string | number;
+  postId?: string;
   threadsPostId?: string;
   isDeleted?: boolean;
   replyCount?: number;
