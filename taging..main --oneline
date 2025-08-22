@@ -1,135 +1,0 @@
-[1mdiff --git a/amplify.yml b/amplify.yml[m
-[1mindex 20e41f9..3639db7 100644[m
-[1m--- a/amplify.yml[m
-[1m+++ b/amplify.yml[m
-[36m@@ -13,6 +13,8 @@[m [mfrontend:[m
-         - npm ci                              # [KEEP][m
-         - npm config set fund false           # [ADD] 寄付問い合わせを抑止[m
-         - npm config set audit false          # [ADD] 監査を抑止してインストール短縮[m
-[32m+[m[32m        - npm --prefix packages/shared run build || true[m[41m[m
-[32m+[m[32m        - npm --prefix packages/backend-core run build || true[m[41m[m
-         # 環境変数を明示的に .env.production に書き出す（必要なものだけ）[KEEP][m
-         - echo "AUTOSNSFLOW_ACCESS_KEY_ID=$AUTOSNSFLOW_ACCESS_KEY_ID" >> .env.production[m
-         - echo "AUTOSNSFLOW_SECRET_ACCESS_KEY=$AUTOSNSFLOW_SECRET_ACCESS_KEY" >> .env.production[m
-[36m@@ -22,6 +24,7 @@[m [mfrontend:[m
-         # [ADD] フラグがあれば即時成功終了[m
-         - if [ -f /tmp/AMPLIFY_SKIP_BUILD ]; then echo "No frontend changes. Skip build."; exit 0; fi[m
-         - NEXT_TELEMETRY_DISABLED=1 npm run build   # [MOD] Nextのテレメトリ無効化でわずかに短縮[m
-[32m+[m[32m        - cd frontend && npm ci && npm run build[m[41m[m
-   artifacts:[m
-     baseDirectory: .next[m
-     files:[m
-[1mdiff --git a/lambda/scheduled-autosnsflow/package.json b/lambda/scheduled-autosnsflow/package.json[m
-[1mindex dc47f81..eb3ee07 100644[m
-[1m--- a/lambda/scheduled-autosnsflow/package.json[m
-[1m+++ b/lambda/scheduled-autosnsflow/package.json[m
-[36m@@ -11,7 +11,9 @@[m
-   },[m
-   "dependencies": {[m
-     "@autosnsflow/backend-core": "file:../../packages/backend-core",[m
-[31m-    "@autosnsflow/shared": "file:../../packages/shared"[m
-[32m+[m[32m    "@autosnsflow/shared": "file:../../packages/shared",[m[41m[m
-[32m+[m[32m    "@aws-sdk/client-dynamodb": "^3.0.0",[m[41m[m
-[32m+[m[32m    "@aws-sdk/util-dynamodb": "^3.0.0"[m[41m[m
-   },[m
-   "devDependencies": {[m
-     "@types/node": "^20.19.11",[m
-[1mdiff --git a/lambda/scheduled-autosnsflow/src/handler.ts b/lambda/scheduled-autosnsflow/src/handler.ts[m
-[1mindex c17c5ee..6ddc6e3 100644[m
-[1m--- a/lambda/scheduled-autosnsflow/src/handler.ts[m
-[1m+++ b/lambda/scheduled-autosnsflow/src/handler.ts[m
-[36m@@ -1,28 +1,1743 @@[m
- // /lambda/scheduled-autosnsflow/src/handler.ts[m
-[31m-// 既存ロジックの最小動作：Threadsアカウント一覧をDiscordへ通知[m
-[31m-import { fetchDiscordWebhooks } from "@autosnsflow/backend-core";[m
-[32m+[m[32m// 定期実行で予約投稿の作成・実投稿・返信処理・2段階投稿を行い、必要な通知と計測を行う。[m[41m[m
-[32m+[m[32m// 本実装は Threads のみを対象とする（X/Twitter は扱わない）。[m[41m[m
-[32m+[m[41m[m
- import { fetchThreadsAccounts } from "@autosnsflow/backend-core";[m
-[31m-import { postDiscord } from "@autosnsflow/backend-core";[m
-[32m+[m[32mimport {[m[41m[m
-[32m+[m[32m  DynamoDBClient,[m[41m[m
-[32m+[m[32m  QueryCommand,[m[41m[m
-[32m+[m[32m  GetItemCommand,[m[41m[m
-[32m+[m[32m  PutItemCommand,[m[41m[m
-[32m+[m[32m  UpdateItemCommand,[m[41m[m
-[32m+[m[32m  ScanCommand,[m[41m[m
-[32m+[m[32m  DescribeTableCommand,[m[41m[m
-[32m+[m[32m  DeleteItemCommand,[m[41m[m
-[32m+[m[32m} from "@aws-sdk/client-dynamodb";[m[41m[m
-[32m+[m[32mimport crypto from "crypto";[m[41m[m
-[32m+[m[32mimport { unmarshall } from "@aws-sdk/util-dynamodb";[m[41m[m
-[32m+[m[41m[m
-[32m+[m[32m/// === テーブル名 ===[m[41m[m
-[32m+[m[32mconst TBL_SETTINGS   = "UserSettings";[m[41m[m
-[32m+[m[32mconst TBL_THREADS    = "ThreadsAccounts";[m[41m[m
-[32m+[m[32mconst TBL_SCHEDULED  = "ScheduledPosts";[m[41m[m
-[32m+[m[32mconst TBL_REPLIES    = "Replies";[m[41m[m
-[32m+[m[32mconst TBL_GROUPS     = "AutoPostGroups";[m[41m[m
-[32m+[m[32mconst TBL_LOGS       = "ExecutionLogs";[m[41m[m
-[32m+[m[32mconst TBL_USAGE      = "UsageCounters";[m[41m[m
-[32m+[m[41m[m
-[32m+[m[32m// 既定ユーザー（単体テスト用）[m[41m[m
-[32m+[m[32mconst USER_ID = "c7e43ae8-0031-70c5-a8ec-0f7962ee250f";[m[41m[m
-[32m+[m[41m[m
-[32m+[m[32mconst region = process.env.AWS_REGION || "ap-northeast-1";[m[41m[m
-[32m+[m[32mconst ddb = new DynamoDBClient({ region });[m[41m[m
-[32m+[m[41m[m
-[32m+[m[32m/// ========== 共通ユーティリティ ==========[m[41m[m
-[32m+[m[32mconst TZ = "Asia/Tokyo";[m[41m[m
-[32m+[m[32mconst nowSec = () => Math.floor(Date.now() / 1000);[m[41m[m
-[32m+[m[32mconst toEpochSec = (d: any) => Math.floor(d.getTime() / 1000);[m[41m[m
-[32m+[m[41m[m
-[32m+[m[32m// JST(UTC+9)の固定オフセット（DSTなし）[m[41m[m
-[32m+[m[32mconst JST_OFFSET_MIN = 9 * 60;[m[41m[m
-[32m+[m[32mconst MS_PER_MIN = 60 * 1000;[m[41m[m
-[32m+[m[32mconst MS_PER_DAY = 24 * 60 * 60 * 1000;[m[41m[m
-[32m+[m[41m[m
-[32m+[m[32m// 与えた時刻(ms)の「JSTの一日の開始/終了」のUTCエポックを返す[m[41m[m
-[32m+[m[32mconst epochStartOfJstDayMs = (ms: any) => {[m[41m[m
-[32m+[m[32m  const o = JST_OFFSET_MIN * MS_PER_MIN;[m[41m[m
-[32m+[m[32m  return Math.floor((ms + o) / MS_PER_DAY) * MS_PER_DAY - o;[m[41m[m
-[32m+[m[32m};[m[41m[m
-[32m+[m[32mconst epochEndOfJstDayMs = (ms: any) => epochStartOfJstDayMs(ms) + MS_PER_DAY - 1;[m[41m[m
-[32m+[m[41m[m
-[32m+[m[32m// 現在時刻（Date）[m[41m[m
-[32m+[m[32mconst jstNow = () => new Date(Date.now());[m[41m[m
-[32m+[m[41m[m
-[32m+[m[32m// JSTの0:00/23:59:59.999[m[41m[m
-[32m+[m[32mconst startOfDayJst = (d: any) => new Date(epochStartOfJstDayMs(d.getTime()));[m[41m[m
-[32m+[m[32mconst endOfDayJst   = (d: any) => new Date(epochEndOfJstDayMs(d.getTime()));[m[41m[m
-[32m+[m[41m[m
-[32m+[m[32mconst TABLE  = process.env.SCHEDULED_POSTS_TABLE || "ScheduledPosts";[m[41m[m
-[32m+[m[41m[m
-[32m+[m[32m/// ========== GSI名 ==========[m[41m[m
-[32m+[m[32mconst GSI_SCH_BY_ACC_TIME = "GSI1"; // ScheduledPosts: accountId, scheduledAt[m[41m[m
-[32m+[m[32mconst GSI_POS_BY_ACC_TIME = "GSI2"; // ScheduledPosts: accountId, postedAt[m[41m[m
-[32m+[m[32mconst GSI_REPLIES_BY_ACC  = "GSI1"; // Replies: accountId, createdAt[m[41m[m
-[32m+[m[41m[m
-[32m+[m[32m/// ========== OpenAI 既定値 & プロンプト生成 ==========[m[41m[m
-[32m+[m[32mconst DEFAULT_OPENAI_MODEL = "gpt-3.5-turbo";[m[41m[m
-[32m+[m[32mconst DEFAULT_OPENAI_TEMP = 0.7;[m[41m[m
-[32m+[m[32mconst DEFAULT_OPENAI_MAXTOKENS = 300;[m[41m[m
-[32m+[m[41m[m
-[32m+[m[32mfunction isGsiMissing(err: any) {[m[41m[m
-[32m+[m[32m  const msg = String(err?.message || err || "");[m[41m[m
-[32m+[m[32m  return err?.name === "ValidationException" && /specified index/i.test(msg);[m[41m[m
-[32m+[m[32m}[m[41m[m
-[32m+[m[41m[m
-[32m+[m[32mfunction buildMasterPrompt(theme: any, displayName: any) {[m[41m[m
-[32m+[m[32m  return `以下のテーマでSNS投稿文（140字前後・絵文字は控えめ・ハッシュタグなし）を1本、日本語で作成してください。[m[41m[m
-[32m+[m[32m- テーマ: ${theme}[m[41m[m
-[32m+[m[32m- 語り口: 読み手に寄り添う自然な一人称[m[41m[m
-[32m+[m[32m- 実名や固有名詞は出さない[m[41m[m
-[32m+[m[32m- 改行は2回まで[m[41m[m
-[32m+[m[32m（アカウント名: ${displayName || "N/A"}）`;[m[41m[m
-[32m+[m[32m}[m[41m[m
-[32m+[m[41m[m
-[32m+[m[32masync function callOpenAIText({ apiKey, model, temperature, max_tokens, prompt }: any) {[m[41m[m
-[32m+[m[32m  const body = {[m[41m[m
-[32m+[m[32m    model,[m[41m[m
-[32m+[m[32m    messages: [{ role: "user", content: prompt }],[m[41m[m
-[32m+[m[32m    temperature,[m[41m[m
-[32m+[m[32m    max_tokens,[m[41m[m
-[32m+[m[32m  };[m[41m[m
-[32m+[m[32m  const resp
