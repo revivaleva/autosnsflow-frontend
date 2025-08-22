@@ -2,8 +2,8 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-// [KEEP] 認証保護の対象
-const PROTECTED = ["/settings", "/admin"]; // ここだけ保護
+// [MOD] 認証不要なパス（これ以外はすべて保護対象）
+const PUBLIC_PATHS = ["/login", "/logout", "/auth/callback"];
 
 export function middleware(req: NextRequest) {
   const { pathname, searchParams } = req.nextUrl;
@@ -19,19 +19,12 @@ export function middleware(req: NextRequest) {
     }
   }
 
-  // [ADD] ログイン/ログアウト/認証コールバックは常に素通し（ループ防止）
-  if (
-    pathname.startsWith("/login") ||
-    pathname.startsWith("/logout") ||
-    pathname.startsWith("/auth/callback")
-  ) {
+  // [MOD] 認証不要なパスは素通し（ループ防止）
+  if (PUBLIC_PATHS.some((p) => pathname.startsWith(p))) {
     return NextResponse.next();
   }
 
-  // [MOD] "/" も保護対象に含める
-  if (!(pathname === "/" || PROTECTED.some((p) => pathname.startsWith(p)))) {
-    return NextResponse.next();
-  }
+  // [MOD] すべてのパス（PUBLIC_PATHS以外）を保護対象とする
 
   // [KEEP] Cookie名は "idToken"
   const token = req.cookies.get("idToken")?.value;
@@ -46,7 +39,19 @@ export function middleware(req: NextRequest) {
   return NextResponse.redirect(url);
 }
 
-// /api は巻き込まない。静的や_nextも除外
+// /api、静的ファイル、_nextなどを除外
 export const config = {
-  matcher: ["/((?!_next/|favicon.ico|assets/|api/).*)"],
+  matcher: [
+    /*
+     * すべてのパスにマッチするが、以下を除外:
+     * - api (API routes)
+     * - _next/static (static files)
+     * - _next/image (image optimization files)
+     * - favicon.ico (favicon file)
+     * - assets (静的ファイル)
+     * - images (画像ファイル)
+     * - .*\\.png$ (png画像)
+     */
+    "/((?!api|_next/static|_next/image|favicon.ico|assets|images|.*\\.png$).*)",
+  ],
 };
