@@ -2681,8 +2681,33 @@ export const handler = async (event: any = {}) => {
           }
           case "testReplyFetch": {
             // リプライ取得のテスト
-            const result = await fetchIncomingReplies(userId, acct);
-            results.push({ accountId: acct.accountId, replyFetch: result });
+            try {
+              console.log(`[DEBUG] Starting testReplyFetch for account: ${acct.accountId}`);
+              const result = await fetchIncomingReplies(userId, acct);
+              console.log(`[DEBUG] testReplyFetch result:`, result);
+              
+              // より詳細な情報を取得
+              const detailedResult = await fetchThreadsRepliesAndSave({ acct, userId, lookbackSec: 24*3600 });
+              console.log(`[DEBUG] Detailed fetchThreadsRepliesAndSave result:`, detailedResult);
+              
+              results.push({ 
+                accountId: acct.accountId, 
+                replyFetch: result,
+                detailed: detailedResult,
+                account: {
+                  autoReply: acct.autoReply,
+                  accessToken: acct.accessToken ? "exists" : "missing",
+                  providerUserId: acct.providerUserId
+                }
+              });
+            } catch (error) {
+              console.error(`[ERROR] testReplyFetch failed:`, error);
+              results.push({ 
+                accountId: acct.accountId, 
+                error: String(error),
+                stack: error.stack
+              });
+            }
             break;
           }
           default:
