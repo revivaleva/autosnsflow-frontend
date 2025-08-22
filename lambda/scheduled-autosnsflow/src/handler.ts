@@ -720,6 +720,66 @@ export const handler = async (event: any = {}) => {
             results.push({ accountId: acct.accountId, runSecondStage: r });
             break;
           }
+          case "debugSecondStage": {
+            const delayMin = settings?.doublePostDelayMinutes ?? 0;
+            const threshold = nowSec() - delayMin * 60;
+            
+            console.log("=== 二段階投稿デバッグ ===");
+            console.log("delayMin:", delayMin);
+            console.log("secondStageContent:", acct?.secondStageContent);
+            console.log("accountId:", acct?.accountId);
+            console.log("threshold:", threshold, "現在時刻:", nowSec());
+            
+            if (!acct.secondStageContent || delayMin <= 0) {
+              const debugInfo = { 
+                debug: "early_return", 
+                hasContent: !!acct.secondStageContent, 
+                delayMin,
+                reason: !acct.secondStageContent ? "no_content" : "delay_zero"
+              };
+              results.push({ accountId: acct.accountId, debugSecondStage: debugInfo });
+              break;
+            }
+            
+            // 実際のクエリ確認
+            try {
+              const q = await ddb.send(new QueryCommand({
+                TableName: TBL_SCHEDULED,
+                IndexName: GSI_POS_BY_ACC_TIME,
+                KeyConditionExpression: "accountId = :acc AND postedAt <= :th",
+                FilterExpression:
+                  "(attribute_not_exists(doublePostStatus) OR doublePostStatus <> :done) AND #st = :posted AND contains(autoPostGroupId, :auto)",
+                ExpressionAttributeNames: { "#st": "status" },
+                ExpressionAttributeValues: {
+                  ":acc":    { S: acct.accountId },
+                  ":th":     { N: String(threshold) },
+                  ":done":   { S: "done" },
+                  ":posted": { S: "posted" },
+                  ":auto":   { S: "自動投稿" }
+                },
+                ProjectionExpression: "PK, SK, postId, postedAt, doublePostStatus, autoPostGroupId",
+              }));
+              
+              console.log("クエリ結果:", q.Items?.length || 0, "件");
+              console.log("アイテム詳細:", q.Items);
+              
+              results.push({ accountId: acct.accountId, debugSecondStage: { 
+                debug: "query_result", 
+                count: q.Items?.length || 0,
+                items: q.Items,
+                threshold,
+                delayMin,
+                settings
+              }});
+            } catch (e) {
+              console.log("クエリエラー:", e);
+              results.push({ accountId: acct.accountId, debugSecondStage: { 
+                debug: "query_error", 
+                error: String(e) 
+              }});
+            }
+            break;
+          }
           case "createOneOff": {
             const r = await createOneOffForTest({
               userId, acct,
