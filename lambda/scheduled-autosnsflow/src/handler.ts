@@ -81,6 +81,26 @@ function buildMasterPrompt(theme: any, displayName: any) {
 （アカウント名: ${displayName || "N/A"}）`;
 }
 
+// 返信プロンプトを構築する関数
+function buildReplyPrompt(incomingReply: string, originalPost: string, settings: any, acct: any) {
+  let prompt = "";
+  
+  if (settings.masterPrompt?.trim()) {
+    // ユーザー設定のマスタープロンプトがある場合
+    prompt = `【運用方針】\n${settings.masterPrompt}\n\n`;
+  }
+  
+  prompt += `【元の投稿】\n${originalPost}\n\n`;
+  prompt += `【受信したリプライ】\n${incomingReply}\n\n`;
+  prompt += `【指示】\n上記のリプライに対して、運用方針に従って自然な返信を140文字以内で作成してください。\n`;
+  prompt += `- 丁寧で親しみやすい口調\n`;
+  prompt += `- 相手のリプライに共感を示す\n`;
+  prompt += `- ハッシュタグは使用しない\n`;
+  prompt += `- 返信内容のみを出力（余計な説明は不要）`;
+  
+  return prompt;
+}
+
 async function callOpenAIText({ apiKey, model, temperature, max_tokens, prompt }: any) {
   const body = {
     model,
@@ -972,9 +992,45 @@ function rangeEndOfDayJst(range: any, baseDateJst: any) {
 }
 
 // 返信の取得（毎時ジョブ用）
-async function upsertReplyItem(userId: any, acct: any, { externalReplyId, postId, text, createdAt }: any) {
+async function upsertReplyItem(userId: any, acct: any, { externalReplyId, postId, text, createdAt, originalPost }: any) {
   const sk = `REPLY#${externalReplyId}`;
   try {
+    // 既存チェック
+    const existing = await ddb.send(new GetItemCommand({
+      TableName: TBL_REPLIES,
+      Key: { PK: { S: `USER#${userId}` }, SK: { S: sk } },
+    }));
+    
+    if (existing.Item) {
+      return false; // 既に存在する
+    }
+
+    // ユーザー設定取得
+    const settings = await getUserSettings(userId);
+    let responseContent = "";
+    
+    // OpenAIで返信コンテンツを生成
+    if (settings?.openaiApiKey && acct.autoReply) {
+      try {
+        const replyPrompt = buildReplyPrompt(text, originalPost?.content || "", settings, acct);
+        const { text: generatedReply } = await callOpenAIText({
+          apiKey: settings.openaiApiKey,
+          model: settings.model || DEFAULT_OPENAI_MODEL,
+          temperature: settings.openAiTemperature ?? DEFAULT_OPENAI_TEMP,
+          max_tokens: settings.openAiMaxTokens ?? DEFAULT_OPENAI_MAXTOKENS,
+          prompt: replyPrompt,
+        });
+        responseContent = generatedReply || "";
+      } catch (e) {
+        console.log(`[warn] 返信コンテンツ生成失敗: ${String(e)}`);
+        await putLog({ 
+          userId, type: "reply-generate", accountId: acct.accountId, 
+          status: "error", message: "返信コンテンツ生成失敗", 
+          detail: { error: String(e) } 
+        });
+      }
+    }
+
     await ddb.send(new PutItemCommand({
       TableName: TBL_REPLIES,
       Item: {
@@ -982,9 +1038,13 @@ async function upsertReplyItem(userId: any, acct: any, { externalReplyId, postId
         SK: { S: sk },
         accountId: { S: acct.accountId },
         postId: { S: postId },
-        replyContent: { S: text },
-        status: { S: "unreplied" },
+        incomingReply: { S: text }, // 受信したリプライ内容
+        replyContent: { S: responseContent }, // AI生成した返信内容
+        status: { S: responseContent ? "unreplied" : "draft" },
         createdAt: { N: String(createdAt || nowSec()) },
+        // 元投稿の情報も保存
+        originalContent: { S: originalPost?.content || "" },
+        originalPostedAt: { N: String(originalPost?.postedAt || 0) },
       },
       ConditionExpression: "attribute_not_exists(SK)",
     }));
@@ -1015,7 +1075,7 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
       },
       FilterExpression: "#st = :posted AND attribute_exists(postId)",
       ExpressionAttributeNames: { "#st": "status" },
-      ProjectionExpression: "postId",
+      ProjectionExpression: "postId, content, postedAt",
       Limit: 3,
     }));
   } catch (e) {
@@ -1033,25 +1093,42 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
       },
       FilterExpression: "accountId = :acc AND postedAt >= :since AND #st = :posted AND attribute_exists(postId)",
       ExpressionAttributeNames: { "#st": "status" },
-      ProjectionExpression: "postId",
+      ProjectionExpression: "postId, content, postedAt",
       Limit: 3,
     }));
   }
 
-  const posts = (q.Items || []).map((i: any) => i.postId?.S).filter(Boolean);
+  const posts = (q.Items || []).map((i: any) => ({
+    postId: i.postId?.S,
+    content: i.content?.S || "",
+    postedAt: i.postedAt?.N ? Number(i.postedAt.N) : 0,
+  })).filter(p => p.postId);
+  
   let saved = 0;
 
-  for (const pid of posts) {
-    const url = new URL(`https://graph.threads.net/v1.0/${encodeURIComponent(pid)}/replies`);
+  for (const post of posts) {
+    const url = new URL(`https://graph.threads.net/v1.0/${encodeURIComponent(post.postId)}/replies`);
     url.searchParams.set("access_token", acct.accessToken);
     const r = await fetch(url.toString());
-    if (!r.ok) { await putLog({ userId, type: "reply-fetch", accountId: acct.accountId, status: "error", message: `Threads replies error: ${r.status}` }); continue; }
+    if (!r.ok) { 
+      await putLog({ 
+        userId, type: "reply-fetch", accountId: acct.accountId, 
+        status: "error", message: `Threads replies error: ${r.status}` 
+      }); 
+      continue; 
+    }
     const json = await r.json();
     for (const rep of (json?.data || [])) {
       const externalReplyId = String(rep.id);
       const text = rep.text || "";
       const createdAt = nowSec();
-      const ok = await upsertReplyItem(userId, acct, { externalReplyId, postId: pid, text, createdAt });
+      const ok = await upsertReplyItem(userId, acct, { 
+        externalReplyId, 
+        postId: post.postId, 
+        text, 
+        createdAt,
+        originalPost: post
+      });
       if (ok) saved++;
     }
   }
