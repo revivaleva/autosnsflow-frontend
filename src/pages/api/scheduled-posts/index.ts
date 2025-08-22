@@ -42,7 +42,7 @@ function mapItem(it: any) {
     status: getS("status"),
     postedAt: getN("postedAt"),
     // [ADD] 一覧にも返す
-    postId: getS("postId") || getS("threadsPostId"),
+    postId: getS("postId"),
     postUrl: getS("postUrl"),
     isDeleted: getB("isDeleted"),
     replyCount: getN("replyCount") ?? 0,

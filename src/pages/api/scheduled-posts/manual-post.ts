@@ -69,7 +69,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       ":pid": { S: postId },
       ":f": { BOOL: false },
     };
-    const sets = ["#st = :posted", "postedAt = :ts", "postId = :pid", "threadsPostId = :pid"];
+    const sets = ["#st = :posted", "postedAt = :ts", "postId = :pid"];
     if (permalink?.url) {
       sets.push("postUrl = :purl");
       values[":purl"] = { S: permalink.url };
