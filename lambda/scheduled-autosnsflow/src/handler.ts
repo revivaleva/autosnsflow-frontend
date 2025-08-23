@@ -1,7 +1,7 @@
-<<<<<<< HEAD
 // /lambda/scheduled-autosnsflow/src/handler.ts
 // 定期実行で予約投稿の作成・実投稿・返信処理・2段階投稿を行い、必要な通知と計測を行う。
 // 本実装は Threads のみを対象とする（X/Twitter は扱わない）。
+// [UPDATE] 2025-01-17: リプライデバッグ機能とグローバル認証保護機能を統合
 
 import { fetchThreadsAccounts } from "@autosnsflow/backend-core";
 import {
