@@ -86,7 +86,12 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
       scheduledPostId: item.scheduledPostId?.S || "",
     };
 
-    if (!post.postId) continue;
+    if (!post.postId) {
+      console.log(`[WARNING] 投稿 ${post.scheduledPostId} のpostIdが空です:`, post);
+      continue;
+    }
+    
+    console.log(`[DEBUG] 投稿 ${post.postId} のリプライ取得を開始...`);
 
     // Threads APIでリプライを取得
     try {
