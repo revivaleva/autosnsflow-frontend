@@ -1426,7 +1426,30 @@ async function postToThreads({ accessToken, text, userIdOnPlatform, inReplyTo = 
     throw new Error(`Threads publish error: ${pubRes.status} ${t}`);
   }
   const pubJson = await pubRes.json().catch(() => ({}));
-  return { postId: pubJson?.id || creation_id };
+  const initialPostId = pubJson?.id || creation_id;
+  
+  // Threads APIで投稿詳細を取得してリンク用IDを取得
+  try {
+    const postDetailUrl = `https://graph.threads.net/v1.0/${encodeURIComponent(initialPostId)}?fields=id,permalink&access_token=${accessToken}`;
+    const detailRes = await fetch(postDetailUrl);
+    if (detailRes.ok) {
+      const detailJson = await detailRes.json();
+      // permalinkからリンク用IDを抽出: https://www.threads.net/@username/post/ABC123
+      const permalink = detailJson?.permalink;
+      if (permalink) {
+        const linkIdMatch = permalink.match(/\/post\/([^/?]+)/);
+        if (linkIdMatch) {
+          const linkId = linkIdMatch[1];
+          console.log(`[postToThreads] 投稿ID変換: ${initialPostId} -> ${linkId}`);
+          return { postId: linkId, numericId: initialPostId };
+        }
+      }
+    }
+  } catch (e) {
+    console.log("[postToThreads] permalink取得失敗、数字IDをそのまま使用:", e);
+  }
+  
+  return { postId: initialPostId };
 }
 
 /// ========== 5分ジョブ（実投稿・返信送信・2段階投稿） ==========
@@ -1549,24 +1572,33 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
 
   // 実投稿 → 成功時のみ posted に更新（冪等）
   try {
-    const { postId } = await postToThreads({
+    const postResult = await postToThreads({
       accessToken: acct.accessToken,
       text,
       userIdOnPlatform: acct.providerUserId,
     });
 
+    let updateExpr = "SET #st = :posted, postedAt = :ts, postId = :pid";
+    const updateValues: any = {
+      ":posted":   { S: "posted" },
+      ":scheduled":{ S: "scheduled" },
+      ":ts":       { N: String(nowSec()) },
+      ":pid":      { S: postResult.postId || "" },
+    };
+
+    // 数字IDも保存（リンク用IDと異なる場合）
+    if (postResult.numericId && postResult.numericId !== postResult.postId) {
+      updateExpr += ", numericPostId = :nid";
+      updateValues[":nid"] = { S: postResult.numericId };
+    }
+
     await ddb.send(new UpdateItemCommand({
       TableName: TBL_SCHEDULED,
       Key: { PK: { S: pk }, SK: { S: sk } },
-      UpdateExpression: "SET #st = :posted, postedAt = :ts, postId = :pid",
+      UpdateExpression: updateExpr,
       ConditionExpression: "#st = :scheduled",
       ExpressionAttributeNames: { "#st": "status" },
-      ExpressionAttributeValues: {
-        ":posted":   { S: "posted" },
-        ":scheduled":{ S: "scheduled" },
-        ":ts":       { N: String(nowSec()) },
-        ":pid":      { S: postId || "" },
-      },
+      ExpressionAttributeValues: updateValues,
     }));
 
     await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "ok", message: "自動投稿を完了", detail: { platform: "threads" } });
@@ -1693,8 +1725,10 @@ async function runRepliesForAccount(acct: any, userId = USER_ID, settings: any =
 
 // 2段階投稿：postedAt + delay 経過、doublePostStatus != "done" のものに本文のみを返信
 async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: any = undefined) {
-  const delayMin = settings?.doublePostDelayMinutes ?? 0;
-  if (!acct.secondStageContent || delayMin <= 0) return { posted2: 0 };
+  if (!acct.secondStageContent) return { posted2: 0 };
+  
+  // アカウントに二段階投稿設定があれば実行。遅延時間は設定値またはデフォルト30分
+  const delayMin = Math.max(settings?.doublePostDelayMinutes ?? 30, 1);
 
   const threshold = nowSec() - delayMin * 60;
 
@@ -1784,7 +1818,7 @@ async function runHourlyJobForUser(userId: any) {
   if (settings.autoPost === "inactive") {
     return { userId, createdCount: 0, replyDrafts: 0, fetchedReplies: 0, skippedAccounts: 0, skipped: "master_off" };
   }
-  const accounts = await fetchThreadsAccountsFull(userId);
+  const accounts = await getThreadsAccounts(userId);
 
   let createdCount = 0;
   let fetchedReplies = 0;
@@ -1820,7 +1854,7 @@ async function runFiveMinJobForUser(userId: any) {
     return { userId, totalAuto: 0, totalReply: 0, totalTwo: 0, rateSkipped: 0, skipped: "master_off" };
   }
 
-  const accounts = await fetchThreadsAccountsFull(userId);
+  const accounts = await getThreadsAccounts(userId);
   let totalAuto = 0, totalReply = 0, totalTwo = 0, rateSkipped = 0;
 
   for (const acct of accounts) {
