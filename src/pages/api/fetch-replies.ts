@@ -157,7 +157,12 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
     }
   }
   
-  return { saved };
+  return { 
+    saved,
+    postsFound: q.Items?.length || 0,
+    postsWithPostId: (q.Items || []).filter(item => item.postId?.S).length,
+    postsProcessed: (q.Items || []).length
+  };
 }
 
 // Lambda関数の fetchIncomingReplies を移植（手動取得用に条件緩和）
@@ -178,8 +183,13 @@ async function fetchIncomingReplies(userId: string, acct: any) {
   
   try {
     const r = await fetchThreadsRepliesAndSave({ acct, userId });
-    console.log(`[DEBUG] アカウント ${acct.accountId} の取得結果: ${r.saved}件`);
-    return { fetched: r.saved || 0 };
+    console.log(`[DEBUG] アカウント ${acct.accountId} の取得結果: ${r.saved}件 (投稿${r.postsFound}件中、postId有り${r.postsWithPostId}件)`);
+    return { 
+      fetched: r.saved || 0,
+      postsFound: r.postsFound || 0,
+      postsWithPostId: r.postsWithPostId || 0,
+      postsProcessed: r.postsProcessed || 0
+    };
   } catch (e) {
     console.error(`[ERROR] アカウント ${acct.accountId} の返信取得失敗:`, e);
     return { fetched: 0, error: String(e) };
@@ -214,9 +224,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const debugSummary = {
       totalFetched,
       accountsProcessed: accounts.length,
+      totalPostsFound: results.reduce((sum, r) => sum + (r.postsFound || 0), 0),
+      totalPostsWithPostId: results.reduce((sum, r) => sum + (r.postsWithPostId || 0), 0),
       results: results.map(r => ({
         accountId: r.accountId,
         fetched: r.fetched,
+        postsFound: r.postsFound || 0,
+        postsWithPostId: r.postsWithPostId || 0,
         error: r.error || null
       }))
     };

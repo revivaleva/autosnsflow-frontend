@@ -154,10 +154,22 @@ export default function RepliesList() {
       console.log("[CLIENT] レスポンスデータ:", data);
       
       if (data.ok) {
-        const detailMsg = data.debug ? 
-          `デバッグ情報:\n${JSON.stringify(data.debug, null, 2)}` : 
-          `詳細: ${data.results.map((r: any) => `${r.displayName}: ${r.fetched}件`).join(', ')}`;
-        alert(`✅ ${data.message}\n\n${detailMsg}`);
+        const results = data.results || [];
+        const detailMsg = results.length > 0 ? 
+          results.map((r: any) => {
+            const parts = [`${r.displayName || r.accountId}: リプライ${r.fetched}件取得`];
+            if (r.postsFound !== undefined) parts.push(`投稿${r.postsFound}件発見`);
+            if (r.postsWithPostId !== undefined) parts.push(`postId有り${r.postsWithPostId}件`);
+            if (r.error) parts.push(`エラー: ${r.error}`);
+            return parts.join(' / ');
+          }).join('\n') : 
+          '処理対象アカウントなし';
+
+        const summary = data.debug ? 
+          `\n\n📊 全体サマリー:\n投稿${data.debug.totalPostsFound || 0}件発見 / postId有り${data.debug.totalPostsWithPostId || 0}件 / リプライ${data.debug.totalFetched || 0}件取得` : 
+          '';
+        
+        alert(`✅ ${data.message}\n\n${detailMsg}${summary}`);
         // 取得後に一覧を再読み込み
         await loadReplies();
       } else {
