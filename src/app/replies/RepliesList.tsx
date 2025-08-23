@@ -251,38 +251,18 @@ export default function RepliesList() {
         <h2 className="text-xl font-bold">リプライ一覧</h2>
         <div className="flex gap-2">
           <button
-            className="px-3 py-1 text-sm bg-blue-500 hover:bg-blue-600 text-white rounded"
-            onClick={() => {
-              setLoading(true);
-              fetch(`/api/replies`, { credentials: "include" })
-                .then(res => res.json())
-                .then(data => {
-                  setReplies(
-                    (data.replies || []).map((r: any): ReplyType => ({
-                      id: r.id,
-                      accountId: r.accountId,
-                      threadsPostedAt: r.scheduledAt
-                        ? dayjs(r.scheduledAt * 1000).format("YYYY/MM/DD HH:mm")
-                        : "",
-                      postContent: r.content,
-                      replyContent: r.incomingReply || "",
-                      responseContent: r.replyContent || "",
-                      responseAt: r.replyAt
-                        ? dayjs(r.replyAt * 1000).format("YYYY/MM/DD HH:mm")
-                        : "",
-                      status: r.status as ReplyStatus,
-                    }))
-                  );
-                  setDebugInfo(data.debug || null);
-                  setLoading(false);
-                })
-                .catch(() => {
-                  setReplies([]);
-                  setLoading(false);
-                });
-            }}
+            onClick={loadReplies}
+            disabled={loading}
+            className="px-3 py-1 text-sm bg-blue-500 hover:bg-blue-600 text-white rounded disabled:bg-gray-400"
           >
-            再読み込み
+            {loading ? "読み込み中..." : "再読み込み"}
+          </button>
+          <button 
+            onClick={fetchReplies}
+            disabled={fetchingReplies || loading}
+            className="px-3 py-1 text-sm bg-green-500 hover:bg-green-600 text-white rounded disabled:bg-gray-400"
+          >
+            {fetchingReplies ? "取得中..." : "リプライ取得"}
           </button>
           <button
             className="px-3 py-1 text-sm bg-gray-200 hover:bg-gray-300 rounded"
