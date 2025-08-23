@@ -162,12 +162,27 @@ export default function RepliesList() {
             if (r.postsWithPostId !== undefined) parts.push(`postId有り${r.postsWithPostId}件`);
             if (r.error) parts.push(`エラー: ${r.error}`);
             
-            // 投稿内容を追加
+            // 投稿内容とAPI結果を追加
             if (r.postsInfo && r.postsInfo.length > 0) {
               const postsDetail = r.postsInfo.map((p: any, i: number) => 
-                `[${i+1}] ${p.hasPostId ? 'ID:' + p.postId.substring(0, 8) + '...' : 'ID無し'} "${p.content}"`
+                `[${i+1}] ${p.hasPostId ? 'ID:' + p.postId.substring(0, 8) + '...' : 'ID無し'} "${p.content}" → ${p.apiLog || '未処理'}`
               ).join('\n  ');
               parts.push(`\n  対象投稿:\n  ${postsDetail}`);
+            }
+            
+            // API詳細ログを追加
+            if (r.apiLogs && r.apiLogs.length > 0) {
+              const apiDetail = r.apiLogs.map((log: any, i: number) => {
+                const parts = [
+                  `[${i+1}] postId: ${log.postId?.substring(0, 8)}...`,
+                  `Status: ${log.status || 'N/A'}`,
+                  `Found: ${log.repliesFound || 0}件`
+                ];
+                if (log.error) parts.push(`Error: ${log.error}`);
+                if (log.response) parts.push(`Response: ${log.response}`);
+                return parts.join(' / ');
+              }).join('\n  ');
+              parts.push(`\n  API詳細:\n  ${apiDetail}`);
             }
             
             return parts.join(' / ');
