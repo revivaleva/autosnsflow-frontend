@@ -126,11 +126,12 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
       scheduledPostId: item.scheduledPostId?.S || "",
     };
 
-    const postInfo = {
+    const postInfo: any = {
       postId: post.postId || "空",
       content: (post.content || "").substring(0, 100),
       postedAt: post.postedAt || "空",
-      hasPostId: !!(post.postId)
+      hasPostId: !!(post.postId),
+      apiLog: ""
     };
 
     if (!post.postId) {
