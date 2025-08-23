@@ -100,37 +100,72 @@ export default function RepliesList() {
   // デバッグ情報のstate
   const [debugInfo, setDebugInfo] = useState<any>(null);
   const [showDebug, setShowDebug] = useState<boolean>(false);
+  
+  // [ADD] リプライ取得の状態管理
+  const [fetchingReplies, setFetchingReplies] = useState<boolean>(false);
+
+  // 返信一覧を読み込む関数
+  const loadReplies = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch("/api/replies", { credentials: "include" });
+      const data = await response.json();
+      
+      setReplies(
+        (data.replies || []).map((r: any): ReplyType => ({
+          id: r.id,
+          accountId: r.accountId,
+          threadsPostedAt: r.scheduledAt
+            ? dayjs(r.scheduledAt * 1000).format("YYYY/MM/DD HH:mm")
+            : "",
+          postContent: r.content,
+          replyContent: r.incomingReply || "",
+          responseContent: r.replyContent || "",
+          responseAt: r.replyAt
+            ? dayjs(r.replyAt * 1000).format("YYYY/MM/DD HH:mm")
+            : "",
+          status: r.status as ReplyStatus,
+        }))
+      );
+      // デバッグ情報を保存
+      setDebugInfo(data.debug || null);
+    } catch (error: any) {
+      alert(`読み込みエラー: ${error.message}`);
+      setReplies([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // [ADD] リプライ手動取得関数
+  const fetchReplies = async () => {
+    if (fetchingReplies) return;
+    
+    setFetchingReplies(true);
+    try {
+      const response = await fetch("/api/fetch-replies", { 
+        method: "POST",
+        credentials: "include" 
+      });
+      const data = await response.json();
+      
+      if (data.ok) {
+        alert(`✅ ${data.message}\n詳細: ${data.results.map((r: any) => `${r.displayName}: ${r.fetched}件`).join(', ')}`);
+        // 取得後に一覧を再読み込み
+        await loadReplies();
+      } else {
+        alert(`❌ リプライ取得に失敗しました: ${data.message || data.error}`);
+      }
+    } catch (error: any) {
+      alert(`❌ リプライ取得エラー: ${error.message}`);
+    } finally {
+      setFetchingReplies(false);
+    }
+  };
 
   // APIからデータ取得
   useEffect(() => {
-    setLoading(true);
-    fetch(`/api/replies`, { credentials: "include" }) // userId送信しない
-      .then(res => res.json())
-      .then(data => {
-        setReplies(
-          (data.replies || []).map((r: any): ReplyType => ({
-            id: r.id,
-            accountId: r.accountId,
-            threadsPostedAt: r.scheduledAt
-              ? dayjs(r.scheduledAt * 1000).format("YYYY/MM/DD HH:mm")
-              : "",
-            postContent: r.content,
-            replyContent: r.incomingReply || "",
-            responseContent: r.replyContent || "",
-            responseAt: r.replyAt
-              ? dayjs(r.replyAt * 1000).format("YYYY/MM/DD HH:mm")
-              : "",
-            status: r.status as ReplyStatus,
-          }))
-        );
-        // デバッグ情報を保存
-        setDebugInfo(data.debug || null);
-        setLoading(false);
-      })
-      .catch(() => {
-        setReplies([]);
-        setLoading(false);
-      });
+    loadReplies();
   }, []);
 
   // フィルタ

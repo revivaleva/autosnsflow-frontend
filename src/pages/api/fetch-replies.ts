@@ -1,0 +1,171 @@
+// /src/pages/api/fetch-replies.ts
+// 手動でリプライを取得するAPI（Lambda関数の処理を移植）
+
+import type { NextApiRequest, NextApiResponse } from "next";
+import { QueryCommand, PutItemCommand } from "@aws-sdk/client-dynamodb";
+import { createDynamoClient } from "@/lib/ddb";
+import { verifyUserFromRequest } from "@/lib/auth";
+import { fetchThreadsAccountsFull } from "@autosnsflow/backend-core";
+
+const ddb = createDynamoClient();
+const TBL_SCHEDULED = process.env.TBL_SCHEDULED_POSTS || "ScheduledPosts";
+const TBL_REPLIES = process.env.TBL_REPLIES || "Replies";
+
+// 現在時刻（Unix秒）
+const nowSec = () => Math.floor(Date.now() / 1000);
+
+// Lambda関数の upsertReplyItem を移植
+async function upsertReplyItem(userId: string, acct: any, { externalReplyId, postId, text, createdAt, originalPost }: any) {
+  const sk = `REPLY#${externalReplyId}`;
+
+  // AI生成返信（簡易版）
+  let responseContent = "";
+  try {
+    const prompt = `以下のリプライに簡潔に返信してください（100文字以内）：\n${text}`;
+    // 実際のAI生成はここで実装（今回は仮）
+    responseContent = `${text}への返信です。ありがとうございます！`;
+  } catch (e) {
+    console.error("AI生成失敗:", e);
+  }
+
+  try {
+    await ddb.send(new PutItemCommand({
+      TableName: TBL_REPLIES,
+      Item: {
+        PK: { S: `USER#${userId}` },
+        SK: { S: sk },
+        accountId: { S: acct.accountId },
+        postId: { S: postId },
+        incomingReply: { S: text },
+        replyContent: { S: responseContent },
+        status: { S: responseContent ? "unreplied" : "draft" },
+        createdAt: { N: String(createdAt || nowSec()) },
+        originalContent: { S: originalPost?.content || "" },
+        originalPostedAt: { N: String(originalPost?.postedAt || 0) },
+      },
+      ConditionExpression: "attribute_not_exists(SK)",
+    }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Lambda関数の fetchThreadsRepliesAndSave を移植
+async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 }: any) {
+  if (!acct?.accessToken) throw new Error("Threads のトークン不足");
+  if (!acct?.providerUserId) throw new Error("Threads のユーザーID取得失敗");
+  
+  const since = nowSec() - lookbackSec;
+  let saved = 0;
+
+  // 投稿済みの予約投稿を取得
+  const q = await ddb.send(new QueryCommand({
+    TableName: TBL_SCHEDULED,
+    KeyConditionExpression: "PK = :pk",
+    FilterExpression: "#st = :posted AND postedAt >= :since AND accountId = :acc",
+    ExpressionAttributeNames: { "#st": "status" },
+    ExpressionAttributeValues: {
+      ":pk": { S: `USER#${userId}` },
+      ":posted": { S: "posted" },
+      ":since": { N: String(since) },
+      ":acc": { S: acct.accountId },
+    },
+    ProjectionExpression: "postId, content, postedAt, scheduledPostId",
+  }));
+
+  for (const item of (q.Items || [])) {
+    const post = {
+      postId: item.postId?.S || "",
+      content: item.content?.S || "",
+      postedAt: Number(item.postedAt?.N || "0"),
+      scheduledPostId: item.scheduledPostId?.S || "",
+    };
+
+    if (!post.postId) continue;
+
+    // Threads APIでリプライを取得
+    try {
+      const url = `https://graph.threads.net/v1.0/${encodeURIComponent(post.postId)}/replies?fields=id,text&access_token=${encodeURIComponent(acct.accessToken)}`;
+      const r = await fetch(url);
+      
+      if (!r.ok) { 
+        console.error(`Threads replies error: ${r.status}`);
+        continue; 
+      }
+      
+      const json = await r.json();
+      for (const rep of (json?.data || [])) {
+        const externalReplyId = String(rep.id);
+        const text = rep.text || "";
+        const createdAt = nowSec();
+        const ok = await upsertReplyItem(userId, acct, { 
+          externalReplyId, 
+          postId: post.postId, 
+          text, 
+          createdAt,
+          originalPost: post
+        });
+        if (ok) saved++;
+      }
+    } catch (e) {
+      console.error(`リプライ取得エラー (postId: ${post.postId}):`, e);
+    }
+  }
+  
+  return { saved };
+}
+
+// Lambda関数の fetchIncomingReplies を移植
+async function fetchIncomingReplies(userId: string, acct: any) {
+  if (!acct.autoReply) return { fetched: 0, skipped: "autoReply_disabled" };
+  
+  try {
+    const r = await fetchThreadsRepliesAndSave({ acct, userId });
+    return { fetched: r.saved || 0 };
+  } catch (e) {
+    console.error("返信取得失敗:", e);
+    return { fetched: 0, error: String(e) };
+  }
+}
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  try {
+    const user = await verifyUserFromRequest(req);
+    const userId = user.sub;
+
+    if (req.method !== "POST") {
+      return res.status(405).json({ error: "Method Not Allowed" });
+    }
+
+    // ユーザーのThreadsアカウントを取得
+    const accounts = await fetchThreadsAccountsFull(userId);
+    
+    let totalFetched = 0;
+    const results = [];
+
+    for (const acct of accounts) {
+      const result = await fetchIncomingReplies(userId, acct);
+      results.push({
+        accountId: acct.accountId,
+        displayName: acct.displayName,
+        ...result
+      });
+      totalFetched += result.fetched || 0;
+    }
+
+    return res.status(200).json({
+      ok: true,
+      totalFetched,
+      results,
+      message: `${totalFetched}件のリプライを取得しました`
+    });
+
+  } catch (error) {
+    console.error("fetch-replies API error:", error);
+    return res.status(500).json({ 
+      error: "Internal Server Error",
+      message: String(error)
+    });
+  }
+}
