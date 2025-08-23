@@ -13,7 +13,7 @@ import { createDynamoClient } from "@/lib/ddb";
 import { verifyUserFromRequest } from "@/lib/auth";
 
 // [ADD] 共通関数を追加インポート（re-exportされます）
-import { fetchThreadsAccountsFull } from "@autosnsflow/backend-core";
+import { fetchThreadsAccounts } from "@autosnsflow/backend-core";
 
 const ddb = createDynamoClient();
 const TBL = process.env.TBL_THREADS_ACCOUNTS || "ThreadsAccounts";
@@ -44,7 +44,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // ====================
     if (req.method === "GET") {
       // [MOD] ここだけ backend-core を呼ぶ
-      const list = await fetchThreadsAccountsFull(userId);
+      const list = await fetchThreadsAccounts(userId);
 
       // 既存APIの応答形式（items配列）に揃える
       // 参考：現行は username / accessToken / auto* / persona* など多数を返却中

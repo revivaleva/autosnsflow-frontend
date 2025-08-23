@@ -126,7 +126,14 @@ export default function SNSAccountsTable() {
       <h1 className="text-2xl font-bold mb-6 text-center">
         アカウント一覧
       </h1>
-      <div className="mb-3 flex justify-end">
+      <div className="mb-3 flex justify-between items-center">
+        <button
+          className="bg-blue-500 text-white rounded px-4 py-2 hover:bg-blue-600"
+          onClick={loadAccounts}
+          disabled={loading}
+        >
+          {loading ? "読み込み中..." : "再読み込み"}
+        </button>
         <button
           className="bg-green-500 text-white rounded px-4 py-2 hover:bg-green-600"
           onClick={handleAddClick}
