@@ -145,7 +145,15 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
       const url = `https://graph.threads.net/v1.0/${encodeURIComponent(post.postId)}/replies?fields=id,text&access_token=${encodeURIComponent(acct.accessToken)}`;
       const r = await fetch(url);
       
-      const apiLogEntry = {
+      const apiLogEntry: {
+        postId: string;
+        url: string;
+        status: string;
+        content: string;
+        error?: string;
+        repliesFound?: number;
+        response?: string;
+      } = {
         postId: post.postId,
         url: url.replace(acct.accessToken, "***TOKEN***"),
         status: `${r.status} ${r.statusText}`,
@@ -188,6 +196,9 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
       postInfo.apiLog = `ERROR: ${String(e).substring(0, 50)}`;
       apiLogs.push({
         postId: post.postId,
+        url: "",
+        status: "ERROR",
+        content: post.content.substring(0, 50),
         error: String(e).substring(0, 100)
       });
     }
