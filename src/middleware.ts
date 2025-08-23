@@ -2,8 +2,8 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-// [KEEP] 認証保護の対象
-const PROTECTED = ["/settings", "/admin"]; // ここだけ保護
+// 認証不要なページ（ログイン関連のみ）
+const PUBLIC_PAGES = ["/login", "/logout", "/auth/callback"];
 
 export function middleware(req: NextRequest) {
   const { pathname, searchParams } = req.nextUrl;
@@ -19,19 +19,12 @@ export function middleware(req: NextRequest) {
     }
   }
 
-  // [ADD] ログイン/ログアウト/認証コールバックは常に素通し（ループ防止）
-  if (
-    pathname.startsWith("/login") ||
-    pathname.startsWith("/logout") ||
-    pathname.startsWith("/auth/callback")
-  ) {
+  // 認証不要ページは素通し（ループ防止）
+  if (PUBLIC_PAGES.some((p) => pathname.startsWith(p))) {
     return NextResponse.next();
   }
 
-  // [MOD] "/" も保護対象に含める
-  if (!(pathname === "/" || PROTECTED.some((p) => pathname.startsWith(p)))) {
-    return NextResponse.next();
-  }
+  // 全ページを認証保護の対象とする（PUBLIC_PAGES以外）
 
   // [KEEP] Cookie名は "idToken"
   const token = req.cookies.get("idToken")?.value;
