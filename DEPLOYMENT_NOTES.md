@@ -57,6 +57,16 @@ mv next.config.ts next.config.mjs
 # ファイル内容もJavaScript形式に変更
 ```
 
+#### Error: no frontend-related change -> skip build
+`scripts/should-build-frontend.sh` のパターンが更新されていない場合：
+```bash
+# next.config.mjs が認識されるよう正規表現を修正
+# PATTERN に next\.config\.(js|ts|mjs) を含める
+```
+
+#### Error: Can't find required-server-files.json
+ビルドがスキップされた場合に発生。上記のパターン修正で解決。
+
 #### TypeScript build errors
 ```bash
 # 一時的な回避（推奨しません）
