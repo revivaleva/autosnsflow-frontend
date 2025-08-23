@@ -97,6 +97,9 @@ export default function RepliesList() {
   const [sortAsc, setSortAsc] = useState<boolean>(true);
   const [editModalOpen, setEditModalOpen] = useState<boolean>(false);
   const [editTarget, setEditTarget] = useState<ReplyType | null>(null);
+  // デバッグ情報のstate
+  const [debugInfo, setDebugInfo] = useState<any>(null);
+  const [showDebug, setShowDebug] = useState<boolean>(false);
 
   // APIからデータ取得
   useEffect(() => {
@@ -120,6 +123,8 @@ export default function RepliesList() {
             status: r.status as ReplyStatus,
           }))
         );
+        // デバッグ情報を保存
+        setDebugInfo(data.debug || null);
         setLoading(false);
       })
       .catch(() => {
@@ -207,7 +212,102 @@ export default function RepliesList() {
         value={editTarget?.responseContent || ""}
       />
 
-      <h2 className="text-xl font-bold mb-4">リプライ一覧</h2>
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="text-xl font-bold">リプライ一覧</h2>
+        <div className="flex gap-2">
+          <button
+            className="px-3 py-1 text-sm bg-blue-500 hover:bg-blue-600 text-white rounded"
+            onClick={() => {
+              setLoading(true);
+              fetch(`/api/replies`, { credentials: "include" })
+                .then(res => res.json())
+                .then(data => {
+                  setReplies(
+                    (data.replies || []).map((r: any): ReplyType => ({
+                      id: r.id,
+                      accountId: r.accountId,
+                      threadsPostedAt: r.scheduledAt
+                        ? dayjs(r.scheduledAt * 1000).format("YYYY/MM/DD HH:mm")
+                        : "",
+                      postContent: r.content,
+                      replyContent: r.incomingReply || "",
+                      responseContent: r.replyContent || "",
+                      responseAt: r.replyAt
+                        ? dayjs(r.replyAt * 1000).format("YYYY/MM/DD HH:mm")
+                        : "",
+                      status: r.status as ReplyStatus,
+                    }))
+                  );
+                  setDebugInfo(data.debug || null);
+                  setLoading(false);
+                })
+                .catch(() => {
+                  setReplies([]);
+                  setLoading(false);
+                });
+            }}
+          >
+            再読み込み
+          </button>
+          <button
+            className="px-3 py-1 text-sm bg-gray-200 hover:bg-gray-300 rounded"
+            onClick={() => setShowDebug(!showDebug)}
+          >
+            {showDebug ? "デバッグ情報を隠す" : "デバッグ情報を表示"}
+          </button>
+        </div>
+      </div>
+
+      {/* デバッグ情報 */}
+      {showDebug && debugInfo && (
+        <div className="mb-4 p-4 bg-gray-100 rounded border">
+          <h3 className="font-bold mb-2">デバッグ情報</h3>
+          <p><strong>ユーザーID:</strong> {debugInfo.userId}</p>
+          <p><strong>DynamoDBテーブル:</strong> {debugInfo.tableName}</p>
+          <p><strong>DBからの取得件数:</strong> {debugInfo.totalItemsInDB}件</p>
+          {debugInfo.sampleRawItem ? (
+            <details className="mt-2">
+              <summary className="cursor-pointer font-semibold">サンプルDBアイテム（1件目）</summary>
+              <pre className="mt-2 text-xs bg-white p-2 rounded overflow-auto">
+                {JSON.stringify(debugInfo.sampleRawItem, null, 2)}
+              </pre>
+            </details>
+          ) : (
+            <p className="text-red-600 mt-2">⚠️ データベースにリプライデータが存在しません</p>
+          )}
+        </div>
+      )}
+
+      {/* リプライ取得に関する案内 */}
+      {replies.length === 0 && !loading && (
+        <div className="mb-4 p-4 bg-yellow-50 border border-yellow-200 rounded">
+          <h3 className="font-bold text-yellow-800 mb-2">リプライが取得できていません</h3>
+          <p className="text-yellow-700 mb-2">以下の点をご確認ください：</p>
+          <ul className="list-disc list-inside text-yellow-700 text-sm space-y-1">
+            <li>
+              <a href="/accounts" className="text-blue-600 hover:underline">アカウント設定</a>
+              で「リプ返信」機能がオンになっているか
+            </li>
+            <li>Lambda関数が定期実行されているか
+              <details className="ml-4 mt-1">
+                <summary className="cursor-pointer text-xs text-blue-600">ログ確認方法</summary>
+                <div className="text-xs mt-1 p-2 bg-white rounded border">
+                  <p className="mb-1"><strong>AWS CLIコマンド:</strong></p>
+                  <code className="block bg-gray-100 p-1 rounded">
+                    aws logs describe-log-groups --log-group-name-prefix "/aws/lambda/scheduled-autosnsflow"
+                  </code>
+                  <p className="mt-2 mb-1"><strong>ログの確認:</strong></p>
+                  <code className="block bg-gray-100 p-1 rounded">
+                    aws logs tail /aws/lambda/scheduled-autosnsflow --follow
+                  </code>
+                </div>
+              </details>
+            </li>
+            <li>Threadsのアクセストークンが有効で、適切な権限があるか</li>
+            <li>実際にThreads投稿にリプライが投稿されているか</li>
+          </ul>
+        </div>
+      )}
 
       {/* フィルタ */}
       <div className="flex flex-wrap gap-4 mb-4">

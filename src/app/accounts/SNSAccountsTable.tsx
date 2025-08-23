@@ -181,11 +181,16 @@ export default function SNSAccountsTable() {
                 />
               </td>
               <td className="py-2 px-3">
-                <ToggleSwitch
-                  checked={!!acc.autoReply}
-                  onChange={() => handleToggle(acc, "autoReply")}
-                  disabled={updatingId === acc.accountId}
-                />
+                <div className="flex items-center gap-2">
+                  <ToggleSwitch
+                    checked={!!acc.autoReply}
+                    onChange={() => handleToggle(acc, "autoReply")}
+                    disabled={updatingId === acc.accountId}
+                  />
+                  {!acc.autoReply && (
+                    <span className="text-xs text-red-600" title="リプライ自動返信がオフです">⚠️</span>
+                  )}
+                </div>
               </td>
               <td className="py-2 px-3">{acc.statusMessage || ""}</td>
               <td className="py-2 px-3 text-left">

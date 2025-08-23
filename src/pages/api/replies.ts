@@ -28,6 +28,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       Limit: 200,
     }));
 
+    // デバッグ情報を追加
+    const debugInfo = {
+      totalItemsInDB: Items?.length || 0,
+      sampleRawItem: Items?.[0] || null,
+      userId: userId,
+      tableName: TBL_REPLIES,
+    };
+
     return res.status(200).json({
       replies: (Items ?? []).map((i: any) => ({
         id: i.SK?.S || "",
@@ -42,6 +50,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         status: i.status?.S ?? "",
         createdAt: i.createdAt?.N ? Number(i.createdAt.N) : null,
       })),
+      debug: debugInfo, // デバッグ情報を含める
     });
   } catch (e: any) {
     // [MOD] 認証失敗/内部エラーを区別
