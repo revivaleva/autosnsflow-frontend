@@ -165,11 +165,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       totalFetched += result.fetched || 0;
     }
 
+    console.log(`[DEBUG] 全体結果: 総取得数=${totalFetched}件, アカウント数=${accounts.length}件`);
+    console.log(`[DEBUG] 詳細結果:`, results);
+
     return res.status(200).json({
       ok: true,
       totalFetched,
       results,
-      message: `${totalFetched}件のリプライを取得しました`
+      accounts: accounts.length,
+      message: `${totalFetched}件のリプライを取得しました（${accounts.length}アカウント中）`
     });
 
   } catch (error) {
