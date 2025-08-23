@@ -42,10 +42,30 @@ export default function SNSAccountsTable() {
   // （他はそのまま。トグルは前回の修正のままでOK）
   const loadAccounts = async () => {
     setLoading(true);
-    const res = await fetch(`/api/threads-accounts`, { credentials: "include" });
-    const data = await res.json();
-    setAccounts((data.items ?? data.accounts) ?? []); // [FIX]
-    setLoading(false);
+    try {
+      const res = await fetch(`/api/threads-accounts`, { credentials: "include" });
+      
+      if (!res.ok) {
+        throw new Error(`API Error: ${res.status} ${res.statusText}`);
+      }
+      
+      const data = await res.json();
+      console.log("API Response:", data); // [DEBUG]
+      
+      if (data.error) {
+        throw new Error(data.error);
+      }
+      
+      const accounts = (data.items ?? data.accounts) ?? [];
+      console.log("Parsed accounts:", accounts); // [DEBUG]
+      setAccounts(accounts);
+    } catch (error: any) {
+      console.error("アカウント読み込みエラー:", error);
+      alert(`アカウント読み込みに失敗しました: ${error.message}`);
+      setAccounts([]);
+    } finally {
+      setLoading(false);
+    }
   };
 
   // 初回マウント時のみAPI取得
