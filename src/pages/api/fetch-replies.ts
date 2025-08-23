@@ -140,10 +140,24 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
       continue;
     }
 
-    // Threads APIでリプライを取得
+    // Threads APIでリプライを取得 - 代替アプローチを試行
     try {
-      const url = `https://graph.threads.net/v1.0/${encodeURIComponent(post.postId)}/replies?fields=id,text&access_token=${encodeURIComponent(acct.accessToken)}`;
-      const r = await fetch(url);
+      // 方法1: 投稿の詳細情報を取得（replies情報が含まれる可能性）
+      let url = `https://graph.threads.net/v1.0/${encodeURIComponent(post.postId)}?fields=id,text,replies,children&access_token=${encodeURIComponent(acct.accessToken)}`;
+      
+      console.log(`[DEBUG] Threads API リクエスト開始 (投稿詳細):`);
+      console.log(`[DEBUG] - postId: ${post.postId}`);
+      console.log(`[DEBUG] - URL: ${url.replace(acct.accessToken, "***TOKEN***")}`);
+      console.log(`[DEBUG] - アクセストークン長: ${acct.accessToken?.length || 0}`);
+      
+      let r = await fetch(url);
+      
+      // 方法1が失敗した場合、方法2を試行: me/threadsから特定投稿を検索
+      if (!r.ok) {
+        console.log(`[DEBUG] 方法1失敗 (${r.status}), 方法2を試行: me/threads`);
+        url = `https://graph.threads.net/v1.0/me/threads?fields=id,text,replies,children&access_token=${encodeURIComponent(acct.accessToken)}`;
+        r = await fetch(url);
+      }
       
       const apiLogEntry: {
         postId: string;
@@ -162,33 +176,64 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
       
       if (!r.ok) { 
         const errorText = await r.text();
+        console.log(`[DEBUG] Threads API エラー詳細:`);
+        console.log(`[DEBUG] - ステータス: ${r.status} ${r.statusText}`);
+        console.log(`[DEBUG] - レスポンス: ${errorText}`);
+        console.log(`[DEBUG] - ヘッダー: ${JSON.stringify(Object.fromEntries(r.headers.entries()))}`);
+        
         apiLogEntry.error = `${r.status} - ${errorText.substring(0, 100)}`;
-        postInfo.apiLog = `ERROR: ${r.status} ${errorText.substring(0, 50)}`;
+        postInfo.apiLog = `ERROR: 全手法失敗 ${r.status} ${errorText.substring(0, 50)}`;
         apiLogs.push(apiLogEntry);
         postsInfo.push(postInfo);
         continue; 
       }
       
       const json = await r.json();
-      const repliesCount = json?.data?.length || 0;
+      console.log(`[DEBUG] Threads API 成功レスポンス:`, JSON.stringify(json).substring(0, 300));
+      
+      let repliesFound = [];
+      
+      // レスポンスからリプライ情報を抽出
+      if (url.includes('/me/threads')) {
+        // me/threadsの場合: 該当postIdを検索してからreplies情報を取得
+        const posts = json?.data || [];
+        const targetPost = posts.find((p: any) => p.id === post.postId);
+        if (targetPost) {
+          repliesFound = targetPost.replies?.data || targetPost.children?.data || [];
+          console.log(`[DEBUG] me/threadsから対象投稿発見: ${repliesFound.length}件のリプライ`);
+        } else {
+          console.log(`[DEBUG] me/threadsに対象投稿 ${post.postId} が見つからない`);
+        }
+      } else {
+        // 直接投稿詳細の場合
+        repliesFound = json?.replies?.data || json?.children?.data || json?.data || [];
+        console.log(`[DEBUG] 投稿詳細から ${repliesFound.length}件のリプライ取得`);
+      }
+      
+      const repliesCount = repliesFound.length;
       apiLogEntry.repliesFound = repliesCount;
       apiLogEntry.response = JSON.stringify(json).substring(0, 200);
       
       postInfo.apiLog = `OK: ${repliesCount}件のリプライ発見`;
       
-      for (const rep of (json?.data || [])) {
-        const externalReplyId = String(rep.id);
-        const text = rep.text || "";
+      for (const rep of repliesFound) {
+        const externalReplyId = String(rep.id || rep.reply_id || "");
+        const text = rep.text || rep.message || "";
         const createdAt = nowSec();
         
-        const ok = await upsertReplyItem(userId, acct, { 
-          externalReplyId, 
-          postId: post.postId, 
-          text, 
-          createdAt,
-          originalPost: post
-        });
-        if (ok) saved++;
+        if (externalReplyId && text) {
+          const ok = await upsertReplyItem(userId, acct, { 
+            externalReplyId, 
+            postId: post.postId, 
+            text, 
+            createdAt,
+            originalPost: post
+          });
+          if (ok) saved++;
+          console.log(`[DEBUG] リプライ保存: ${externalReplyId} - ${text.substring(0, 50)}`);
+        } else {
+          console.log(`[DEBUG] 不完全なリプライデータ: id=${externalReplyId}, text=${text.substring(0, 20)}`);
+        }
       }
       
       apiLogs.push(apiLogEntry);
