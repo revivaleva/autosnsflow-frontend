@@ -53,11 +53,15 @@ async function upsertReplyItem(userId: string, acct: any, { externalReplyId, pos
 
 // Lambda関数の fetchThreadsRepliesAndSave を移植
 async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 }: any) {
+  console.log(`[DEBUG] ${acct.accountId} のリプライ取得詳細開始`);
+  
   if (!acct?.accessToken) throw new Error("Threads のトークン不足");
   if (!acct?.providerUserId) throw new Error("Threads のユーザーID取得失敗");
   
   const since = nowSec() - lookbackSec;
   let saved = 0;
+  
+  console.log(`[DEBUG] 検索条件: ${lookbackSec}秒前以降の投稿 (${new Date(since * 1000).toISOString()})`);
 
   // 投稿済みの予約投稿を取得
   const q = await ddb.send(new QueryCommand({
@@ -116,15 +120,22 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
   return { saved };
 }
 
-// Lambda関数の fetchIncomingReplies を移植
+// Lambda関数の fetchIncomingReplies を移植（手動取得用に条件緩和）
 async function fetchIncomingReplies(userId: string, acct: any) {
-  if (!acct.autoReply) return { fetched: 0, skipped: "autoReply_disabled" };
+  console.log(`[DEBUG] アカウント ${acct.accountId} のリプライ取得開始`);
+  console.log(`[DEBUG] autoReply: ${acct.autoReply}, accessToken: ${!!acct.accessToken}, providerUserId: ${!!acct.providerUserId}`);
+  
+  // 手動取得の場合はautoReplyの条件を緩和（警告のみ）
+  if (!acct.autoReply) {
+    console.log(`[WARNING] アカウント ${acct.accountId} はautoReplyがOFFですが手動取得を実行します`);
+  }
   
   try {
     const r = await fetchThreadsRepliesAndSave({ acct, userId });
+    console.log(`[DEBUG] アカウント ${acct.accountId} の取得結果: ${r.saved}件`);
     return { fetched: r.saved || 0 };
   } catch (e) {
-    console.error("返信取得失敗:", e);
+    console.error(`[ERROR] アカウント ${acct.accountId} の返信取得失敗:`, e);
     return { fetched: 0, error: String(e) };
   }
 }
