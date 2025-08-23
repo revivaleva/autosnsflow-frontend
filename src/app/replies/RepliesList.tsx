@@ -161,8 +161,17 @@ export default function RepliesList() {
             if (r.postsFound !== undefined) parts.push(`投稿${r.postsFound}件発見`);
             if (r.postsWithPostId !== undefined) parts.push(`postId有り${r.postsWithPostId}件`);
             if (r.error) parts.push(`エラー: ${r.error}`);
+            
+            // 投稿内容を追加
+            if (r.postsInfo && r.postsInfo.length > 0) {
+              const postsDetail = r.postsInfo.map((p: any, i: number) => 
+                `[${i+1}] ${p.hasPostId ? 'ID:' + p.postId.substring(0, 8) + '...' : 'ID無し'} "${p.content}"`
+              ).join('\n  ');
+              parts.push(`\n  対象投稿:\n  ${postsDetail}`);
+            }
+            
             return parts.join(' / ');
-          }).join('\n') : 
+          }).join('\n\n') : 
           '処理対象アカウントなし';
 
         const summary = data.debug ? 

@@ -126,23 +126,32 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
       continue;
     }
     
-    console.log(`[DEBUG] 投稿 ${post.postId} のリプライ取得を開始...`);
+    console.log(`[DEBUG] 投稿 ${post.postId} のリプライ取得を開始... 本文: "${post.content.substring(0, 50)}"`);
 
     // Threads APIでリプライを取得
     try {
       const url = `https://graph.threads.net/v1.0/${encodeURIComponent(post.postId)}/replies?fields=id,text&access_token=${encodeURIComponent(acct.accessToken)}`;
+      console.log(`[DEBUG] Threads API URL: ${url.replace(acct.accessToken, "***TOKEN***")}`);
+      
       const r = await fetch(url);
+      console.log(`[DEBUG] Threads API レスポンス: ${r.status} ${r.statusText}`);
       
       if (!r.ok) { 
-        console.error(`Threads replies error: ${r.status}`);
+        const errorText = await r.text();
+        console.error(`[ERROR] Threads replies API失敗: ${r.status} - ${errorText}`);
         continue; 
       }
       
       const json = await r.json();
+      console.log(`[DEBUG] Threads API レスポンス内容:`, json);
+      console.log(`[DEBUG] リプライ数: ${json?.data?.length || 0}件`);
+      
       for (const rep of (json?.data || [])) {
         const externalReplyId = String(rep.id);
         const text = rep.text || "";
         const createdAt = nowSec();
+        console.log(`[DEBUG] リプライ保存: ${externalReplyId} - "${text.substring(0, 30)}"`);
+        
         const ok = await upsertReplyItem(userId, acct, { 
           externalReplyId, 
           postId: post.postId, 
@@ -150,18 +159,31 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
           createdAt,
           originalPost: post
         });
-        if (ok) saved++;
+        if (ok) {
+          saved++;
+          console.log(`[DEBUG] リプライ保存成功: ${externalReplyId}`);
+        } else {
+          console.log(`[DEBUG] リプライ保存失敗: ${externalReplyId}`);
+        }
       }
     } catch (e) {
-      console.error(`リプライ取得エラー (postId: ${post.postId}):`, e);
+      console.error(`[ERROR] リプライ取得エラー (postId: ${post.postId}):`, e);
     }
   }
   
+  const postsInfo = (q.Items || []).map(item => ({
+    postId: item.postId?.S || "空",
+    content: (item.content?.S || "").substring(0, 100),
+    postedAt: item.postedAt?.N || "空",
+    hasPostId: !!(item.postId?.S)
+  }));
+
   return { 
     saved,
     postsFound: q.Items?.length || 0,
     postsWithPostId: (q.Items || []).filter(item => item.postId?.S).length,
-    postsProcessed: (q.Items || []).length
+    postsProcessed: (q.Items || []).length,
+    postsInfo: postsInfo
   };
 }
 
@@ -188,7 +210,8 @@ async function fetchIncomingReplies(userId: string, acct: any) {
       fetched: r.saved || 0,
       postsFound: r.postsFound || 0,
       postsWithPostId: r.postsWithPostId || 0,
-      postsProcessed: r.postsProcessed || 0
+      postsProcessed: r.postsProcessed || 0,
+      postsInfo: r.postsInfo || []
     };
   } catch (e) {
     console.error(`[ERROR] アカウント ${acct.accountId} の返信取得失敗:`, e);
@@ -231,6 +254,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         fetched: r.fetched,
         postsFound: r.postsFound || 0,
         postsWithPostId: r.postsWithPostId || 0,
+        postsInfo: r.postsInfo || [],
         error: r.error || null
       }))
     };
