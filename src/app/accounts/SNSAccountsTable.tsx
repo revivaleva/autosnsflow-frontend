@@ -43,10 +43,15 @@ export default function SNSAccountsTable() {
   const loadAccounts = async () => {
     setLoading(true);
     try {
+      // [DEBUG] Cookie確認
+      console.log("[DEBUG] Document cookies:", document.cookie);
+      
       const res = await fetch(`/api/threads-accounts`, { credentials: "include" });
       
       if (!res.ok) {
-        throw new Error(`API Error: ${res.status} ${res.statusText}`);
+        const errorData = await res.json().catch(() => ({}));
+        console.error("[DEBUG] API Error Response:", errorData);
+        throw new Error(`API Error: ${res.status} ${res.statusText} - ${errorData.message || errorData.error || ''}`);
       }
       
       const data = await res.json();

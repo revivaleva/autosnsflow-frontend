@@ -36,8 +36,15 @@ const UPDATABLE_FIELDS = new Set([
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
+    // [DEBUG] 認証デバッグ情報
+    const cookies = req.headers.cookie || "Cookie無し";
+    const auth = req.headers.authorization || "Authorization無し";
+    console.log("[DEBUG] Cookie:", cookies.substring(0, 100), "...");
+    console.log("[DEBUG] Authorization:", auth);
+    
     const user = await verifyUserFromRequest(req);
     const userId = user.sub;
+    console.log("[DEBUG] 認証成功, userId:", userId);
 
     // ====================
     // [MOD] GET: 共通化
