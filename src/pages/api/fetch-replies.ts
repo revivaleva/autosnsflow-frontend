@@ -54,6 +54,13 @@ async function upsertReplyItem(userId: string, acct: any, { externalReplyId, pos
 // Lambda関数の fetchThreadsRepliesAndSave を移植
 async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 }: any) {
   console.log(`[DEBUG] ${acct.accountId} のリプライ取得詳細開始`);
+  console.log(`[DEBUG] アカウント詳細:`, {
+    accountId: acct.accountId,
+    hasAccessToken: !!acct.accessToken,
+    hasProviderUserId: !!acct.providerUserId,
+    accessTokenLength: acct.accessToken?.length || 0,
+    providerUserId: acct.providerUserId || "空"
+  });
   
   if (!acct?.accessToken) throw new Error("Threads のトークン不足");
   if (!acct?.providerUserId) throw new Error("Threads のユーザーID取得失敗");
@@ -85,8 +92,25 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
       postId: q.Items[0].postId?.S || "空",
       numericPostId: q.Items[0].numericPostId?.S || "空", 
       postedAt: q.Items[0].postedAt?.N || "空",
-      content: (q.Items[0].content?.S || "").substring(0, 50)
+      content: (q.Items[0].content?.S || "").substring(0, 50),
+      SK: q.Items[0].SK?.S || "空"
     });
+    
+    // 全投稿のpostId状況を確認
+    const postIdStatus = q.Items.map(item => ({
+      SK: (item.SK?.S || "").substring(0, 20) + "...",
+      postId: item.postId?.S || "空",
+      numericPostId: item.numericPostId?.S || "空",
+      postedAt: item.postedAt?.N || "空"
+    }));
+    console.log(`[DEBUG] 全投稿のpostID状況:`, postIdStatus);
+  } else {
+    // 投稿が見つからない場合の調査
+    console.log(`[DEBUG] 投稿が見つからない原因調査:`);
+    console.log(`[DEBUG] - ユーザー: ${userId}`);
+    console.log(`[DEBUG] - アカウント: ${acct.accountId}`);
+    console.log(`[DEBUG] - 検索開始時刻: ${since} (${new Date(since * 1000).toISOString()})`);
+    console.log(`[DEBUG] - 現在時刻: ${nowSec()} (${new Date(nowSec() * 1000).toISOString()})`);
   }
 
   for (const item of (q.Items || [])) {
