@@ -138,8 +138,14 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
 
 // Lambda関数の fetchIncomingReplies を移植（手動取得用に条件緩和）
 async function fetchIncomingReplies(userId: string, acct: any) {
-  console.log(`[DEBUG] アカウント ${acct.accountId} のリプライ取得開始`);
-  console.log(`[DEBUG] autoReply: ${acct.autoReply}, accessToken: ${!!acct.accessToken}, providerUserId: ${!!acct.providerUserId}`);
+  const debugInfo = {
+    accountId: acct.accountId,
+    autoReply: acct.autoReply,
+    hasAccessToken: !!acct.accessToken,
+    hasProviderUserId: !!acct.providerUserId
+  };
+  
+  console.log(`[DEBUG] アカウント ${acct.accountId} のリプライ取得開始`, debugInfo);
   
   // 手動取得の場合はautoReplyの条件を緩和（警告のみ）
   if (!acct.autoReply) {
@@ -181,14 +187,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       totalFetched += result.fetched || 0;
     }
 
-    console.log(`[DEBUG] 全体結果: 総取得数=${totalFetched}件, アカウント数=${accounts.length}件`);
-    console.log(`[DEBUG] 詳細結果:`, results);
+    const debugSummary = {
+      totalFetched,
+      accountsProcessed: accounts.length,
+      results: results.map(r => ({
+        accountId: r.accountId,
+        fetched: r.fetched,
+        error: r.error || null
+      }))
+    };
+
+    console.log(`[DEBUG] 処理完了:`, debugSummary);
 
     return res.status(200).json({
       ok: true,
       totalFetched,
       results,
       accounts: accounts.length,
+      debug: debugSummary,
       message: `${totalFetched}件のリプライを取得しました（${accounts.length}アカウント中）`
     });
 
