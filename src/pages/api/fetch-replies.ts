@@ -64,6 +64,7 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
   console.log(`[DEBUG] 検索条件: ${lookbackSec}秒前以降の投稿 (${new Date(since * 1000).toISOString()})`);
 
   // 投稿済みの予約投稿を取得
+  console.log(`[DEBUG] DynamoDB検索条件: PK=USER#${userId}, status=posted, postedAt>=${since}, accountId=${acct.accountId}`);
   const q = await ddb.send(new QueryCommand({
     TableName: TBL_SCHEDULED,
     KeyConditionExpression: "PK = :pk",
@@ -77,6 +78,16 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
     },
     ProjectionExpression: "postId, content, postedAt, scheduledPostId",
   }));
+  
+  console.log(`[DEBUG] DynamoDB検索結果: ${q.Items?.length || 0}件の投稿済み記事を発見`);
+  if (q.Items && q.Items.length > 0) {
+    console.log(`[DEBUG] 最初の投稿済み記事:`, {
+      postId: q.Items[0].postId?.S || "空",
+      numericPostId: q.Items[0].numericPostId?.S || "空", 
+      postedAt: q.Items[0].postedAt?.N || "空",
+      content: (q.Items[0].content?.S || "").substring(0, 50)
+    });
+  }
 
   for (const item of (q.Items || [])) {
     const post = {
