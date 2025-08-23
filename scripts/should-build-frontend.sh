@@ -27,7 +27,7 @@ echo "$CHANGED"
 
 # フロントビルドに影響するパスの正規表現
 # app/pages/components/lib/public/Next設定/依存関係など
-PATTERN='^(src/|app/|pages/|components/|lib/|public/|next\.config\.(js|ts)|package\.json|package-lock\.json|postcss\.config\.(js|mjs)|tailwind\.config\.(js|ts)|tsconfig\.json|middleware\.ts)'
+PATTERN='^(src/|app/|pages/|components/|lib/|public/|next\.config\.(js|ts|mjs)|package\.json|package-lock\.json|postcss\.config\.(js|mjs)|tailwind\.config\.(js|ts)|tsconfig\.json|middleware\.ts)'
 
 if echo "$CHANGED" | grep -Eq "$PATTERN"; then
   echo "[guard] frontend change detected -> build continues"
