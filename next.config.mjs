@@ -1,9 +1,12 @@
-// /next.config.ts
-import type { NextConfig } from "next";
+// next.config.mjs
+// [IMPORTANT] AWS Amplifyでは next.config.ts はサポートされていません
+// このファイルは next.config.mjs または next.config.js として保存する必要があります
+// 参考: https://docs.aws.amazon.com/amplify/latest/userguide/troubleshooting-ssr-deployment.html
 
-const nextConfig: NextConfig = {
-    // packages/shared や backend-core をフロントで使う場合のため
-    transpilePackages: ["@autosnsflow/shared", "@autosnsflow/backend-core"],
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  // packages/shared や backend-core をフロントで使う場合のため
+  transpilePackages: ["@autosnsflow/shared", "@autosnsflow/backend-core"],
 
   // 本番ビルド時にESLintエラーを無視する
   eslint: {
