@@ -143,20 +143,28 @@ export default function RepliesList() {
     
     setFetchingReplies(true);
     try {
+      console.log("[CLIENT] リプライ取得開始...");
       const response = await fetch("/api/fetch-replies", { 
         method: "POST",
         credentials: "include" 
       });
+      console.log("[CLIENT] API応答:", response.status, response.statusText);
+      
       const data = await response.json();
+      console.log("[CLIENT] レスポンスデータ:", data);
       
       if (data.ok) {
-        alert(`✅ ${data.message}\n詳細: ${data.results.map((r: any) => `${r.displayName}: ${r.fetched}件`).join(', ')}`);
+        const detailMsg = data.debug ? 
+          `デバッグ情報:\n${JSON.stringify(data.debug, null, 2)}` : 
+          `詳細: ${data.results.map((r: any) => `${r.displayName}: ${r.fetched}件`).join(', ')}`;
+        alert(`✅ ${data.message}\n\n${detailMsg}`);
         // 取得後に一覧を再読み込み
         await loadReplies();
       } else {
         alert(`❌ リプライ取得に失敗しました: ${data.message || data.error}`);
       }
     } catch (error: any) {
+      console.error("[CLIENT] リプライ取得エラー:", error);
       alert(`❌ リプライ取得エラー: ${error.message}`);
     } finally {
       setFetchingReplies(false);
