@@ -44,7 +44,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // ====================
     if (req.method === "GET") {
       // [MOD] ここだけ backend-core を呼ぶ
+      console.log("[DEBUG] fetchThreadsAccountsFull を呼び出し中, userId:", userId);
       const list = await fetchThreadsAccountsFull(userId);
+      console.log("[DEBUG] fetchThreadsAccountsFull 結果:", list.length, "件", list);
 
       // 既存APIの応答形式（items配列）に揃える
       // 参考：現行は username / accessToken / auto* / persona* など多数を返却中
@@ -72,6 +74,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         secondStageContent: it.secondStageContent,
       }));
 
+      console.log("[DEBUG] API 最終レスポンス:", items.length, "件", items);
       return res.status(200).json({ items });
     }
 
