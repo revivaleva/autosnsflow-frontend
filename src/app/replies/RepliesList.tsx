@@ -131,6 +131,7 @@ export default function RepliesList() {
   
   // [ADD] リプライ取得の状態管理
   const [fetchingReplies, setFetchingReplies] = useState<boolean>(false);
+  const [debugJson, setDebugJson] = useState<string>("");
 
   // 返信一覧を読み込む関数
   const loadReplies = async () => {
@@ -180,19 +181,13 @@ export default function RepliesList() {
       console.log("[CLIENT] レスポンスデータ:", data);
       // デバッグ: リプライがある箇所のみ抽出してアラート表示
       try {
+        // デバッグ出力は一覧画面下部のテキストエリアに表示する
         const results = data.results || [];
-        const hasReplies = (r: any) => {
-          if (r.fetched && r.fetched > 0) return true;
-          if (Array.isArray(r.postsInfo) && r.postsInfo.some((p: any) => (p.repliesFound || 0) > 0 || p.hasReplyApiId)) return true;
-          if (Array.isArray(r.apiLogs) && r.apiLogs.some((l: any) => (l.repliesFound || 0) > 0)) return true;
-          return false;
-        };
-        const filtered = results.filter(hasReplies);
-        const out = filtered.length > 0 ? { ok: true, results: filtered } : { ok: false, message: 'no replies found' };
-        const jsonStr = JSON.stringify(out, null, 2);
-        alert(jsonStr.length > 10000 ? jsonStr.slice(0, 10000) + "\n...truncated" : jsonStr);
+        const jsonStr = JSON.stringify({ ok: data.ok, results }, null, 2);
+        setDebugJson(jsonStr);
       } catch (e) {
         console.log('[DEBUG] JSON processing failed:', e);
+        setDebugJson(String(e));
       }
       
       if (data.ok) {
@@ -599,6 +594,11 @@ export default function RepliesList() {
             )}
           </tbody>
         </table>
+      </div>
+      {/* デバッグ出力 */}
+      <div className="mt-4">
+        <label className="font-semibold">デバッグ（fetch-replies JSON）</label>
+        <textarea className="w-full h-48 mt-2 p-2 border" readOnly value={debugJson} />
       </div>
     </div>
   );
