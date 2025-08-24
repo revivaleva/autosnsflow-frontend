@@ -1223,7 +1223,8 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
 
     // 手動実行と同じ複数エンドポイント試行
     let url = new URL(`https://graph.threads.net/v1.0/${encodeURIComponent(replyApiId)}/replies`);
-    url.searchParams.set("fields", "id,text,username,permalink");
+    // is_reply_owned_by_me を要求すると "自分の返信か" を正確に判断できる
+    url.searchParams.set("fields", "id,text,username,permalink,is_reply_owned_by_me,replied_to,root_post");
     url.searchParams.set("access_token", acct.accessToken);
     let r = await fetch(url.toString());
     
