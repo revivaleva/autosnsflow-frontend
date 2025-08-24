@@ -59,11 +59,11 @@ async function getReplyStatusForPost(userId: string, postId: string | undefined,
     }, [] as any[]);
     
     const total = uniqueItems.length;
-    const replied = uniqueItems.filter(item => item.status?.S === "replied").length;
+    const replied = uniqueItems.filter((item: any) => item.status?.S === "replied").length;
     
     console.log(`[DEBUG] 最終リプライ状況: ${replied}/${total} (重複除去後)`);
     if (total > 0) {
-      console.log(`[DEBUG] 見つかったリプライのpostId例:`, uniqueItems.slice(0, 3).map(i => i.postId?.S));
+      console.log(`[DEBUG] 見つかったリプライのpostId例:`, uniqueItems.slice(0, 3).map((i: any) => i.postId?.S));
     }
     
     return { replied, total };
