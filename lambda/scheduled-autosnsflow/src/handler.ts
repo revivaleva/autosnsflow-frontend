@@ -1236,6 +1236,13 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
     }
     const json = await r.json();
     for (const rep of (json?.data || [])) {
+      // 投稿者がアカウント自身（providerUserId）なら除外
+      const authorId = rep.from?.id ?? rep.from?.username ?? rep.username ?? "";
+      if (authorId && acct.providerUserId && authorId === acct.providerUserId) {
+        console.log(`[DEBUG] lambda: 自分のリプライを除外: ${String(rep.id || "")}`);
+        continue;
+      }
+
       const externalReplyId = String(rep.id);
       const text = rep.text || "";
       const createdAt = nowSec();
