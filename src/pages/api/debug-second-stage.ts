@@ -42,6 +42,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         displayName: item.displayName?.S || "",
         hasSecondStageContent: !!(item.secondStageContent?.S?.trim()),
         secondStageContentLength: (item.secondStageContent?.S || "").length,
+        secondStageContentRaw: item.secondStageContent?.S || null, // 実際の値を確認
+        fullItemDebug: {
+          SK: item.SK?.S,
+          displayName: item.displayName?.S,
+          secondStageContent: item.secondStageContent,
+        }
       }));
 
       // 3. 最近の投稿のdoublePostStatus状況を確認
@@ -108,6 +114,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         ok: true,
         userId,
         debugInfo,
+        rawQueryResult: {
+          accountsQueryItemCount: accountsQuery.Items?.length || 0,
+          accountsQueryItems: accountsQuery.Items,
+        }
       });
     }
 
