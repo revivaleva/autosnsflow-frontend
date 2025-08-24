@@ -259,12 +259,36 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
           const externalReplyId = String(rep.id || "");
           const text = rep.text || "";
           const username = rep.username || "";
-          // 自分の二段階投稿を除外するフィルタ
-          const authorId = rep.from?.id ?? rep.from?.username ?? "";
-          if (authorId && acct.providerUserId && authorId === acct.providerUserId) {
-            console.log(`[DEBUG] 自分のリプライを除外: ${externalReplyId}`);
+
+          // 優先: APIが返すis_reply_owned_by_meを使って除外
+          if (rep.is_reply_owned_by_me === true) {
+            console.log(`[DEBUG] 自分のリプライを除外 (is_reply_owned_by_me): ${externalReplyId}`);
             continue;
           }
+
+          // フォールバック: 投稿者フィールドで除外
+          const authorId = rep.from?.id ?? rep.from?.username ?? rep.user?.id ?? rep.user?.username ?? rep.author?.id ?? rep.author?.username ?? "";
+          if (authorId && acct.providerUserId && authorId === acct.providerUserId) {
+            console.log(`[DEBUG] 自分のリプライを除外 (author match): ${externalReplyId}`);
+            continue;
+          }
+
+          // フォールバック2: 二段階投稿の本文と一致する場合は除外
+          try {
+            const s2 = (acct.secondStageContent || "").trim();
+            const rt = (rep.text || "").trim();
+            if (s2 && rt) {
+              const s2n = s2.replace(/\s+/g, ' ').toLowerCase();
+              const rtn = rt.replace(/\s+/g, ' ').toLowerCase();
+              if (s2n === rtn || s2n.includes(rtn) || rtn.includes(s2n)) {
+                console.log(`[DEBUG] 二段階投稿の本文と一致するため除外: reply=${externalReplyId}`);
+                continue;
+              }
+            }
+          } catch (e) {
+            console.log("[warn] secondStage exclusion check failed:", e);
+          }
+
           const createdAt = nowSec();
           
           if (externalReplyId && text) {
@@ -417,3 +441,4 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     });
   }
 }
+
