@@ -127,8 +127,29 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
       scheduledPostId: item.scheduledPostId?.S || "",
     };
 
-    // リプライ取得用のIDを決定（numericPostId優先、なければpostId）
-    const replyApiId = post.numericPostId || post.postId;
+    // リプライ取得用のIDを決定（数字ID優先）
+    const isNumericPostId = post.numericPostId && /^\d+$/.test(post.numericPostId);
+    const isNumericMainPostId = post.postId && /^\d+$/.test(post.postId);
+    
+    let replyApiId: string;
+    if (isNumericPostId) {
+      replyApiId = post.numericPostId;
+      console.log(`[DEBUG] numericPostIdを使用: ${replyApiId}`);
+    } else if (isNumericMainPostId) {
+      replyApiId = post.postId;
+      console.log(`[DEBUG] 数字のpostIdを使用: ${replyApiId}`);
+    } else {
+      replyApiId = post.numericPostId || post.postId;
+      console.log(`[DEBUG] フォールバック使用: ${replyApiId}`);
+    }
+
+    // 詳細なID分析
+    console.log(`[DEBUG] ID分析 - SK: ${item.SK?.S}`);
+    console.log(`[DEBUG] - postId: "${post.postId}" (長さ: ${post.postId?.length || 0})`);
+    console.log(`[DEBUG] - numericPostId: "${post.numericPostId}" (長さ: ${post.numericPostId?.length || 0})`);
+    console.log(`[DEBUG] - replyApiId選択: "${replyApiId}" (numericPostId優先: ${!!post.numericPostId})`);
+    console.log(`[DEBUG] - postId数字判定: ${post.postId ? /^\d+$/.test(post.postId) : false}`);
+    console.log(`[DEBUG] - numericPostId数字判定: ${post.numericPostId ? /^\d+$/.test(post.numericPostId) : false}`);
 
     const postInfo: any = {
       postId: post.postId || "空",
@@ -156,6 +177,9 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
         let url = `https://graph.threads.net/v1.0/${encodeURIComponent(replyApiId)}/replies?fields=id,text,username,permalink&access_token=${encodeURIComponent(acct.accessToken)}`;
         
         console.log(`[INFO] リプライ取得開始: ${replyApiId} (試行${attempt + 1}/${maxRetries})`);
+        console.log(`[DEBUG] 完全なURL: ${url.replace(acct.accessToken, "***TOKEN***")}`);
+        console.log(`[DEBUG] エンコード前ID: "${replyApiId}"`);
+        console.log(`[DEBUG] エンコード後ID: "${encodeURIComponent(replyApiId)}"`);
         
         let r = await fetch(url);
         
@@ -164,6 +188,14 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
           console.log(`[INFO] repliesエンドポイント失敗 (${r.status}), conversationで再試行`);
           url = `https://graph.threads.net/v1.0/${encodeURIComponent(replyApiId)}/conversation?fields=id,text,username,permalink&access_token=${encodeURIComponent(acct.accessToken)}`;
           r = await fetch(url);
+          
+          // conversationも失敗し、異なるIDがある場合は、そちらも試行
+          if (!r.ok && post.numericPostId && post.postId && post.numericPostId !== post.postId) {
+            const alternativeId = post.numericPostId === replyApiId ? post.postId : post.numericPostId;
+            console.log(`[INFO] conversation失敗 (${r.status}), 代替ID "${alternativeId}" でreplies再試行`);
+            url = `https://graph.threads.net/v1.0/${encodeURIComponent(alternativeId)}/replies?fields=id,text,username,permalink&access_token=${encodeURIComponent(acct.accessToken)}`;
+            r = await fetch(url);
+          }
         }
       
         const apiLogEntry: {
