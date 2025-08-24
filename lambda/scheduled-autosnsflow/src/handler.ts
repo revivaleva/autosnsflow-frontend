@@ -1250,6 +1250,19 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
       const isSelf = authorCandidates.some(a => a && acct.providerUserId && a === acct.providerUserId);
       if (isSelf) {
         console.log(`[DEBUG] lambda: 自分のリプライを除外: ${String(rep.id || "")}, candidates=${authorCandidates.join(',')}`);
+        // ExecutionLogs に除外の比較結果を出力
+        try {
+          await putLog({
+            userId,
+            type: "reply-fetch-exclude",
+            accountId: acct.accountId,
+            status: "info",
+            message: "自分のリプライを除外しました",
+            detail: { replyId: rep.id, authorCandidates, providerUserId: acct.providerUserId }
+          });
+        } catch (e) {
+          console.log("[warn] putLog failed for exclude log:", e);
+        }
         continue;
       }
 

@@ -316,15 +316,22 @@ export default function RepliesList() {
   };
 
   const handleDelete = (id: string) => {
-    if (window.confirm("この返信内容を削除しますか？")) {
-      setReplies(replies =>
-        replies.map(r =>
-          r.id === id
-            ? { ...r, responseContent: "", responseAt: dayjs().format("YYYY/MM/DD HH:mm"), status: "replied" }
-            : r
-        )
-      );
-    }
+    if (!window.confirm("この返信内容を削除しますか？")) return;
+    (async () => {
+      try {
+        const response = await fetch("/api/replies/delete", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ replyId: id }),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        // 成功したらローカル state を更新（論理削除フラグに合わせて除外またはステータス更新）
+        setReplies(prev => prev.map(r => r.id === id ? { ...r, status: 'deleted' as any } : r));
+      } catch (e: any) {
+        alert(`削除に失敗しました: ${e.message || String(e)}`);
+      }
+    })();
   };
 
   const handleEdit = (reply: ReplyType) => {
