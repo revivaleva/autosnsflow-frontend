@@ -4,15 +4,30 @@ frontend:
   phases:
     preBuild:
       commands:
-        # [ADD] 早期終了ガード（差分検出だけを先に実行）
+        # [ADD] 早期終了ガード: フロントに関係ない差分なら /tmp/AMPLIFY_SKIP_BUILD を作る
         - nvm install 20 && nvm use 20
         - chmod +x scripts/should-build-frontend.sh || true
         - bash scripts/should-build-frontend.sh
         - node -v
         - npm -v
-        - npm ci                              # [KEEP]
-        - npm config set fund false           # [ADD] 寄付問い合わせを抑止
-        - npm config set audit false          # [ADD] 監査を抑止してインストール短縮
+        - npm config set registry https://registry.npmjs.org
+        # npm ci のリトライを追加（ネットワーク不安定時の耐性向上）
+        - |
+          retry_npm_ci() {
+            local attempt=0
+            while true; do
+              if npm ci --prefer-offline --no-audit --no-progress; then
+                return 0
+              fi
+              attempt=$((attempt+1))
+              if [ $attempt -ge 3 ]; then
+                echo "npm ci failed after 3 attempts"; return 1
+              fi
+              echo "npm ci failed, retrying... ($attempt/3)"
+              sleep 2
+            done
+          }
+          retry_npm_ci
         - npm --prefix packages/shared run build || true
         - npm --prefix packages/backend-core run build || true
         # 環境変数を明示的に .env.production に書き出す（必要なものだけ）[KEEP]
