@@ -179,10 +179,9 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
       continue;
     }
 
-    // Threads APIでリプライを取得 - GAS成功パターンを採用
+    // リプライの取得を試行（自動リプライの除外は後で追加）
     let attempt = 0;
     const maxRetries = 3;
-    
     while (attempt < maxRetries) {
       try {
         // 方法1: GAS同様の直接リプライ取得（replyApiId使用）
@@ -200,8 +199,7 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
           console.log(`[INFO] repliesエンドポイント失敗 (${r.status}), conversationで再試行`);
           url = `https://graph.threads.net/v1.0/${encodeURIComponent(replyApiId)}/conversation?fields=id,text,username,permalink&access_token=${encodeURIComponent(acct.accessToken)}`;
           r = await fetch(url);
-          
-          // conversationも失敗し、異なるIDがある場合は、そちらも試行
+          // 代替IDがある場合は再試行
           if (!r.ok && post.numericPostId && post.postId && post.numericPostId !== post.postId) {
             const alternativeId = post.numericPostId === replyApiId ? post.postId : post.numericPostId;
             console.log(`[INFO] conversation失敗 (${r.status}), 代替ID "${alternativeId}" でreplies再試行`);
@@ -232,8 +230,6 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
         if (!r.ok) { 
           const errorText = await r.text();
           console.log(`[ERROR] API失敗 (試行${attempt + 1}): ${r.status} ${r.statusText} - ${errorText.substring(0, 100)}`);
-          
-          // Address unavailable エラーまたは一時的エラーの場合はリトライ
           if (errorText.includes("Address unavailable") || r.status >= 500) {
             attempt++;
             if (attempt < maxRetries) {
@@ -242,7 +238,6 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
               continue; // while ループを続行
             }
           }
-          
           apiLogEntry.error = `${r.status} - ${errorText.substring(0, 100)}`;
           postInfo.apiLog = `ERROR: 全手法失敗 ${r.status} ${errorText.substring(0, 50)}`;
           apiLogs.push(apiLogEntry);
@@ -252,21 +247,22 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
       
         // 成功時の処理 - GASと同じシンプルなアプローチ
         const json = await r.json();
-        
-        // GAS同様にdata配列から直接リプライを取得
         const repliesFound = json?.data || [];
         console.log(`[INFO] ${replyApiId}: ${repliesFound.length}件のリプライ取得成功`);
-        
         const repliesCount = repliesFound.length;
         apiLogEntry.repliesFound = repliesCount;
         apiLogEntry.response = JSON.stringify(json).substring(0, 200);
-        
         postInfo.apiLog = `OK: ${repliesCount}件のリプライ発見`;
-        
         for (const rep of repliesFound) {
           const externalReplyId = String(rep.id || "");
           const text = rep.text || "";
           const username = rep.username || "";
+          // 自分の二段階投稿を除外するフィルタ
+          const authorId = rep.from?.id ?? rep.from?.username ?? "";
+          if (authorId && acct.providerUserId && authorId === acct.providerUserId) {
+            console.log(`[DEBUG] 自分のリプライを除外: ${externalReplyId}`);
+            continue;
+          }
           const createdAt = nowSec();
           
           if (externalReplyId && text) {
