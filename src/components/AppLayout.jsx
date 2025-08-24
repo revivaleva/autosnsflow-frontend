@@ -92,8 +92,8 @@ export default function AppLayout({ children }) {
   }
 
   return (
-    <div className="flex min-h-screen">
-      <nav className="w-56 bg-gray-900 text-white flex flex-col py-6 px-4">
+    <div className="min-h-screen">
+      <nav className="fixed top-0 left-0 w-56 h-screen bg-gray-900 text-white flex flex-col py-6 px-4 overflow-y-auto z-40">
         <div className="mb-6 text-2xl font-bold">T-Booster</div>
         <ul className="space-y-2">
           {menu.map((item) => (
@@ -133,7 +133,7 @@ export default function AppLayout({ children }) {
         </div>
       </nav>
 
-      <main className="flex-1 bg-gray-100 min-h-screen p-8">{children}</main>
+      <main className="ml-56 bg-gray-100 min-h-screen p-8">{children}</main>
 
       {/* デバッグDLG（任意） */}
       {authDebugOpen && (

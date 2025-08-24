@@ -148,23 +148,25 @@ export default function SNSAccountsTable() {
 
   return (
     <div className="max-w-5xl mx-auto mt-10">
-      <h1 className="text-2xl font-bold mb-6 text-center">
-        アカウント一覧
-      </h1>
-      <div className="mb-3 flex justify-between items-center">
-        <button
-          className="bg-blue-500 text-white rounded px-4 py-2 hover:bg-blue-600"
-          onClick={loadAccounts}
-          disabled={loading}
-        >
-          {loading ? "読み込み中..." : "再読み込み"}
-        </button>
-        <button
-          className="bg-green-500 text-white rounded px-4 py-2 hover:bg-green-600"
-          onClick={handleAddClick}
-        >
-          ＋新規追加
-        </button>
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-2xl font-bold">
+          アカウント一覧
+        </h1>
+        <div className="flex gap-2">
+          <button
+            className="bg-blue-500 text-white rounded px-4 py-2 hover:bg-blue-600"
+            onClick={loadAccounts}
+            disabled={loading}
+          >
+            {loading ? "読み込み中..." : "再読み込み"}
+          </button>
+          <button
+            className="bg-green-500 text-white rounded px-4 py-2 hover:bg-green-600"
+            onClick={handleAddClick}
+          >
+            ＋新規追加
+          </button>
+        </div>
       </div>
       <table className="w-full border shadow bg-white rounded overflow-hidden">
         <thead className="bg-gray-100">

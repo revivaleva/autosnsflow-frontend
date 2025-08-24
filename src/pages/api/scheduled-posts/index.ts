@@ -16,31 +16,59 @@ const ddb = createDynamoClient();
 const TBL_SCHEDULED = "ScheduledPosts";
 const TBL_REPLIES = "Replies";
 
-// リプライ状況を取得する関数
-async function getReplyStatusForPost(userId: string, postId: string | undefined): Promise<{ replied: number; total: number }> {
-  if (!postId) return { replied: 0, total: 0 };
+// リプライ状況を取得する関数（postIdとnumericPostIdの両方で検索）
+async function getReplyStatusForPost(userId: string, postId: string | undefined, numericPostId?: string | undefined): Promise<{ replied: number; total: number }> {
+  if (!postId && !numericPostId) return { replied: 0, total: 0 };
   
   try {
-    const result = await ddb.send(new QueryCommand({
-      TableName: TBL_REPLIES,
-      KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
-      FilterExpression: "postId = :postId",
-      ExpressionAttributeValues: {
-        ":pk": { S: `USER#${userId}` },
-        ":pfx": { S: "REPLY#" },
-        ":postId": { S: postId },
-      },
-      ProjectionExpression: "#st",
-      ExpressionAttributeNames: { "#st": "status" },
-    }));
+    const searchIds = [postId, numericPostId].filter(Boolean);
+    console.log(`[DEBUG] リプライ状況検索開始 - 検索ID: [${searchIds.join(', ')}]`);
     
-    const items = result.Items || [];
-    const total = items.length;
-    const replied = items.filter(item => item.status?.S === "replied").length;
+    let allItems: any[] = [];
+    
+    // 複数のpostIDで検索
+    for (const searchId of searchIds) {
+      if (!searchId) continue;
+      
+      const result = await ddb.send(new QueryCommand({
+        TableName: TBL_REPLIES,
+        KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+        FilterExpression: "postId = :postId",
+        ExpressionAttributeValues: {
+          ":pk": { S: `USER#${userId}` },
+          ":pfx": { S: "REPLY#" },
+          ":postId": { S: searchId },
+        },
+        ProjectionExpression: "#st, postId, SK",
+        ExpressionAttributeNames: { "#st": "status" },
+      }));
+      
+      if (result.Items) {
+        console.log(`[DEBUG] postId "${searchId}" で ${result.Items.length} 件のリプライを発見`);
+        allItems.push(...result.Items);
+      }
+    }
+    
+    // 重複を除去（同じSKは1つだけ）
+    const uniqueItems = allItems.reduce((acc, item) => {
+      const sk = item.SK?.S;
+      if (sk && !acc.some(existing => existing.SK?.S === sk)) {
+        acc.push(item);
+      }
+      return acc;
+    }, [] as any[]);
+    
+    const total = uniqueItems.length;
+    const replied = uniqueItems.filter(item => item.status?.S === "replied").length;
+    
+    console.log(`[DEBUG] 最終リプライ状況: ${replied}/${total} (重複除去後)`);
+    if (total > 0) {
+      console.log(`[DEBUG] 見つかったリプライのpostId例:`, uniqueItems.slice(0, 3).map(i => i.postId?.S));
+    }
     
     return { replied, total };
   } catch (e) {
-    console.error(`Error getting reply status for post ${postId}:`, e);
+    console.error(`Error getting reply status for posts [${postId}, ${numericPostId}]:`, e);
     return { replied: 0, total: 0 };
   }
 }
@@ -116,9 +144,8 @@ export default async function handler(
       const postsWithReplies = await Promise.all(
         posts.map(async (post) => {
           if (post.status === "posted" && (post.postId || post.numericPostId)) {
-            // postIdまたはnumericPostIdを使ってリプライ状況を取得
-            const targetPostId = post.postId || post.numericPostId;
-            const replyStatus = await getReplyStatusForPost(userId, targetPostId);
+            // postIdとnumericPostIdの両方を使ってリプライ状況を取得
+            const replyStatus = await getReplyStatusForPost(userId, post.postId, post.numericPostId);
             return {
               ...post,
               replyStatus: {

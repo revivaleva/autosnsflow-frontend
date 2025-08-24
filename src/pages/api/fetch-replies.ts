@@ -2,7 +2,7 @@
 // 手動でリプライを取得するAPI（Lambda関数の処理を移植）
 
 import type { NextApiRequest, NextApiResponse } from "next";
-import { QueryCommand, PutItemCommand } from "@aws-sdk/client-dynamodb";
+import { QueryCommand, PutItemCommand, GetItemCommand } from "@aws-sdk/client-dynamodb";
 import { createDynamoClient } from "@/lib/ddb";
 import { verifyUserFromRequest } from "@/lib/auth";
 import { fetchThreadsAccountsFull } from "@autosnsflow/backend-core";
@@ -14,12 +14,60 @@ const TBL_REPLIES = process.env.TBL_REPLIES || "Replies";
 // 現在時刻（Unix秒）
 const nowSec = () => Math.floor(Date.now() / 1000);
 
-// Lambda関数の upsertReplyItem を移植
+// Lambda関数の upsertReplyItem を移植（AI生成機能付き）
 async function upsertReplyItem(userId: string, acct: any, { externalReplyId, postId, text, createdAt, originalPost }: any) {
   const sk = `REPLY#${externalReplyId}`;
 
-  // 手動実行では返信内容を空にして、後で手動で入力できるようにする
+  // 既存チェック
+  try {
+    const existing = await ddb.send(new GetItemCommand({
+      TableName: TBL_REPLIES,
+      Key: { PK: { S: `USER#${userId}` }, SK: { S: sk } },
+    }));
+    if (existing.Item) {
+      return false; // 既に存在する
+    }
+  } catch (e) {
+    console.log(`[DEBUG] 既存チェック失敗、新規作成を試行: ${String(e).substring(0, 100)}`);
+  }
+
+  // AI生成による返信内容の作成
   let responseContent = "";
+  
+  // 手動取得でもautoReplyが有効な場合は返信内容を生成
+  if (acct.autoReply) {
+    try {
+      console.log(`[DEBUG] アカウント ${acct.accountId} の返信内容を生成中...`);
+      
+      const aiResponse = await fetch(`${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/ai-gateway`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          purpose: "reply-generate",
+          input: {
+            accountId: acct.accountId,
+            originalPost: originalPost?.content || "",
+            incomingReply: text,
+          },
+          userId: userId,
+        }),
+      });
+
+      if (aiResponse.ok) {
+        const aiData = await aiResponse.json();
+        if (aiData.text) {
+          responseContent = aiData.text.trim();
+          console.log(`[DEBUG] AI生成成功: ${responseContent.substring(0, 50)}...`);
+        }
+      } else {
+        console.log(`[WARN] AI生成失敗: ${aiResponse.status} ${aiResponse.statusText}`);
+      }
+    } catch (e) {
+      console.log(`[WARN] 返信コンテンツ生成失敗: ${String(e).substring(0, 100)}`);
+    }
+  }
 
   try {
     await ddb.send(new PutItemCommand({
