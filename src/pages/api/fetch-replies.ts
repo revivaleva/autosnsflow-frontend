@@ -155,18 +155,13 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
         // 方法1: GAS同様の直接リプライ取得（replyApiId使用）
         let url = `https://graph.threads.net/v1.0/${encodeURIComponent(replyApiId)}/replies?fields=id,text,username,permalink&access_token=${encodeURIComponent(acct.accessToken)}`;
         
-        console.log(`[DEBUG] Threads API リクエスト開始 (試行${attempt + 1}/${maxRetries}):`);
-        console.log(`[DEBUG] - postId: ${post.postId}`);
-        console.log(`[DEBUG] - numericPostId: ${post.numericPostId}`);
-        console.log(`[DEBUG] - replyApiId: ${replyApiId} (使用中)`);
-        console.log(`[DEBUG] - URL: ${url.replace(acct.accessToken, "***TOKEN***")}`);
-        console.log(`[DEBUG] - アクセストークン長: ${acct.accessToken?.length || 0}`);
+        console.log(`[INFO] リプライ取得開始: ${replyApiId} (試行${attempt + 1}/${maxRetries})`);
         
         let r = await fetch(url);
         
         // 方法1が失敗した場合、conversation エンドポイントを試行
         if (!r.ok && attempt === 0) {
-          console.log(`[DEBUG] replies失敗 (${r.status}), conversation を試行`);
+          console.log(`[INFO] repliesエンドポイント失敗 (${r.status}), conversationで再試行`);
           url = `https://graph.threads.net/v1.0/${encodeURIComponent(replyApiId)}/conversation?fields=id,text,username,permalink&access_token=${encodeURIComponent(acct.accessToken)}`;
           r = await fetch(url);
         }
@@ -192,16 +187,13 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
         
         if (!r.ok) { 
           const errorText = await r.text();
-          console.log(`[DEBUG] Threads API エラー詳細 (試行${attempt + 1}):`);
-          console.log(`[DEBUG] - ステータス: ${r.status} ${r.statusText}`);
-          console.log(`[DEBUG] - レスポンス: ${errorText}`);
-          console.log(`[DEBUG] - ヘッダー: ${JSON.stringify(Object.fromEntries(r.headers.entries()))}`);
+          console.log(`[ERROR] API失敗 (試行${attempt + 1}): ${r.status} ${r.statusText} - ${errorText.substring(0, 100)}`);
           
           // Address unavailable エラーまたは一時的エラーの場合はリトライ
           if (errorText.includes("Address unavailable") || r.status >= 500) {
             attempt++;
             if (attempt < maxRetries) {
-              console.log(`[DEBUG] リトライ可能エラー、${3000}ms後に再試行`);
+              console.log(`[INFO] リトライ実行、${3000}ms後に再試行`);
               await new Promise(resolve => setTimeout(resolve, 3000));
               continue; // while ループを続行
             }
@@ -216,11 +208,10 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
       
         // 成功時の処理 - GASと同じシンプルなアプローチ
         const json = await r.json();
-        console.log(`[DEBUG] Threads API 成功レスポンス:`, JSON.stringify(json).substring(0, 300));
         
         // GAS同様にdata配列から直接リプライを取得
         const repliesFound = json?.data || [];
-        console.log(`[DEBUG] ${repliesFound.length}件のリプライ取得成功`);
+        console.log(`[INFO] ${replyApiId}: ${repliesFound.length}件のリプライ取得成功`);
         
         const repliesCount = repliesFound.length;
         apiLogEntry.repliesFound = repliesCount;
@@ -243,9 +234,8 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
               originalPost: post
             });
             if (ok) saved++;
-            console.log(`[DEBUG] リプライ保存: ${externalReplyId} - @${username}: ${text.substring(0, 50)}`);
-          } else {
-            console.log(`[DEBUG] 不完全なリプライデータ: id=${externalReplyId}, text=${text.substring(0, 20)}`);
+            // 詳細ログは必要に応じてコメントアウト
+            // console.log(`[DEBUG] リプライ保存: ${externalReplyId} - @${username}: ${text.substring(0, 50)}`);
           }
         }
         
@@ -253,13 +243,13 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
         break; // 成功したのでwhile ループを抜ける
         
       } catch (e) {
-        console.log(`[DEBUG] リクエスト失敗 (試行${attempt + 1}): ${String(e)}`);
+        console.log(`[ERROR] リクエスト例外 (試行${attempt + 1}): ${String(e).substring(0, 100)}`);
         
         // Address unavailable エラーまたは一時的エラーの場合はリトライ
         if (String(e).includes("Address unavailable") || String(e).includes("fetch")) {
           attempt++;
           if (attempt < maxRetries) {
-            console.log(`[DEBUG] 例外リトライ、${3000}ms後に再試行`);
+            console.log(`[INFO] 例外リトライ、${3000}ms後に再試行`);
             await new Promise(resolve => setTimeout(resolve, 3000));
             continue; // while ループを続行
           }

@@ -60,10 +60,10 @@ export async function postToThreads({
     if (detailRes.ok) {
       const detailJson = await detailRes.json();
       numericId = detailJson?.id;
-      console.log(`[DEBUG] 投稿詳細取得: postId=${postId}, numericId=${numericId}`);
+      console.log(`[INFO] 投稿完了: ${postId} (numeric: ${numericId})`);
     }
   } catch (e) {
-    console.log(`[DEBUG] 数字ID取得失敗: ${e}`);
+    console.log(`[WARN] 数字ID取得失敗: ${String(e).substring(0, 100)}`);
   }
   
   return { postId, numericId };
