@@ -5,9 +5,13 @@
 export async function postToThreads({
   accessToken,
   text,
+  userIdOnPlatform,
+  inReplyTo,
 }: {
   accessToken: string;
   text: string;
+  userIdOnPlatform?: string;
+  inReplyTo?: string;
 }): Promise<{ postId: string; numericId?: string }> {
   const base = process.env.THREADS_GRAPH_BASE || "https://graph.threads.net/v1.0";
   const textPostAppId = process.env.THREADS_TEXT_APP_ID;
@@ -19,8 +23,18 @@ export async function postToThreads({
       access_token: accessToken,
     };
     if (textPostAppId) body.text_post_app_id = textPostAppId;
+    
+    // リプライパラメータ（GAS/Lambda準拠）
+    if (inReplyTo) {
+      body.replied_to_id = inReplyTo;
+    }
 
-    const r = await fetch(`${base}/me/threads`, {
+    // 送信先をGAS/Lambda準拠に修正
+    const endpoint = userIdOnPlatform 
+      ? `${base}/${encodeURIComponent(userIdOnPlatform)}/threads`
+      : `${base}/me/threads`;
+
+    const r = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -35,7 +49,12 @@ export async function postToThreads({
   };
 
   const publish = async (creationId: string) => {
-    const r = await fetch(`${base}/me/threads_publish`, {
+    // 公開エンドポイントもGAS/Lambda準拠に修正
+    const publishEndpoint = userIdOnPlatform 
+      ? `${base}/${encodeURIComponent(userIdOnPlatform)}/threads_publish`
+      : `${base}/me/threads_publish`;
+    
+    const r = await fetch(publishEndpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ creation_id: creationId, access_token: accessToken }),

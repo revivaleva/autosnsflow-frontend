@@ -14,6 +14,36 @@ import crypto from "crypto";
 
 const ddb = createDynamoClient();
 const TBL_SCHEDULED = "ScheduledPosts";
+const TBL_REPLIES = "Replies";
+
+// リプライ状況を取得する関数
+async function getReplyStatusForPost(userId: string, postId: string | undefined): Promise<{ replied: number; total: number }> {
+  if (!postId) return { replied: 0, total: 0 };
+  
+  try {
+    const result = await ddb.send(new QueryCommand({
+      TableName: TBL_REPLIES,
+      KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+      FilterExpression: "postId = :postId",
+      ExpressionAttributeValues: {
+        ":pk": { S: `USER#${userId}` },
+        ":pfx": { S: "REPLY#" },
+        ":postId": { S: postId },
+      },
+      ProjectionExpression: "#st",
+      ExpressionAttributeNames: { "#st": "status" },
+    }));
+    
+    const items = result.Items || [];
+    const total = items.length;
+    const replied = items.filter(item => item.status?.S === "replied").length;
+    
+    return { replied, total };
+  } catch (e) {
+    console.error(`Error getting reply status for post ${postId}:`, e);
+    return { replied: 0, total: 0 };
+  }
+}
 
 // DynamoDB アイテムをフロント用の形へ
 function mapItem(it: any) {
@@ -81,7 +111,30 @@ export default async function handler(
       );
       const items = out.Items ?? [];
       const posts = items.map(mapItem).filter((x) => !x.isDeleted);
-      res.status(200).json({ ok: true, posts });
+      
+      // リプライ状況を並行して取得
+      const postsWithReplies = await Promise.all(
+        posts.map(async (post) => {
+          if (post.status === "posted" && (post.postId || post.numericPostId)) {
+            // postIdまたはnumericPostIdを使ってリプライ状況を取得
+            const targetPostId = post.postId || post.numericPostId;
+            const replyStatus = await getReplyStatusForPost(userId, targetPostId);
+            return {
+              ...post,
+              replyStatus: {
+                replied: replyStatus.replied,
+                total: replyStatus.total,
+              }
+            };
+          }
+          return {
+            ...post,
+            replyStatus: { replied: 0, total: 0 }
+          };
+        })
+      );
+      
+      res.status(200).json({ ok: true, posts: postsWithReplies });
       return;
     }
 

@@ -46,15 +46,7 @@ async function upsertReplyItem(userId: string, acct: any, { externalReplyId, pos
 
 // Lambda関数の fetchThreadsRepliesAndSave を移植
 async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 }: any) {
-  const debugLogs: string[] = []; // ブラウザ用ログ配列
-  
-  const addLog = (message: string) => {
-    console.log(message); // サーバーログ
-    debugLogs.push(message); // ブラウザ用
-  };
-  
-  addLog(`[DEBUG] ${acct.accountId} のリプライ取得詳細開始`);
-  addLog(`[DEBUG] アカウント詳細: accountId=${acct.accountId}, hasAccessToken=${!!acct.accessToken}, tokenLength=${acct.accessToken?.length || 0}`);
+  console.log(`[INFO] ${acct.accountId} のリプライ取得開始`);
   
   if (!acct?.accessToken) throw new Error("Threads のトークン不足");
   if (!acct?.providerUserId) throw new Error("Threads のユーザーID取得失敗");
@@ -62,10 +54,9 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
   const since = nowSec() - lookbackSec;
   let saved = 0;
   
-  addLog(`[DEBUG] 検索条件: ${lookbackSec}秒前以降の投稿 (${new Date(since * 1000).toISOString()})`);
+  console.log(`[INFO] 検索条件: ${lookbackSec}秒前以降の投稿`);
 
   // 投稿済みの予約投稿を取得
-  addLog(`[DEBUG] DynamoDB検索条件: PK=USER#${userId}, status=posted, postedAt>=${since}, accountId=${acct.accountId}`);
   const q = await ddb.send(new QueryCommand({
     TableName: TBL_SCHEDULED,
     KeyConditionExpression: "PK = :pk",
@@ -80,22 +71,10 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
     ProjectionExpression: "postId, numericPostId, content, postedAt, scheduledPostId",
   }));
   
-  addLog(`[DEBUG] DynamoDB検索結果: ${q.Items?.length || 0}件の投稿済み記事を発見`);
-  if (q.Items && q.Items.length > 0) {
-    addLog(`[DEBUG] 最初の投稿済み記事: postId=${q.Items[0].postId?.S || "空"}, numericPostId=${q.Items[0].numericPostId?.S || "空"}, SK=${q.Items[0].SK?.S || "空"}`);
-    
-    // 全投稿のpostId状況を確認
-    const postIdStatus = q.Items.map(item => ({
-      SK: (item.SK?.S || "").substring(0, 20) + "...",
-      postId: item.postId?.S || "空",
-      numericPostId: item.numericPostId?.S || "空",
-      postedAt: item.postedAt?.N || "空"
-    }));
-    addLog(`[DEBUG] 全投稿のpostID状況: ${JSON.stringify(postIdStatus).substring(0, 500)}`);
-  } else {
-    // 投稿が見つからない場合の調査
-    addLog(`[DEBUG] 投稿が見つからない - ユーザー: ${userId}, アカウント: ${acct.accountId}`);
-    addLog(`[DEBUG] 検索条件: ${since} (${new Date(since * 1000).toISOString()}) 〜 ${nowSec()} (${new Date(nowSec() * 1000).toISOString()})`);
+  console.log(`[INFO] DynamoDB検索結果: ${q.Items?.length || 0}件の投稿済み記事を発見`);
+  
+  if (!q.Items || q.Items.length === 0) {
+    console.log(`[INFO] 対象となる投稿が見つからないため処理を終了`);
   }
 
   // 上記でまとめて処理済み
@@ -119,22 +98,22 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
     let replyApiId: string;
     if (isNumericPostId) {
       replyApiId = post.numericPostId;
-      addLog(`[DEBUG] numericPostIdを使用: ${replyApiId}`);
+      console.log(`[DEBUG] numericPostIdを使用: ${replyApiId}`);
     } else if (isNumericMainPostId) {
       replyApiId = post.postId;
-      addLog(`[DEBUG] 数字のpostIdを使用: ${replyApiId}`);
+      console.log(`[DEBUG] 数字のpostIdを使用: ${replyApiId}`);
     } else {
       replyApiId = post.numericPostId || post.postId;
-      addLog(`[DEBUG] フォールバック使用: ${replyApiId}`);
+      console.log(`[DEBUG] フォールバック使用: ${replyApiId}`);
     }
 
     // 詳細なID分析
-    addLog(`[DEBUG] ID分析 - SK: ${item.SK?.S}`);
-    addLog(`[DEBUG] - postId: "${post.postId}" (長さ: ${post.postId?.length || 0})`);
-    addLog(`[DEBUG] - numericPostId: "${post.numericPostId}" (長さ: ${post.numericPostId?.length || 0})`);
-    addLog(`[DEBUG] - replyApiId選択: "${replyApiId}" (numericPostId優先: ${!!post.numericPostId})`);
-    addLog(`[DEBUG] - postId数字判定: ${post.postId ? /^\d+$/.test(post.postId) : false}`);
-    addLog(`[DEBUG] - numericPostId数字判定: ${post.numericPostId ? /^\d+$/.test(post.numericPostId) : false}`);
+    console.log(`[DEBUG] ID分析 - SK: ${item.SK?.S}`);
+    console.log(`[DEBUG] - postId: "${post.postId}" (長さ: ${post.postId?.length || 0})`);
+    console.log(`[DEBUG] - numericPostId: "${post.numericPostId}" (長さ: ${post.numericPostId?.length || 0})`);
+    console.log(`[DEBUG] - replyApiId選択: "${replyApiId}" (numericPostId優先: ${!!post.numericPostId})`);
+    console.log(`[DEBUG] - postId数字判定: ${post.postId ? /^\d+$/.test(post.postId) : false}`);
+    console.log(`[DEBUG] - numericPostId数字判定: ${post.numericPostId ? /^\d+$/.test(post.numericPostId) : false}`);
 
     const postInfo: any = {
       postId: post.postId || "空",
@@ -161,23 +140,23 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
         // 方法1: GAS同様の直接リプライ取得（replyApiId使用）
         let url = `https://graph.threads.net/v1.0/${encodeURIComponent(replyApiId)}/replies?fields=id,text,username,permalink&access_token=${encodeURIComponent(acct.accessToken)}`;
         
-        addLog(`[INFO] リプライ取得開始: ${replyApiId} (試行${attempt + 1}/${maxRetries})`);
-        addLog(`[DEBUG] 完全なURL: ${url.replace(acct.accessToken, "***TOKEN***")}`);
-        addLog(`[DEBUG] エンコード前ID: "${replyApiId}"`);
-        addLog(`[DEBUG] エンコード後ID: "${encodeURIComponent(replyApiId)}"`);
+        console.log(`[INFO] リプライ取得開始: ${replyApiId} (試行${attempt + 1}/${maxRetries})`);
+        console.log(`[DEBUG] 完全なURL: ${url.replace(acct.accessToken, "***TOKEN***")}`);
+        console.log(`[DEBUG] エンコード前ID: "${replyApiId}"`);
+        console.log(`[DEBUG] エンコード後ID: "${encodeURIComponent(replyApiId)}"`);
         
         let r = await fetch(url);
         
         // 方法1が失敗した場合、conversation エンドポイントを試行
         if (!r.ok && attempt === 0) {
-          addLog(`[INFO] repliesエンドポイント失敗 (${r.status}), conversationで再試行`);
+          console.log(`[INFO] repliesエンドポイント失敗 (${r.status}), conversationで再試行`);
           url = `https://graph.threads.net/v1.0/${encodeURIComponent(replyApiId)}/conversation?fields=id,text,username,permalink&access_token=${encodeURIComponent(acct.accessToken)}`;
           r = await fetch(url);
           
           // conversationも失敗し、異なるIDがある場合は、そちらも試行
           if (!r.ok && post.numericPostId && post.postId && post.numericPostId !== post.postId) {
             const alternativeId = post.numericPostId === replyApiId ? post.postId : post.numericPostId;
-            addLog(`[INFO] conversation失敗 (${r.status}), 代替ID "${alternativeId}" でreplies再試行`);
+            console.log(`[INFO] conversation失敗 (${r.status}), 代替ID "${alternativeId}" でreplies再試行`);
             url = `https://graph.threads.net/v1.0/${encodeURIComponent(alternativeId)}/replies?fields=id,text,username,permalink&access_token=${encodeURIComponent(acct.accessToken)}`;
             r = await fetch(url);
           }
@@ -204,13 +183,13 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
         
         if (!r.ok) { 
           const errorText = await r.text();
-          addLog(`[ERROR] API失敗 (試行${attempt + 1}): ${r.status} ${r.statusText} - ${errorText.substring(0, 100)}`);
+          console.log(`[ERROR] API失敗 (試行${attempt + 1}): ${r.status} ${r.statusText} - ${errorText.substring(0, 100)}`);
           
           // Address unavailable エラーまたは一時的エラーの場合はリトライ
           if (errorText.includes("Address unavailable") || r.status >= 500) {
             attempt++;
             if (attempt < maxRetries) {
-              addLog(`[INFO] リトライ実行、${3000}ms後に再試行`);
+              console.log(`[INFO] リトライ実行、${3000}ms後に再試行`);
               await new Promise(resolve => setTimeout(resolve, 3000));
               continue; // while ループを続行
             }
@@ -228,7 +207,7 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
         
         // GAS同様にdata配列から直接リプライを取得
         const repliesFound = json?.data || [];
-        addLog(`[INFO] ${replyApiId}: ${repliesFound.length}件のリプライ取得成功`);
+        console.log(`[INFO] ${replyApiId}: ${repliesFound.length}件のリプライ取得成功`);
         
         const repliesCount = repliesFound.length;
         apiLogEntry.repliesFound = repliesCount;
@@ -260,13 +239,13 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
         break; // 成功したのでwhile ループを抜ける
         
       } catch (e) {
-        addLog(`[ERROR] リクエスト例外 (試行${attempt + 1}): ${String(e).substring(0, 100)}`);
+        console.log(`[ERROR] リクエスト例外 (試行${attempt + 1}): ${String(e).substring(0, 100)}`);
         
         // Address unavailable エラーまたは一時的エラーの場合はリトライ
         if (String(e).includes("Address unavailable") || String(e).includes("fetch")) {
           attempt++;
           if (attempt < maxRetries) {
-            addLog(`[INFO] 例外リトライ、${3000}ms後に再試行`);
+            console.log(`[INFO] 例外リトライ、${3000}ms後に再試行`);
             await new Promise(resolve => setTimeout(resolve, 3000));
             continue; // while ループを続行
           }
@@ -295,8 +274,7 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
     postsWithPostId: (q.Items || []).filter(item => item.postId?.S).length,
     postsProcessed: (q.Items || []).length,
     postsInfo: postsInfo,
-    apiLogs: apiLogs,
-    debugLogs: debugLogs  // ブラウザで確認可能なログ
+    apiLogs: apiLogs
   };
 }
 
@@ -325,8 +303,7 @@ async function fetchIncomingReplies(userId: string, acct: any) {
       postsWithPostId: r.postsWithPostId || 0,
       postsProcessed: r.postsProcessed || 0,
       postsInfo: r.postsInfo || [],
-      apiLogs: r.apiLogs || [],
-      debugLogs: r.debugLogs || []  // デバッグログも返す
+      apiLogs: r.apiLogs || []
     };
   } catch (e) {
     console.error(`[ERROR] アカウント ${acct.accountId} の返信取得失敗:`, e);
@@ -383,12 +360,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       results,
       accounts: accounts.length,
       debug: debugSummary,
-      message: `${totalFetched}件のリプライを取得しました（${accounts.length}アカウント中）`,
-      // すべてのアカウントのデバッグログを統合
-      allDebugLogs: results.reduce((all: string[], r: any) => {
-        if (r.debugLogs) all.push(...r.debugLogs);
-        return all;
-      }, [])
+      message: `${totalFetched}件のリプライを取得しました（${accounts.length}アカウント中）`
     });
 
   } catch (error) {

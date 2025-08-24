@@ -20,6 +20,11 @@ export type ScheduledPostType = {
   postUrl?: string; // 投稿URL
   isDeleted?: boolean;
   replyCount?: number;
+  // リプライ状況
+  replyStatus?: {
+    replied: number;
+    total: number;
+  };
   // 二段階投稿関連
   doublePostStatus?: string;
   secondStagePostId?: string;
