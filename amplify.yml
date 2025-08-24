@@ -13,21 +13,29 @@ frontend:
         - npm config set registry https://registry.npmjs.org
         # npm ci のリトライを追加（ネットワーク不安定時の耐性向上）
         - |
-          retry_npm_ci() {
+          retry_install() {
             local attempt=0
             while true; do
-              if npm ci --prefer-offline --no-audit --no-progress; then
-                return 0
+              if [ -f package-lock.json ]; then
+                echo "package-lock.json found -> running npm ci"
+                if npm ci --prefer-offline --no-audit --no-progress; then
+                  return 0
+                fi
+              else
+                echo "package-lock.json not found -> running npm install"
+                if npm install --prefer-offline --no-audit --no-progress; then
+                  return 0
+                fi
               fi
               attempt=$((attempt+1))
               if [ $attempt -ge 3 ]; then
-                echo "npm ci failed after 3 attempts"; return 1
+                echo "install failed after 3 attempts"; return 1
               fi
-              echo "npm ci failed, retrying... ($attempt/3)"
+              echo "install failed, retrying... ($attempt/3)"
               sleep 2
             done
           }
-          retry_npm_ci
+          retry_install
         - npm --prefix packages/shared run build || true
         - npm --prefix packages/backend-core run build || true
         # 環境変数を明示的に .env.production に書き出す（必要なものだけ）[KEEP]
