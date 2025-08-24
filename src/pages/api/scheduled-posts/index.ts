@@ -52,7 +52,7 @@ async function getReplyStatusForPost(userId: string, postId: string | undefined,
     // 重複を除去（同じSKは1つだけ）
     const uniqueItems = allItems.reduce((acc, item) => {
       const sk = item.SK?.S;
-      if (sk && !acc.some(existing => existing.SK?.S === sk)) {
+      if (sk && !acc.some((existing: any) => existing.SK?.S === sk)) {
         acc.push(item);
       }
       return acc;
