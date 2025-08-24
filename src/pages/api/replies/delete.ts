@@ -18,23 +18,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const { replyId } = req.body || {};
     if (!replyId) return res.status(400).json({ error: "replyId is required" });
 
+    // replyId が "REPLY#..." の形式で渡される可能性があるため正規化
+    const normalized = String(replyId).startsWith("REPLY#") ? String(replyId).slice(6) : String(replyId);
+
+    const key = { PK: { S: `USER#${userId}` }, SK: { S: `REPLY#${normalized}` } };
+
     // 存在確認
-    const key = { PK: { S: `USER#${userId}` }, SK: { S: `REPLY#${replyId}` } };
     const existing = await ddb.send(new GetItemCommand({ TableName: TBL_REPLIES, Key: key }));
     if (!existing.Item) return res.status(404).json({ error: "Reply not found" });
 
-    // 論理削除フラグをセット（isDeleted=true, deletedAt）
-    const now = Math.floor(Date.now() / 1000);
-    await ddb.send(new UpdateItemCommand({
+    // 物理削除
+    await ddb.send(new (require('@aws-sdk/client-dynamodb').DeleteItemCommand)({
       TableName: TBL_REPLIES,
       Key: key,
-      UpdateExpression: "SET isDeleted = :t, deletedAt = :ts, #st = :deleted",
-      ExpressionAttributeNames: { "#st": "status" },
-      ExpressionAttributeValues: {
-        ":t": { BOOL: true },
-        ":ts": { N: String(now) },
-        ":deleted": { S: "deleted" }
-      }
     }));
 
     return res.status(200).json({ ok: true });
