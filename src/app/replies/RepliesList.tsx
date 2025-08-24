@@ -178,6 +178,13 @@ export default function RepliesList() {
       
       const data = await response.json();
       console.log("[CLIENT] レスポンスデータ:", data);
+      // デバッグ: API 応答をアラートで表示（大きすぎる場合は切り詰め）
+      try {
+        const jsonStr = JSON.stringify(data, null, 2);
+        alert(jsonStr.length > 10000 ? jsonStr.slice(0, 10000) + "\n...truncated" : jsonStr);
+      } catch (e) {
+        console.log('[DEBUG] JSON stringify failed:', e);
+      }
       
       if (data.ok) {
         const results = data.results || [];
