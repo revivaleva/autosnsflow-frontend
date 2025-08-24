@@ -8,13 +8,14 @@ import ScheduledPostEditorModal, {
 } from "./ScheduledPostEditorModal";
 
 // 既存定義は維持
-type ScheduledPostStatus = "" | "pending" | "posted";
+type ScheduledPostStatus = "" | "scheduled" | "posted" | "expired";
 type ReplyType = { id: string; replyContent: string; status: "replied" | "unreplied" };
 
 const statusOptions = [
   { value: "", label: "すべて" },
-  { value: "pending", label: "未投稿" },
+  { value: "scheduled", label: "未投稿" },
   { value: "posted", label: "投稿済み" },
+  { value: "expired", label: "期限切れ" },
 ];
 
 export default function ScheduledPostsTable() {
@@ -208,78 +209,11 @@ export default function ScheduledPostsTable() {
     }
   };
 
-  // [ADD] テストデータ作成関数
-  const handleCreateTestData = async (dataType: string = "complete") => {
-    try {
-      const res = await fetch("/api/debug/create-test-data", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ dataType }),
-      });
-      
-      const data = await res.json();
-      
-      if (!res.ok) {
-        throw new Error(data.error || `HTTP ${res.status}`);
-      }
-      
-      alert(`テストデータを作成しました!\nスケジュールID: ${data.scheduledPostId}\n\n${data.testData.message}`);
-      loadPosts(); // 一覧を再読み込み
-      
-    } catch (e: any) {
-      console.error("Test data creation error:", e);
-      alert(`テストデータの作成に失敗しました: ${e.message}`);
-    }
-  };
 
-  // [ADD] Threads APIテスト関数
-  const handleThreadsApiTest = async (scheduledPostId: string, testMode: string = "dryrun") => {
-    try {
-      const res = await fetch("/api/debug/threads-api-test", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ scheduledPostId, testMode }),
-      });
-      
-      const data = await res.json();
-      
-      if (!res.ok) {
-        throw new Error(data.error || `HTTP ${res.status}`);
-      }
-      
-      // 結果をコンソールとアラートで表示
-      console.log("Threads API Test Result:", data);
-      
-      let message = `Threads APIテスト結果:\n\n`;
-      message += `対象Post ID: ${data.debugInfo.targetPostId}\n`;
-      message += `Provider User ID: ${data.debugInfo.providerUserId}\n`;
-      message += `Access Token: ${data.debugInfo.hasAccessToken ? '設定済み' : '未設定'}\n\n`;
-      
-      if (data.testResults && data.testResults.length > 0) {
-        message += "ライブテスト結果:\n";
-        data.testResults.forEach((result: any) => {
-          message += `${result.test}: ${result.ok ? 'OK' : 'FAILED'} (${result.status})\n`;
-          if (result.error) {
-            message += `  エラー: ${result.error.substring(0, 100)}\n`;
-          }
-        });
-      } else {
-        message += "DryRunモード - 詳細はConsoleを確認してください";
-      }
-      
-      alert(message);
-      
-    } catch (e: any) {
-      console.error("Threads API test error:", e);
-      alert(`Threads APIテストに失敗しました: ${e.message}`);
-    }
-  };
 
   const sortedPosts = posts
     .filter((post) => !post.isDeleted)
-    .filter((post) => !filterStatus || (post.status || "pending") === filterStatus)
+    .filter((post) => !filterStatus || (post.status || "scheduled") === filterStatus)
     .sort((a, b) => {
       if (sortKey === "scheduledAt") {
         return sortAsc
@@ -350,20 +284,15 @@ export default function ScheduledPostsTable() {
         <div className="flex gap-2">
           <button
             onClick={loadPosts}
-            className="bg-gray-500 text-white rounded px-4 py-2 hover:bg-gray-600"
+            className="bg-blue-500 text-white rounded px-4 py-2 hover:bg-blue-600"
             disabled={loading}
           >
             {loading ? "読み込み中..." : "再読み込み"}
           </button>
-          <button
-            className="bg-orange-500 text-white px-3 py-2 rounded hover:bg-orange-600 text-sm"
-            onClick={() => handleCreateTestData("complete")}
-          >
-            🧪 テストデータ作成
-          </button>
+
           <button
             onClick={openAdd}
-            className="bg-blue-500 text-white rounded px-4 py-2 hover:bg-blue-600"
+            className="bg-green-500 text-white rounded px-4 py-2 hover:bg-green-600"
           >
             ＋予約投稿追加
           </button>
@@ -586,23 +515,7 @@ export default function ScheduledPostsTable() {
                         削除
                       </button>
                     )}
-                    {/* デバッグボタン（二段階投稿関連の投稿のみ） */}
-                    {post.status === "posted" && (
-                      <>
-                        <button
-                          className="bg-gray-400 text-white px-2 py-1 rounded hover:bg-gray-500 text-xs"
-                          onClick={() => handleDebugDetails(post.scheduledPostId)}
-                        >
-                          🔍 DEBUG
-                        </button>
-                        <button
-                          className="bg-indigo-400 text-white px-2 py-1 rounded hover:bg-indigo-500 text-xs"
-                          onClick={() => handleThreadsApiTest(post.scheduledPostId, "dryrun")}
-                        >
-                          🧪 API TEST
-                        </button>
-                      </>
-                    )}
+
                   </td>
                 </tr>
               );
@@ -713,31 +626,7 @@ export default function ScheduledPostsTable() {
               )}
             </div>
             
-            <div className="mt-6 flex justify-between">
-              <div className="flex gap-2">
-                <button
-                  className="bg-blue-500 text-white px-3 py-2 rounded hover:bg-blue-600 text-sm"
-                  onClick={() => {
-                    if (debugData?.debugInfo?.scheduledPost?.scheduledPostId) {
-                      handleThreadsApiTest(debugData.debugInfo.scheduledPost.scheduledPostId, "dryrun");
-                    }
-                  }}
-                >
-                  🧪 DryRun テスト
-                </button>
-                <button
-                  className="bg-orange-500 text-white px-3 py-2 rounded hover:bg-orange-600 text-sm"
-                  onClick={() => {
-                    if (debugData?.debugInfo?.scheduledPost?.scheduledPostId) {
-                      if (confirm("実際のThreads APIを呼び出します（投稿はされません）。実行しますか？")) {
-                        handleThreadsApiTest(debugData.debugInfo.scheduledPost.scheduledPostId, "live");
-                      }
-                    }
-                  }}
-                >
-                  🚀 Live テスト
-                </button>
-              </div>
+            <div className="mt-6 flex justify-end">
               <button
                 className="bg-gray-500 text-white px-4 py-2 rounded hover:bg-gray-600"
                 onClick={() => setDebugModalOpen(false)}

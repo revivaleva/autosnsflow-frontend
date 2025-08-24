@@ -9,7 +9,7 @@ import dayjs from "dayjs";
 // 型定義
 // ==========================
 
-type ReplyStatus = "" | "replied" | "unreplied";
+type ReplyStatus = "" | "draft" | "unreplied" | "replied";
 type ReplyType = {
   id: string;
   accountId: string;
@@ -34,8 +34,9 @@ type EditModalProps = {
 // ==========================
 const statusOptions = [
   { value: "", label: "すべて" },
-  { value: "replied", label: "返信済" },
+  { value: "draft", label: "下書き" },
   { value: "unreplied", label: "未返信" },
+  { value: "replied", label: "返信済" },
 ];
 
 // ==========================
@@ -331,16 +332,50 @@ export default function RepliesList() {
     setEditModalOpen(true);
   };
 
-  const handleEditSave = (newContent: string) => {
+  const handleEditSave = async (newContent: string) => {
     if (!editTarget) return;
-    setReplies(replies =>
-      replies.map(r =>
-        r.id === editTarget.id
-          ? { ...r, responseContent: newContent, responseAt: dayjs().format("YYYY/MM/DD HH:mm"), status: "replied" }
-          : r
-      )
-    );
-    setEditModalOpen(false);
+    
+    try {
+      const response = await fetch("/api/replies/update", {
+        method: "PUT",
+        headers: { 
+          "Content-Type": "application/json" 
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          replyId: editTarget.id,
+          responseContent: newContent
+        })
+      });
+      
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.message || `HTTP ${response.status}`);
+      }
+      
+      // サーバー保存成功後にローカルstateを更新
+      setReplies(replies =>
+        replies.map(r =>
+          r.id === editTarget.id
+            ? { 
+                ...r, 
+                responseContent: newContent, 
+                responseAt: dayjs().format("YYYY/MM/DD HH:mm"), 
+                status: newContent.trim() ? "unreplied" : "draft"
+              }
+            : r
+        )
+      );
+      setEditModalOpen(false);
+      
+      // 成功メッセージ
+      console.log("✅ リプライ内容を保存しました");
+      
+    } catch (error: any) {
+      console.error("Edit save error:", error);
+      alert(`❌ 保存に失敗しました: ${error.message}`);
+    }
   };
 
   // アカウントID一覧（フィルタ用）
@@ -373,7 +408,7 @@ export default function RepliesList() {
             disabled={fetchingReplies || loading}
             className="px-3 py-1 text-sm bg-green-500 hover:bg-green-600 text-white rounded disabled:bg-gray-400"
           >
-            {fetchingReplies ? "取得中..." : "リプライ取得"}
+            {fetchingReplies ? "取得中..." : "⇓ リプライ取得"}
           </button>
         </div>
       </div>
