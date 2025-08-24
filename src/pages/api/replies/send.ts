@@ -4,6 +4,8 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { GetItemCommand, UpdateItemCommand } from "@aws-sdk/client-dynamodb";
 import { createDynamoClient } from "@/lib/ddb";
 import { verifyUserFromRequest } from "@/lib/auth";
+import { postReplyViaThreads } from "@/lib/replies/common";
+import { postToThreads } from "@/lib/threads"; // existing import remains if used elsewhere
 
 const ddb = createDynamoClient();
 const TBL_REPLIES = "Replies";
@@ -113,7 +115,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       TableName: TBL_REPLIES,
       Key: { 
         PK: { S: `USER#${userId}` }, 
-        SK: { S: replyId }
+        SK: { S: `REPLY#${replyId}` }
       },
     }));
 
@@ -158,12 +160,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     console.log(`[DEBUG] リプライ送信開始: replyId=${replyId}, postId=${postId}, providerUserId=${providerUserId}`);
     console.log(`[DEBUG] リプライ内容: ${replyContent.substring(0, 50)}...`);
 
-    // Threadsにリプライを投稿
-    const { postId: responsePostId } = await postToThreads({
+    // Threadsにリプライを投稿（共通関数を使用）
+    const { postId: responsePostId } = await postReplyViaThreads({
       accessToken,
-      text: replyContent,
-      userIdOnPlatform: providerUserId,
+      providerUserId,
       inReplyTo: postId, // 元の投稿IDにリプライ
+      text: replyContent,
     });
 
     console.log(`[DEBUG] リプライ送信完了: responsePostId=${responsePostId}`);
@@ -174,7 +176,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       TableName: TBL_REPLIES,
       Key: { 
         PK: { S: `USER#${userId}` }, 
-        SK: { S: replyId }
+        SK: { S: `REPLY#${replyId}` }
       },
       UpdateExpression: "SET #st = :replied, replyAt = :ts, responseContent = :resp, responsePostId = :pid",
       ExpressionAttributeNames: { "#st": "status" },
