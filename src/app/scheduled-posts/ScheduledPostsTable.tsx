@@ -35,6 +35,9 @@ export default function ScheduledPostsTable() {
 
   // [ADD] 即時投稿の実行中フラグ（多重押し防止）
   const [postingId, setPostingId] = useState<string>("");
+  
+  // [ADD] 即時二段階投稿の実行中フラグ（多重押し防止）
+  const [secondStagePostingId, setSecondStagePostingId] = useState<string>("");
 
   // 一覧取得（既存API）
   const loadPosts = async () => {
@@ -129,6 +132,51 @@ export default function ScheduledPostsTable() {
     setRepliesModalItems(replies || []);
     setRepliesModalTarget(postId);
     setRepliesModalOpen(true);
+  };
+
+  // [ADD] 即時二段階投稿の実行関数
+  const handleSecondStage = async (scheduledPostId: string) => {
+    if (secondStagePostingId) return; // 多重実行防止
+    
+    if (!window.confirm("二段階投稿を実行しますか？")) return;
+    
+    setSecondStagePostingId(scheduledPostId);
+    try {
+      const res = await fetch("/api/scheduled-posts/second-stage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ scheduledPostId }),
+      });
+      
+      const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      
+      // 成功時はUIを更新
+      setPosts(posts =>
+        posts.map(p =>
+          p.scheduledPostId === scheduledPostId
+            ? { 
+                ...p, 
+                doublePostStatus: "done",
+                secondStagePostId: data.secondStagePostId,
+                secondStageAt: Math.floor(Date.now() / 1000)
+              }
+            : p
+        )
+      );
+      
+      alert(`✅ 二段階投稿が完了しました！\n投稿ID: ${data.secondStagePostId}`);
+      
+    } catch (e: any) {
+      console.error("Second stage posting error:", e);
+      alert(`❌ 二段階投稿に失敗しました: ${e.message}`);
+    } finally {
+      setSecondStagePostingId("");
+    }
   };
 
   const sortedPosts = posts
@@ -273,7 +321,9 @@ export default function ScheduledPostsTable() {
             {sortedPosts.map((post) => {
               const autoPostLabel = post.autoPostGroupId || "";
               const repliesNum = Number(post.replyCount ?? 0);
-              const repliesStatus = `${0}/${repliesNum}`;
+              // 新しいreplyStatusフィールドを使用
+              const replyStatus = (post as any).replyStatus || { replied: 0, total: 0 };
+              const repliesStatus = `${replyStatus.replied}/${replyStatus.total}`;
               const isPosting = postingId === post.scheduledPostId;
 
               // [FIX] 型エラー回避のため any キャストで postUrl を取得
@@ -398,6 +448,22 @@ export default function ScheduledPostsTable() {
                         disabled={isPosting}
                       >
                         {isPosting ? "実行中…" : "即時投稿"}
+                      </button>
+                    )}
+                    {/* 即時二段階投稿ボタン */}
+                    {post.status === "posted" && 
+                     post.doublePostStatus === "waiting" && 
+                     !post.isDeleted && (
+                      <button
+                        className={`text-white px-2 py-1 rounded text-xs ${
+                          secondStagePostingId === post.scheduledPostId 
+                            ? "bg-purple-300 cursor-not-allowed" 
+                            : "bg-purple-500 hover:bg-purple-600"
+                        }`}
+                        onClick={() => handleSecondStage(post.scheduledPostId)}
+                        disabled={secondStagePostingId === post.scheduledPostId}
+                      >
+                        {secondStagePostingId === post.scheduledPostId ? "実行中…" : "二段階投稿"}
                       </button>
                     )}
                     {post.status !== "posted" && !post.isDeleted && (

@@ -97,9 +97,7 @@ export default function RepliesList() {
   const [sortAsc, setSortAsc] = useState<boolean>(true);
   const [editModalOpen, setEditModalOpen] = useState<boolean>(false);
   const [editTarget, setEditTarget] = useState<ReplyType | null>(null);
-  // デバッグ情報のstate
-  const [debugInfo, setDebugInfo] = useState<any>(null);
-  const [showDebug, setShowDebug] = useState<boolean>(false);
+
   
   // [ADD] リプライ取得の状態管理
   const [fetchingReplies, setFetchingReplies] = useState<boolean>(false);
@@ -127,8 +125,6 @@ export default function RepliesList() {
           status: r.status as ReplyStatus,
         }))
       );
-      // デバッグ情報を保存
-      setDebugInfo(data.debug || null);
     } catch (error: any) {
       alert(`読み込みエラー: ${error.message}`);
       setReplies([]);
@@ -237,15 +233,56 @@ export default function RepliesList() {
   });
 
   // アクション
-  const handleReply = (id: string) => {
-    alert(`即時返信: ${id}`);
-    setReplies(replies =>
-      replies.map(r =>
-        r.id === id
-          ? { ...r, responseContent: "（即時返信内容）", responseAt: dayjs().format("YYYY/MM/DD HH:mm"), status: "replied" }
-          : r
-      )
-    );
+  const handleReply = async (id: string) => {
+    const reply = replies.find(r => r.id === id);
+    if (!reply) return;
+    
+    if (!reply.responseContent?.trim()) {
+      alert("返信内容が入力されていません。編集ボタンで返信内容を入力してください。");
+      return;
+    }
+    
+    if (reply.status === "replied") {
+      alert("この返信は既に送信済みです。");
+      return;
+    }
+    
+    if (!window.confirm(`この内容で返信を送信しますか？\n\n${reply.responseContent}`)) {
+      return;
+    }
+    
+    try {
+      const response = await fetch("/api/replies/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          replyId: id,
+          replyContent: reply.responseContent,
+        }),
+      });
+      
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.error || `HTTP ${response.status}`);
+      }
+      
+      // UIを更新
+      setReplies(replies =>
+        replies.map(r =>
+          r.id === id
+            ? { ...r, responseAt: dayjs().format("YYYY/MM/DD HH:mm"), status: "replied" }
+            : r
+        )
+      );
+      
+      alert(`✅ 返信を送信しました！\n投稿ID: ${data.responsePostId}`);
+      
+    } catch (error: any) {
+      console.error("Reply send error:", error);
+      alert(`❌ 返信送信に失敗しました: ${error.message}`);
+    }
   };
 
   const handleDelete = (id: string) => {
@@ -308,34 +345,10 @@ export default function RepliesList() {
           >
             {fetchingReplies ? "取得中..." : "リプライ取得"}
           </button>
-          <button
-            className="px-3 py-1 text-sm bg-gray-200 hover:bg-gray-300 rounded"
-            onClick={() => setShowDebug(!showDebug)}
-          >
-            {showDebug ? "デバッグ情報を隠す" : "デバッグ情報を表示"}
-          </button>
         </div>
       </div>
 
-      {/* デバッグ情報 */}
-      {showDebug && debugInfo && (
-        <div className="mb-4 p-4 bg-gray-100 rounded border">
-          <h3 className="font-bold mb-2">デバッグ情報</h3>
-          <p><strong>ユーザーID:</strong> {debugInfo.userId}</p>
-          <p><strong>DynamoDBテーブル:</strong> {debugInfo.tableName}</p>
-          <p><strong>DBからの取得件数:</strong> {debugInfo.totalItemsInDB}件</p>
-          {debugInfo.sampleRawItem ? (
-            <details className="mt-2">
-              <summary className="cursor-pointer font-semibold">サンプルDBアイテム（1件目）</summary>
-              <pre className="mt-2 text-xs bg-white p-2 rounded overflow-auto">
-                {JSON.stringify(debugInfo.sampleRawItem, null, 2)}
-              </pre>
-            </details>
-          ) : (
-            <p className="text-red-600 mt-2">⚠️ データベースにリプライデータが存在しません</p>
-          )}
-        </div>
-      )}
+
 
       {/* リプライ取得に関する案内 */}
       {replies.length === 0 && !loading && (

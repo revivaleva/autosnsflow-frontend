@@ -42,20 +42,25 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const accountId = it.accountId?.S || ""; // ハンドル（プロフィールURL用）
     if (!content || !accountId) return res.status(400).json({ error: "invalid_item" });
 
-    // Threads 資格情報とアカウント設定
+    // Threads 資格情報とアカウント設定（providerUserIdも取得）
     const acct = await ddb.send(
       new GetItemCommand({
         TableName: TBL_THREADS,
         Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } },
-        ProjectionExpression: "accessToken, secondStageContent",
+        ProjectionExpression: "accessToken, providerUserId, secondStageContent",
       })
     );
     const accessToken = acct.Item?.accessToken?.S || "";
+    const providerUserId = acct.Item?.providerUserId?.S || "";
     const secondStageContent = acct.Item?.secondStageContent?.S || "";
     if (!accessToken) return res.status(400).json({ error: "missing_threads_credentials" });
 
-    // 実投稿（/me: 作成→公開）
-    const { postId, numericId } = await postToThreads({ accessToken, text: content });
+    // 実投稿（GAS/Lambda準拠の送信先指定）
+    const { postId, numericId } = await postToThreads({ 
+      accessToken, 
+      text: content,
+      userIdOnPlatform: providerUserId 
+    });
 
     // [MOD] permalink 取得（失敗時は null）
     const permalink = await getThreadsPermalink({ accessToken, postId });
