@@ -131,7 +131,6 @@ export default function RepliesList() {
   
   // [ADD] リプライ取得の状態管理
   const [fetchingReplies, setFetchingReplies] = useState<boolean>(false);
-  const [debugJson, setDebugJson] = useState<string>("");
 
   // 返信一覧を読み込む関数
   const loadReplies = async () => {
@@ -179,50 +178,7 @@ export default function RepliesList() {
       
       const data = await response.json();
       console.log("[CLIENT] レスポンスデータ:", data);
-      // デバッグ: リプライがある箇所のみ抽出してアラート表示
-      try {
-        // リプライデータのみ抽出してデバッグ出力
-        const results = data.results || [];
-        const replyList: any[] = [];
-        for (const resItem of results) {
-          const apiLogs = resItem.apiLogs || [];
-          for (const logEntry of apiLogs) {
-            if (!logEntry) continue;
-            let items: any[] = [];
-            // prefer server-parsed replies if provided
-            if (Array.isArray(logEntry.replies) && logEntry.replies.length > 0) {
-              items = logEntry.replies;
-            } else if (logEntry.response) {
-              try {
-                const parsed = JSON.parse(logEntry.response);
-                items = parsed?.data || [];
-              } catch (e) {
-                // ignore parse errors
-              }
-            }
-            for (const rep of items) {
-              replyList.push({
-                accountId: resItem.accountId,
-                postId: logEntry.postId || resItem.postId || null,
-                replyApiId: logEntry.replyApiId || null,
-                id: rep.id || null,
-                text: rep.text || null,
-                username: rep.username || null,
-                is_reply_owned_by_me: rep.is_reply_owned_by_me ?? null,
-                raw: rep
-              });
-            }
-          }
-        }
-        if (replyList.length === 0) {
-          setDebugJson(JSON.stringify({ ok: false, message: 'no replies found' }, null, 2));
-        } else {
-          setDebugJson(JSON.stringify(replyList, null, 2));
-        }
-      } catch (e) {
-        console.log('[DEBUG] JSON processing failed:', e);
-        setDebugJson(String(e));
-      }
+
       
       if (data.ok) {
         const results = data.results || [];
@@ -629,11 +585,7 @@ export default function RepliesList() {
           </tbody>
         </table>
       </div>
-      {/* デバッグ出力 */}
-      <div className="mt-4">
-        <label className="font-semibold">デバッグ（fetch-replies JSON）</label>
-        <textarea className="w-full h-48 mt-2 p-2 border" readOnly value={debugJson} />
-      </div>
+
     </div>
   );
 }

@@ -219,12 +219,6 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
           error?: string;
           repliesFound?: number;
           response?: string;
-          replies?: Array<{
-            id: string | null;
-            text: string | null;
-            username: string | null;
-            is_reply_owned_by_me: boolean | null;
-          }>;
         } = {
           postId: post.postId,
           numericPostId: post.numericPostId,
@@ -258,15 +252,8 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
         console.log(`[INFO] ${replyApiId}: ${repliesFound.length}件のリプライ取得成功`);
         const repliesCount = repliesFound.length;
         apiLogEntry.repliesFound = repliesCount;
-        // store full response so frontend can parse replies for debug
+        // store full response for debugging
         apiLogEntry.response = JSON.stringify(json);
-        // also include a minimal parsed replies array to avoid frontend parsing large/truncated strings
-        apiLogEntry.replies = (repliesFound || []).map((rp: any) => ({
-          id: rp.id ?? null,
-          text: rp.text ?? null,
-          username: rp.username ?? null,
-          is_reply_owned_by_me: rp.is_reply_owned_by_me ?? null,
-        }));
         postInfo.apiLog = `OK: ${repliesCount}件のリプライ発見`;
         for (const rep of repliesFound) {
           const externalReplyId = String(rep.id || "");
@@ -318,8 +305,7 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
           url: "",
           status: "ERROR",
           content: post.content.substring(0, 50),
-          error: String(e).substring(0, 100),
-          replies: []
+          error: String(e).substring(0, 100)
         });
         break; // エラーで while ループを抜ける
       }

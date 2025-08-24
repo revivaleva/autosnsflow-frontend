@@ -1213,14 +1213,6 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
       replyApiId = post.numericPostId || post.postId;
     }
     
-    // 二段階投稿の特定パターン（numericPostId と replyApiId が一致）で、
-    // アカウントに二段階投稿設定がある場合は除外（二段階投稿が自分由来の可能性が高いため）
-    if (post.numericPostId && replyApiId && acct.secondStageContent && post.numericPostId === replyApiId) {
-      console.log(`[DEBUG] lambda: 投稿 ${post.postId} は numericPostId === replyApiId のため除外`);
-      try { await putLog({ userId, type: 'reply-fetch-exclude', accountId: acct.accountId, status: 'info', message: 'numericPostId===replyApiId で除外', detail: { postId: post.postId, numericPostId: post.numericPostId } }); } catch (e){}
-      continue;
-    }
-
     // 手動実行と同じ複数エンドポイント試行
     let url = new URL(`https://graph.threads.net/v1.0/${encodeURIComponent(replyApiId)}/replies`);
     // is_reply_owned_by_me を要求すると "自分の返信か" を正確に判断できる
@@ -1245,7 +1237,25 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
     }
     const json = await r.json();
     for (const rep of (json?.data || [])) {
-      // 投稿者がアカウント自身（providerUserId）であれば除外する（複数フィールドでチェック）
+      // is_reply_owned_by_me フィールドが利用可能な場合はそれを優先
+      if (rep.is_reply_owned_by_me === true) {
+        console.log(`[DEBUG] lambda: is_reply_owned_by_me=true のため除外: ${String(rep.id || "")}`);
+        try {
+          await putLog({
+            userId,
+            type: "reply-fetch-exclude",
+            accountId: acct.accountId,
+            status: "info",
+            message: "is_reply_owned_by_me=true のため除外",
+            detail: { replyId: rep.id, reason: 'is_reply_owned_by_me' }
+          });
+        } catch (e) {
+          console.log("[warn] putLog failed for exclude log:", e);
+        }
+        continue;
+      }
+
+      // is_reply_owned_by_me が利用できない場合のフォールバック: 投稿者がアカウント自身（providerUserId）であれば除外
       const authorCandidates = [
         rep.from?.id,
         rep.from?.username,
@@ -1259,7 +1269,6 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
       const isSelf = authorCandidates.some(a => a && acct.providerUserId && a === acct.providerUserId);
       if (isSelf) {
         console.log(`[DEBUG] lambda: 自分のリプライを除外: ${String(rep.id || "")}, candidates=${authorCandidates.join(',')}`);
-        // ExecutionLogs に除外の比較結果を出力
         try {
           await putLog({
             userId,
@@ -1273,32 +1282,6 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
           console.log("[warn] putLog failed for exclude log:", e);
         }
         continue;
-      }
-
-      // 二段階投稿の本文と一致する場合も除外（author一致が取れないケースのフォールバック）
-      try {
-        const s2 = (acct.secondStageContent || "").trim();
-        const rt = (rep.text || "").trim();
-        if (s2 && rt) {
-          const s2n = s2.replace(/\s+/g, ' ').toLowerCase();
-          const rtn = rt.replace(/\s+/g, ' ').toLowerCase();
-          if (s2n === rtn || s2n.includes(rtn) || rtn.includes(s2n)) {
-            console.log(`[DEBUG] lambda: 二段階投稿の本文と一致するため除外: reply=${rep.id}`);
-            try {
-              await putLog({
-                userId,
-                type: "reply-fetch-exclude",
-                accountId: acct.accountId,
-                status: "info",
-                message: "自分の二段階投稿と本文一致のため除外",
-                detail: { replyId: rep.id, secondStageContentSample: s2n }
-              });
-            } catch (e) { console.log("[warn] putLog failed for secondStage exclude:", e); }
-            continue;
-          }
-        }
-      } catch (e) {
-        console.log("[warn] secondStage exclusion check failed:", e);
       }
 
       const externalReplyId = String(rep.id);
