@@ -10,6 +10,7 @@ import { fetchThreadsAccountsFull } from "@autosnsflow/backend-core";
 const ddb = createDynamoClient();
 const TBL_SCHEDULED = process.env.TBL_SCHEDULED_POSTS || "ScheduledPosts";
 const TBL_REPLIES = process.env.TBL_REPLIES || "Replies";
+const TBL_LOGS = process.env.TBL_EXECUTION_LOGS || "ExecutionLogs";
 
 // 現在時刻（Unix秒）
 const nowSec = () => Math.floor(Date.now() / 1000);
@@ -89,6 +90,28 @@ async function upsertReplyItem(userId: string, acct: any, { externalReplyId, pos
     return true;
   } catch {
     return false;
+  }
+}
+
+// 簡易的なログ出力（Lambda の putLog と同等の最小実装）
+async function putLog({
+  userId = "", type, accountId = "", targetId = "", status = "info", message = "", detail = {}
+}: any) {
+  try {
+    const item = {
+      PK: { S: `USER#${userId || "unknown"}` },
+      SK: { S: `LOG#${Date.now()}#${Math.random().toString(36).slice(2,10)}` },
+      type: { S: type || "system" },
+      accountId: { S: accountId || "" },
+      targetId: { S: targetId || "" },
+      status: { S: status || "info" },
+      message: { S: String(message || "") },
+      detail: { S: JSON.stringify(detail || {}) },
+      createdAt: { N: String(nowSec()) },
+    };
+    await ddb.send(new PutItemCommand({ TableName: TBL_LOGS, Item: item }));
+  } catch (e) {
+    console.log("[warn] putLog skipped (fetch-replies):", String((e as Error)?.message || e));
   }
 }
 
