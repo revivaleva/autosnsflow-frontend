@@ -113,7 +113,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       TableName: TBL_REPLIES,
       Key: { 
         PK: { S: `USER#${userId}` }, 
-        SK: { S: replyId }
+        SK: { S: `REPLY#${replyId}` }
       },
     }));
 
@@ -174,7 +174,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       TableName: TBL_REPLIES,
       Key: { 
         PK: { S: `USER#${userId}` }, 
-        SK: { S: replyId }
+        SK: { S: `REPLY#${replyId}` }
       },
       UpdateExpression: "SET #st = :replied, replyAt = :ts, responseContent = :resp, responsePostId = :pid",
       ExpressionAttributeNames: { "#st": "status" },
