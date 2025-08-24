@@ -154,6 +154,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(400).json({ error: "Account missing accessToken or providerUserId" });
     }
 
+    // デバッグログ追加
+    console.log(`[DEBUG] リプライ送信開始: replyId=${replyId}, postId=${postId}, providerUserId=${providerUserId}`);
+    console.log(`[DEBUG] リプライ内容: ${replyContent.substring(0, 50)}...`);
+
     // Threadsにリプライを投稿
     const { postId: responsePostId } = await postToThreads({
       accessToken,
@@ -161,6 +165,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       userIdOnPlatform: providerUserId,
       inReplyTo: postId, // 元の投稿IDにリプライ
     });
+
+    console.log(`[DEBUG] リプライ送信完了: responsePostId=${responsePostId}`);
 
     // DBのステータスを更新
     const now = Math.floor(Date.now() / 1000);
