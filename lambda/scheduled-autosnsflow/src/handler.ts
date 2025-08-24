@@ -1404,21 +1404,23 @@ async function postToThreads({ accessToken, text, userIdOnPlatform, inReplyTo = 
   if (!accessToken) throw new Error("Threads accessToken 未設定");
   if (!userIdOnPlatform) throw new Error("Threads userId 未設定");
 
-  const base = `https://graph.threads.net/v1.0/${encodeURIComponent(userIdOnPlatform)}`;
+  const base = `https://graph.threads.net/v1.0`;
 
-  // --- コンテナ作成（GAS と同じ：media_type は必須） ---
-  // GAS 側と同じく TEXT 投稿。返信のときは replied_to_id を付与
+  // --- コンテナ作成（公式ドキュメント準拠：media_type は必須） ---
+  // 🔧 公式ドキュメント準拠: reply_to_id を使用
+  // https://developers.facebook.com/docs/threads/retrieve-and-manage-replies/create-replies
   const createPayload: any = {
     media_type: "TEXT",
     text,
     access_token: accessToken,
   };
   if (inReplyTo) {
-    // ※GAS と同じキー名。万一 API 変更でエラーになったら下のフォールバックが動きます
-    createPayload.replied_to_id = inReplyTo;
+    // 公式ドキュメント準拠: reply_to_id を使用
+    createPayload.reply_to_id = inReplyTo;
   }
 
-  let createRes = await fetch(`${base}/threads`, {
+  // 🔧 公式ドキュメント準拠: Create は /me/threads を使用
+  let createRes = await fetch(`${base}/me/threads`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(createPayload),
@@ -1426,14 +1428,16 @@ async function postToThreads({ accessToken, text, userIdOnPlatform, inReplyTo = 
 
   // フォールバック（ドキュメント差異対策）
   if (!createRes.ok && inReplyTo) {
-    // 一部資料では reply_to_id / parent_id の表記があるため順に試す
+    // reply_to_id で失敗した場合、replied_to_id で再試行
     const errText = await createRes.text().catch(() => "");
-    // reply_to_id で再試行
+    console.log(`[WARN] リプライ作成失敗、代替パラメータでリトライ: ${errText}`);
+    
+    // replied_to_id で再試行
     const altPayload1 = { ...createPayload };
-    delete altPayload1.replied_to_id;
-    altPayload1.reply_to_id = inReplyTo;
+    delete altPayload1.reply_to_id;
+    altPayload1.replied_to_id = inReplyTo;
 
-    let retried = await fetch(`${base}/threads`, {
+    let retried = await fetch(`${base}/me/threads`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(altPayload1),
@@ -1442,10 +1446,10 @@ async function postToThreads({ accessToken, text, userIdOnPlatform, inReplyTo = 
     if (!retried.ok) {
       // parent_id でさらに再試行
       const altPayload2 = { ...createPayload };
-      delete altPayload2.replied_to_id;
+      delete altPayload2.reply_to_id;
       altPayload2.parent_id = inReplyTo;
 
-      retried = await fetch(`${base}/threads`, {
+      retried = await fetch(`${base}/me/threads`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(altPayload2),
@@ -1470,8 +1474,9 @@ async function postToThreads({ accessToken, text, userIdOnPlatform, inReplyTo = 
   const creation_id = createJson?.id;
   if (!creation_id) throw new Error("Threads creation_id 取得失敗");
 
-  // --- 公開（GAS と同じ） ---
-  const pubRes = await fetch(`${base}/threads_publish`, {
+  // --- 公開（公式ドキュメント準拠） ---
+  // 🔧 公式ドキュメント準拠: Publish は /{threads-user-id}/threads_publish を使用
+  const pubRes = await fetch(`${base}/${encodeURIComponent(userIdOnPlatform)}/threads_publish`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ creation_id, access_token: accessToken }),
