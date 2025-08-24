@@ -1082,7 +1082,37 @@ async function upsertReplyItem(userId: any, acct: any, { externalReplyId, postId
           max_tokens: settings.openAiMaxTokens ?? DEFAULT_OPENAI_MAXTOKENS,
           prompt: replyPrompt,
         });
-        responseContent = generatedReply || "";
+        
+        // 投稿生成と同様のクリーニング処理を適用
+        let cleanReply = generatedReply || "";
+        
+        if (cleanReply) {
+          cleanReply = cleanReply.trim();
+          
+          // プロンプトの指示部分が含まれている場合の除去処理
+          if (cleanReply.includes("【指示】") || cleanReply.includes("【運用方針】") || cleanReply.includes("【受信したリプライ】")) {
+            // 【指示】以降のテキストを除去
+            const instructionIndex = cleanReply.lastIndexOf("【指示】");
+            if (instructionIndex !== -1) {
+              cleanReply = cleanReply.substring(0, instructionIndex).trim();
+            }
+            
+            // 他の指示セクションも除去
+            cleanReply = cleanReply.replace(/【運用方針[^】]*】\n?/g, "");
+            cleanReply = cleanReply.replace(/【元の投稿】\n?[^【]*\n?/g, "");
+            cleanReply = cleanReply.replace(/【受信したリプライ】\n?[^【]*\n?/g, "");
+            
+            // 空行を整理
+            cleanReply = cleanReply.replace(/\n\s*\n/g, "\n").trim();
+          }
+          
+          // 引用符やマークダウン記法の除去
+          cleanReply = cleanReply.replace(/^[「『"']|[」』"']$/g, "");
+          cleanReply = cleanReply.replace(/^\*\*|\*\*$/g, "");
+          cleanReply = cleanReply.trim();
+        }
+        
+        responseContent = cleanReply;
       } catch (e) {
         console.log(`[warn] 返信コンテンツ生成失敗: ${String(e)}`);
         await putLog({ 
@@ -1137,7 +1167,7 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
       },
       FilterExpression: "#st = :posted AND attribute_exists(postId)",
       ExpressionAttributeNames: { "#st": "status" },
-      ProjectionExpression: "postId, content, postedAt",
+      ProjectionExpression: "postId, numericPostId, content, postedAt",
       Limit: 3,
     }));
   } catch (e) {
@@ -1155,13 +1185,14 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
       },
       FilterExpression: "accountId = :acc AND postedAt >= :since AND #st = :posted AND attribute_exists(postId)",
       ExpressionAttributeNames: { "#st": "status" },
-      ProjectionExpression: "postId, content, postedAt",
+      ProjectionExpression: "postId, numericPostId, content, postedAt",
       Limit: 3,
     }));
   }
 
-  const posts = (q.Items || []).map((i: any) => ({
+    const posts = (q.Items || []).map((i: any) => ({
     postId: i.postId?.S,
+    numericPostId: i.numericPostId?.S,
     content: i.content?.S || "",
     postedAt: i.postedAt?.N ? Number(i.postedAt.N) : 0,
   })).filter(p => p.postId);
@@ -1169,13 +1200,37 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
   let saved = 0;
 
   for (const post of posts) {
-    const url = new URL(`https://graph.threads.net/v1.0/${encodeURIComponent(post.postId)}/replies`);
+    // 手動実行と同じID選択ロジック: 数字ID優先
+    const isNumericPostId = post.numericPostId && /^\d+$/.test(post.numericPostId);
+    const isNumericMainPostId = post.postId && /^\d+$/.test(post.postId);
+    
+    let replyApiId: string;
+    if (isNumericPostId) {
+      replyApiId = post.numericPostId;
+    } else if (isNumericMainPostId) {
+      replyApiId = post.postId;
+    } else {
+      replyApiId = post.numericPostId || post.postId;
+    }
+    
+    // 手動実行と同じ複数エンドポイント試行
+    let url = new URL(`https://graph.threads.net/v1.0/${encodeURIComponent(replyApiId)}/replies`);
+    url.searchParams.set("fields", "id,text,username,permalink");
     url.searchParams.set("access_token", acct.accessToken);
-    const r = await fetch(url.toString());
+    let r = await fetch(url.toString());
+    
+    // repliesが失敗した場合、conversationを試行
+    if (!r.ok) {
+      url = new URL(`https://graph.threads.net/v1.0/${encodeURIComponent(replyApiId)}/conversation`);
+      url.searchParams.set("fields", "id,text,username,permalink");
+      url.searchParams.set("access_token", acct.accessToken);
+      r = await fetch(url.toString());
+    }
+    
     if (!r.ok) { 
       await putLog({ 
         userId, type: "reply-fetch", accountId: acct.accountId, 
-        status: "error", message: `Threads replies error: ${r.status}` 
+        status: "error", message: `Threads replies error: ${r.status} for ID ${replyApiId}` 
       }); 
       continue; 
     }
@@ -1186,7 +1241,7 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
       const createdAt = nowSec();
       const ok = await upsertReplyItem(userId, acct, { 
         externalReplyId, 
-        postId: post.postId, 
+        postId: replyApiId, // 実際に使用したIDを保存
         text, 
         createdAt,
         originalPost: post

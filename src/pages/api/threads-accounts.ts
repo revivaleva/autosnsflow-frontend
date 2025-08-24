@@ -36,15 +36,24 @@ const UPDATABLE_FIELDS = new Set([
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
+    // [DEBUG] 認証デバッグ情報
+    const cookies = req.headers.cookie || "Cookie無し";
+    const auth = req.headers.authorization || "Authorization無し";
+    console.log("[DEBUG] Cookie:", cookies.substring(0, 100), "...");
+    console.log("[DEBUG] Authorization:", auth);
+    
     const user = await verifyUserFromRequest(req);
     const userId = user.sub;
+    console.log("[DEBUG] 認証成功, userId:", userId);
 
     // ====================
     // [MOD] GET: 共通化
     // ====================
     if (req.method === "GET") {
       // [MOD] ここだけ backend-core を呼ぶ
+      console.log("[DEBUG] fetchThreadsAccountsFull を呼び出し中, userId:", userId);
       const list = await fetchThreadsAccountsFull(userId);
+      console.log("[DEBUG] fetchThreadsAccountsFull 結果:", list.length, "件", list);
 
       // 既存APIの応答形式（items配列）に揃える
       // 参考：現行は username / accessToken / auto* / persona* など多数を返却中
@@ -57,6 +66,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         updatedAt: it.updatedAt,
 
         accessToken: it.accessToken, // [KEEP]
+        providerUserId: it.providerUserId, // [ADD] リプライ取得に必要
 
         autoPost: it.autoPost,
         autoGenerate: it.autoGenerate,
@@ -72,6 +82,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         secondStageContent: it.secondStageContent,
       }));
 
+      console.log("[DEBUG] API 最終レスポンス:", items.length, "件", items);
       return res.status(200).json({ items });
     }
 

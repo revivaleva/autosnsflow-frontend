@@ -37,17 +37,21 @@ export default function ScheduledPostsTable() {
   const [postingId, setPostingId] = useState<string>("");
 
   // 一覧取得（既存API）
+  const loadPosts = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/scheduled-posts`, { credentials: "include" });
+      const data = await res.json();
+      setPosts(data.posts ?? []);
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    fetch(`/api/scheduled-posts`, { credentials: "include" })
-      .then((res) => res.json())
-      .then((data) => {
-        setPosts(data.posts ?? []);
-        setLoading(false);
-      })
-      .catch((e) => {
-        alert(e.message);
-        setLoading(false);
-      });
+    loadPosts();
   }, []);
 
   // [MOD] 追加
@@ -196,12 +200,21 @@ export default function ScheduledPostsTable() {
       {/* 既存ボタン群 */}
       <div className="flex justify-between items-center mb-4">
         <h2 className="text-xl font-bold">予約投稿一覧</h2>
-        <button
-          onClick={openAdd}
-          className="bg-blue-500 text-white rounded px-4 py-2 hover:bg-blue-600"
-        >
-          ＋予約投稿追加
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={loadPosts}
+            className="bg-gray-500 text-white rounded px-4 py-2 hover:bg-gray-600"
+            disabled={loading}
+          >
+            {loading ? "読み込み中..." : "再読み込み"}
+          </button>
+          <button
+            onClick={openAdd}
+            className="bg-blue-500 text-white rounded px-4 py-2 hover:bg-blue-600"
+          >
+            ＋予約投稿追加
+          </button>
+        </div>
       </div>
 
       <div className="flex space-x-2 mb-2">
@@ -281,7 +294,14 @@ export default function ScheduledPostsTable() {
                   </td>
                   <td className="border p-1">{autoPostLabel}</td>
                   <td className="border p-1">{post.theme}</td>
-                  <td className="border p-1">{post.content}</td>
+                  <td className="border p-1">
+                    <div 
+                      className="truncate max-w-xs" 
+                      title={post.content}
+                    >
+                      {post.content}
+                    </div>
+                  </td>
                   <td className="border p-1">
                     {post.postedAt
                       ? typeof post.postedAt === "number"

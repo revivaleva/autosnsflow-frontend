@@ -54,7 +54,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (!accessToken) return res.status(400).json({ error: "missing_threads_credentials" });
 
     // 実投稿（/me: 作成→公開）
-    const { postId } = await postToThreads({ accessToken, text: content });
+    const { postId, numericId } = await postToThreads({ accessToken, text: content });
 
     // [MOD] permalink 取得（失敗時は null）
     const permalink = await getThreadsPermalink({ accessToken, postId });
@@ -70,6 +70,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       ":f": { BOOL: false },
     };
     const sets = ["#st = :posted", "postedAt = :ts", "postId = :pid"];
+    
+    // numericIdがあれば保存
+    if (numericId) {
+      values[":nid"] = { S: numericId };
+      sets.push("numericPostId = :nid");
+    }
+    
     if (permalink?.url) {
       sets.push("postUrl = :purl");
       values[":purl"] = { S: permalink.url };

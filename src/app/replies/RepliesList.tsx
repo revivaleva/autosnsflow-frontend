@@ -100,37 +100,116 @@ export default function RepliesList() {
   // デバッグ情報のstate
   const [debugInfo, setDebugInfo] = useState<any>(null);
   const [showDebug, setShowDebug] = useState<boolean>(false);
+  
+  // [ADD] リプライ取得の状態管理
+  const [fetchingReplies, setFetchingReplies] = useState<boolean>(false);
+
+  // 返信一覧を読み込む関数
+  const loadReplies = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch("/api/replies", { credentials: "include" });
+      const data = await response.json();
+      
+      setReplies(
+        (data.replies || []).map((r: any): ReplyType => ({
+          id: r.id,
+          accountId: r.accountId,
+          threadsPostedAt: r.scheduledAt
+            ? dayjs(r.scheduledAt * 1000).format("YYYY/MM/DD HH:mm")
+            : "",
+          postContent: r.content,
+          replyContent: r.incomingReply || "",
+          responseContent: r.replyContent || "",
+          responseAt: r.replyAt
+            ? dayjs(r.replyAt * 1000).format("YYYY/MM/DD HH:mm")
+            : "",
+          status: r.status as ReplyStatus,
+        }))
+      );
+      // デバッグ情報を保存
+      setDebugInfo(data.debug || null);
+    } catch (error: any) {
+      alert(`読み込みエラー: ${error.message}`);
+      setReplies([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // [ADD] リプライ手動取得関数
+  const fetchReplies = async () => {
+    if (fetchingReplies) return;
+    
+    setFetchingReplies(true);
+    try {
+      console.log("[CLIENT] リプライ取得開始...");
+      const response = await fetch("/api/fetch-replies", { 
+        method: "POST",
+        credentials: "include" 
+      });
+      console.log("[CLIENT] API応答:", response.status, response.statusText);
+      
+      const data = await response.json();
+      console.log("[CLIENT] レスポンスデータ:", data);
+      
+      if (data.ok) {
+        const results = data.results || [];
+        const detailMsg = results.length > 0 ? 
+          results.map((r: any) => {
+            const parts = [`${r.displayName || r.accountId}: リプライ${r.fetched}件取得`];
+            if (r.postsFound !== undefined) parts.push(`投稿${r.postsFound}件発見`);
+            if (r.postsWithPostId !== undefined) parts.push(`postId有り${r.postsWithPostId}件`);
+            if (r.error) parts.push(`エラー: ${r.error}`);
+            
+            // 投稿内容とAPI結果を追加
+            if (r.postsInfo && r.postsInfo.length > 0) {
+              const postsDetail = r.postsInfo.map((p: any, i: number) => 
+                `[${i+1}] ${p.hasPostId ? 'ID:' + p.postId.substring(0, 8) + '...' : 'ID無し'} "${p.content}" → ${p.apiLog || '未処理'}`
+              ).join('\n  ');
+              parts.push(`\n  対象投稿:\n  ${postsDetail}`);
+            }
+            
+            // API詳細ログを追加
+            if (r.apiLogs && r.apiLogs.length > 0) {
+              const apiDetail = r.apiLogs.map((log: any, i: number) => {
+                const parts = [
+                  `[${i+1}] postId: ${log.postId?.substring(0, 8)}...`,
+                  `Status: ${log.status || 'N/A'}`,
+                  `Found: ${log.repliesFound || 0}件`
+                ];
+                if (log.error) parts.push(`Error: ${log.error}`);
+                if (log.response) parts.push(`Response: ${log.response}`);
+                return parts.join(' / ');
+              }).join('\n  ');
+              parts.push(`\n  API詳細:\n  ${apiDetail}`);
+            }
+            
+            return parts.join(' / ');
+          }).join('\n\n') : 
+          '処理対象アカウントなし';
+
+        const summary = data.debug ? 
+          `\n\n📊 全体サマリー:\n投稿${data.debug.totalPostsFound || 0}件発見 / postId有り${data.debug.totalPostsWithPostId || 0}件 / リプライ${data.debug.totalFetched || 0}件取得` : 
+          '';
+        
+        alert(`✅ ${data.message}\n\n${detailMsg}${summary}`);
+        // 取得後に一覧を再読み込み
+        await loadReplies();
+      } else {
+        alert(`❌ リプライ取得に失敗しました: ${data.message || data.error}`);
+      }
+    } catch (error: any) {
+      console.error("[CLIENT] リプライ取得エラー:", error);
+      alert(`❌ リプライ取得エラー: ${error.message}`);
+    } finally {
+      setFetchingReplies(false);
+    }
+  };
 
   // APIからデータ取得
   useEffect(() => {
-    setLoading(true);
-    fetch(`/api/replies`, { credentials: "include" }) // userId送信しない
-      .then(res => res.json())
-      .then(data => {
-        setReplies(
-          (data.replies || []).map((r: any): ReplyType => ({
-            id: r.id,
-            accountId: r.accountId,
-            threadsPostedAt: r.scheduledAt
-              ? dayjs(r.scheduledAt * 1000).format("YYYY/MM/DD HH:mm")
-              : "",
-            postContent: r.content,
-            replyContent: r.incomingReply || "",
-            responseContent: r.replyContent || "",
-            responseAt: r.replyAt
-              ? dayjs(r.replyAt * 1000).format("YYYY/MM/DD HH:mm")
-              : "",
-            status: r.status as ReplyStatus,
-          }))
-        );
-        // デバッグ情報を保存
-        setDebugInfo(data.debug || null);
-        setLoading(false);
-      })
-      .catch(() => {
-        setReplies([]);
-        setLoading(false);
-      });
+    loadReplies();
   }, []);
 
   // フィルタ
@@ -216,38 +295,18 @@ export default function RepliesList() {
         <h2 className="text-xl font-bold">リプライ一覧</h2>
         <div className="flex gap-2">
           <button
-            className="px-3 py-1 text-sm bg-blue-500 hover:bg-blue-600 text-white rounded"
-            onClick={() => {
-              setLoading(true);
-              fetch(`/api/replies`, { credentials: "include" })
-                .then(res => res.json())
-                .then(data => {
-                  setReplies(
-                    (data.replies || []).map((r: any): ReplyType => ({
-                      id: r.id,
-                      accountId: r.accountId,
-                      threadsPostedAt: r.scheduledAt
-                        ? dayjs(r.scheduledAt * 1000).format("YYYY/MM/DD HH:mm")
-                        : "",
-                      postContent: r.content,
-                      replyContent: r.incomingReply || "",
-                      responseContent: r.replyContent || "",
-                      responseAt: r.replyAt
-                        ? dayjs(r.replyAt * 1000).format("YYYY/MM/DD HH:mm")
-                        : "",
-                      status: r.status as ReplyStatus,
-                    }))
-                  );
-                  setDebugInfo(data.debug || null);
-                  setLoading(false);
-                })
-                .catch(() => {
-                  setReplies([]);
-                  setLoading(false);
-                });
-            }}
+            onClick={loadReplies}
+            disabled={loading}
+            className="px-3 py-1 text-sm bg-blue-500 hover:bg-blue-600 text-white rounded disabled:bg-gray-400"
           >
-            再読み込み
+            {loading ? "読み込み中..." : "再読み込み"}
+          </button>
+          <button 
+            onClick={fetchReplies}
+            disabled={fetchingReplies || loading}
+            className="px-3 py-1 text-sm bg-green-500 hover:bg-green-600 text-white rounded disabled:bg-gray-400"
+          >
+            {fetchingReplies ? "取得中..." : "リプライ取得"}
           </button>
           <button
             className="px-3 py-1 text-sm bg-gray-200 hover:bg-gray-300 rounded"

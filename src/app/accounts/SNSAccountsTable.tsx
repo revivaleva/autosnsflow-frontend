@@ -42,10 +42,35 @@ export default function SNSAccountsTable() {
   // （他はそのまま。トグルは前回の修正のままでOK）
   const loadAccounts = async () => {
     setLoading(true);
-    const res = await fetch(`/api/threads-accounts`, { credentials: "include" });
-    const data = await res.json();
-    setAccounts((data.items ?? data.accounts) ?? []); // [FIX]
-    setLoading(false);
+    try {
+      // [DEBUG] Cookie確認
+      console.log("[DEBUG] Document cookies:", document.cookie);
+      
+      const res = await fetch(`/api/threads-accounts`, { credentials: "include" });
+      
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        console.error("[DEBUG] API Error Response:", errorData);
+        throw new Error(`API Error: ${res.status} ${res.statusText} - ${errorData.message || errorData.error || ''}`);
+      }
+      
+      const data = await res.json();
+      console.log("API Response:", data); // [DEBUG]
+      
+      if (data.error) {
+        throw new Error(data.error);
+      }
+      
+      const accounts = (data.items ?? data.accounts) ?? [];
+      console.log("Parsed accounts:", accounts); // [DEBUG]
+      setAccounts(accounts);
+    } catch (error: any) {
+      console.error("アカウント読み込みエラー:", error);
+      alert(`アカウント読み込みに失敗しました: ${error.message}`);
+      setAccounts([]);
+    } finally {
+      setLoading(false);
+    }
   };
 
   // 初回マウント時のみAPI取得
@@ -126,7 +151,14 @@ export default function SNSAccountsTable() {
       <h1 className="text-2xl font-bold mb-6 text-center">
         アカウント一覧
       </h1>
-      <div className="mb-3 flex justify-end">
+      <div className="mb-3 flex justify-between items-center">
+        <button
+          className="bg-blue-500 text-white rounded px-4 py-2 hover:bg-blue-600"
+          onClick={loadAccounts}
+          disabled={loading}
+        >
+          {loading ? "読み込み中..." : "再読み込み"}
+        </button>
         <button
           className="bg-green-500 text-white rounded px-4 py-2 hover:bg-green-600"
           onClick={handleAddClick}
