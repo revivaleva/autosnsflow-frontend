@@ -18,15 +18,8 @@ const nowSec = () => Math.floor(Date.now() / 1000);
 async function upsertReplyItem(userId: string, acct: any, { externalReplyId, postId, text, createdAt, originalPost }: any) {
   const sk = `REPLY#${externalReplyId}`;
 
-  // AI生成返信（簡易版）
+  // 手動実行では返信内容を空にして、後で手動で入力できるようにする
   let responseContent = "";
-  try {
-    const prompt = `以下のリプライに簡潔に返信してください（100文字以内）：\n${text}`;
-    // 実際のAI生成はここで実装（今回は仮）
-    responseContent = `${text}への返信です。ありがとうございます！`;
-  } catch (e) {
-    console.error("AI生成失敗:", e);
-  }
 
   try {
     await ddb.send(new PutItemCommand({
