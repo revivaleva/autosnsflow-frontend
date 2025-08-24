@@ -51,13 +51,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const recentPostsQuery = await ddb.send(new QueryCommand({
         TableName: TBL_SCHEDULED,
         KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
-        ExpressionAttributeValues: {
-          ":pk": { S: `USER#${userId}` },
-          ":pfx": { S: "SCHEDULEDPOST#" },
-        },
         FilterExpression: "postedAt >= :since AND #st = :posted",
         ExpressionAttributeNames: { "#st": "status" },
         ExpressionAttributeValues: {
+          ":pk": { S: `USER#${userId}` },
+          ":pfx": { S: "SCHEDULEDPOST#" },
           ":since": { N: String(last24Hours) },
           ":posted": { S: "posted" },
         },
