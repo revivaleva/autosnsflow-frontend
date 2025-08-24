@@ -178,12 +178,21 @@ export default function RepliesList() {
       
       const data = await response.json();
       console.log("[CLIENT] レスポンスデータ:", data);
-      // デバッグ: API 応答をアラートで表示（大きすぎる場合は切り詰め）
+      // デバッグ: リプライがある箇所のみ抽出してアラート表示
       try {
-        const jsonStr = JSON.stringify(data, null, 2);
+        const results = data.results || [];
+        const hasReplies = (r: any) => {
+          if (r.fetched && r.fetched > 0) return true;
+          if (Array.isArray(r.postsInfo) && r.postsInfo.some((p: any) => (p.repliesFound || 0) > 0 || p.hasReplyApiId)) return true;
+          if (Array.isArray(r.apiLogs) && r.apiLogs.some((l: any) => (l.repliesFound || 0) > 0)) return true;
+          return false;
+        };
+        const filtered = results.filter(hasReplies);
+        const out = filtered.length > 0 ? { ok: true, results: filtered } : { ok: false, message: 'no replies found' };
+        const jsonStr = JSON.stringify(out, null, 2);
         alert(jsonStr.length > 10000 ? jsonStr.slice(0, 10000) + "\n...truncated" : jsonStr);
       } catch (e) {
-        console.log('[DEBUG] JSON stringify failed:', e);
+        console.log('[DEBUG] JSON processing failed:', e);
       }
       
       if (data.ok) {
