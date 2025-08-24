@@ -185,7 +185,8 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
     while (attempt < maxRetries) {
       try {
         // 方法1: GAS同様の直接リプライ取得（replyApiId使用）
-        let url = `https://graph.threads.net/v1.0/${encodeURIComponent(replyApiId)}/replies?fields=id,text,username,permalink&access_token=${encodeURIComponent(acct.accessToken)}`;
+        // include is_reply_owned_by_me to enable reliable self-reply detection
+        let url = `https://graph.threads.net/v1.0/${encodeURIComponent(replyApiId)}/replies?fields=id,text,username,permalink,is_reply_owned_by_me&access_token=${encodeURIComponent(acct.accessToken)}`;
         
         console.log(`[INFO] リプライ取得開始: ${replyApiId} (試行${attempt + 1}/${maxRetries})`);
         console.log(`[DEBUG] 完全なURL: ${url.replace(acct.accessToken, "***TOKEN***")}`);
@@ -197,7 +198,7 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
         // 方法1が失敗した場合、conversation エンドポイントを試行
         if (!r.ok && attempt === 0) {
           console.log(`[INFO] repliesエンドポイント失敗 (${r.status}), conversationで再試行`);
-          url = `https://graph.threads.net/v1.0/${encodeURIComponent(replyApiId)}/conversation?fields=id,text,username,permalink&access_token=${encodeURIComponent(acct.accessToken)}`;
+          url = `https://graph.threads.net/v1.0/${encodeURIComponent(replyApiId)}/conversation?fields=id,text,username,permalink,is_reply_owned_by_me&access_token=${encodeURIComponent(acct.accessToken)}`;
           r = await fetch(url);
           // 代替IDがある場合は再試行
           if (!r.ok && post.numericPostId && post.postId && post.numericPostId !== post.postId) {
@@ -251,7 +252,15 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
         console.log(`[INFO] ${replyApiId}: ${repliesFound.length}件のリプライ取得成功`);
         const repliesCount = repliesFound.length;
         apiLogEntry.repliesFound = repliesCount;
-        apiLogEntry.response = JSON.stringify(json).substring(0, 200);
+        // store full response so frontend can parse replies for debug
+        apiLogEntry.response = JSON.stringify(json);
+        // also include a minimal parsed replies array to avoid frontend parsing large/truncated strings
+        apiLogEntry.replies = (repliesFound || []).map((rp: any) => ({
+          id: rp.id ?? null,
+          text: rp.text ?? null,
+          username: rp.username ?? null,
+          is_reply_owned_by_me: rp.is_reply_owned_by_me ?? null,
+        }));
         postInfo.apiLog = `OK: ${repliesCount}件のリプライ発見`;
         for (const rep of repliesFound) {
           const externalReplyId = String(rep.id || "");

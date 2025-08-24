@@ -187,24 +187,30 @@ export default function RepliesList() {
         for (const resItem of results) {
           const apiLogs = resItem.apiLogs || [];
           for (const logEntry of apiLogs) {
-            if (!logEntry || !logEntry.response) continue;
-            try {
-              const parsed = JSON.parse(logEntry.response);
-              const items = parsed?.data || [];
-              for (const rep of items) {
-                replyList.push({
-                  accountId: resItem.accountId,
-                  postId: logEntry.postId || resItem.postId || null,
-                  replyApiId: logEntry.replyApiId || null,
-                  id: rep.id || null,
-                  text: rep.text || null,
-                  username: rep.username || null,
-                  is_reply_owned_by_me: rep.is_reply_owned_by_me ?? null,
-                  raw: rep
-                });
+            if (!logEntry) continue;
+            let items: any[] = [];
+            // prefer server-parsed replies if provided
+            if (Array.isArray(logEntry.replies) && logEntry.replies.length > 0) {
+              items = logEntry.replies;
+            } else if (logEntry.response) {
+              try {
+                const parsed = JSON.parse(logEntry.response);
+                items = parsed?.data || [];
+              } catch (e) {
+                // ignore parse errors
               }
-            } catch (e) {
-              // ignore parse errors for this log entry
+            }
+            for (const rep of items) {
+              replyList.push({
+                accountId: resItem.accountId,
+                postId: logEntry.postId || resItem.postId || null,
+                replyApiId: logEntry.replyApiId || null,
+                id: rep.id || null,
+                text: rep.text || null,
+                username: rep.username || null,
+                is_reply_owned_by_me: rep.is_reply_owned_by_me ?? null,
+                raw: rep
+              });
             }
           }
         }
