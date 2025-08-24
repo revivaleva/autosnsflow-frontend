@@ -10,90 +10,6 @@ const ddb = createDynamoClient();
 const TBL_SCHEDULED = "ScheduledPosts";
 const TBL_THREADS = "ThreadsAccounts";
 
-// GAS/Lambda準拠のThreads投稿関数（リプライ対応）
-async function postToThreadsWithReply({ accessToken, text, userIdOnPlatform, inReplyTo }: {
-  accessToken: string;
-  text: string;
-  userIdOnPlatform: string;
-  inReplyTo?: string;
-}): Promise<{ postId: string }> {
-  if (!accessToken) throw new Error("Threads accessToken 未設定");
-  if (!userIdOnPlatform) throw new Error("Threads userId 未設定");
-
-  const base = `https://graph.threads.net/v1.0/${encodeURIComponent(userIdOnPlatform)}`;
-
-  // コンテナ作成（GAS/Lambda同様）
-  const createPayload: any = {
-    media_type: "TEXT",
-    text,
-    access_token: accessToken,
-  };
-  
-  if (inReplyTo) {
-    createPayload.replied_to_id = inReplyTo;
-  }
-
-  let createRes = await fetch(`${base}/threads`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(createPayload),
-  });
-
-  // エラー時のリトライ（Lambda準拠）
-  if (!createRes.ok) {
-    const errText = await createRes.text().catch(() => "");
-    console.log(`[WARN] Threads create失敗、リトライ: ${createRes.status} ${errText}`);
-    
-    // パラメータ調整してリトライ
-    const retryPayload = { ...createPayload };
-    if (inReplyTo) {
-      // replied_to_idの代替フィールド名を試行
-      delete retryPayload.replied_to_id;
-      retryPayload.reply_to_id = inReplyTo;
-    }
-    
-    const retried = await fetch(`${base}/threads`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(retryPayload),
-    });
-    
-    if (!retried.ok) {
-      const err2 = await retried.text().catch(() => "");
-      throw new Error(
-        `Threads create error: first=${createRes.status} ${errText} / retry=${retried.status} ${err2}`
-      );
-    }
-    createRes = retried;
-  }
-
-  if (!createRes.ok) {
-    const t = await createRes.text().catch(() => "");
-    throw new Error(`Threads create error: ${createRes.status} ${t}`);
-  }
-
-  const createJson = await createRes.json().catch(() => ({}));
-  const creation_id = createJson?.id;
-  if (!creation_id) throw new Error("Threads creation_id 取得失敗");
-
-  // 公開（GAS/Lambda同様）
-  const pubRes = await fetch(`${base}/threads_publish`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ creation_id, access_token: accessToken }),
-  });
-  
-  if (!pubRes.ok) {
-    const t = await pubRes.text().catch(() => "");
-    throw new Error(`Threads publish error: ${pubRes.status} ${t}`);
-  }
-  
-  const pubJson = await pubRes.json().catch(() => ({}));
-  const postId = pubJson?.id || creation_id;
-  
-  return { postId };
-}
-
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
     const user = await verifyUserFromRequest(req);
@@ -169,13 +85,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(400).json({ error: "Account missing secondStageContent" });
     }
 
-    // Threadsに二段階投稿（元の投稿にリプライ）
-    const { postId: secondStagePostId } = await postToThreadsWithReply({
+    // デバッグログ追加
+    console.log(`[DEBUG] 二段階投稿開始: scheduledPostId=${scheduledPostId}, postId=${postId}, providerUserId=${providerUserId}`);
+    console.log(`[DEBUG] 二段階投稿パラメータ: inReplyTo=${postId}, text=${secondStageContent.substring(0, 50)}...`);
+
+    // Threadsに二段階投稿（元の投稿にリプライ）- 修正済みのpostToThreads使用
+    const { postId: secondStagePostId } = await postToThreads({
       accessToken,
       text: secondStageContent,
       userIdOnPlatform: providerUserId,
       inReplyTo: postId, // 元の投稿IDにリプライ
     });
+
+    console.log(`[DEBUG] 二段階投稿完了: secondStagePostId=${secondStagePostId}`);
 
     // DBのステータスを更新
     const now = Math.floor(Date.now() / 1000);

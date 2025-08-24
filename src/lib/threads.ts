@@ -27,6 +27,9 @@ export async function postToThreads({
     // リプライパラメータ（GAS/Lambda準拠）
     if (inReplyTo) {
       body.replied_to_id = inReplyTo;
+      console.log(`[DEBUG] リプライとして投稿: inReplyTo=${inReplyTo}`);
+    } else {
+      console.log(`[DEBUG] 通常投稿: inReplyToなし`);
     }
 
     // 送信先をGAS/Lambda準拠に修正
@@ -34,11 +37,41 @@ export async function postToThreads({
       ? `${base}/${encodeURIComponent(userIdOnPlatform)}/threads`
       : `${base}/me/threads`;
 
-    const r = await fetch(endpoint, {
+    console.log(`[DEBUG] 投稿エンドポイント: ${endpoint}`);
+    console.log(`[DEBUG] 投稿ペイロード: ${JSON.stringify({...body, access_token: "***"}, null, 2)}`);
+
+    let r = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
+    
+    // リプライ失敗時のリトライ（GAS/Lambda準拠）
+    if (!r.ok && inReplyTo) {
+      const errText = await r.text().catch(() => "");
+      console.log(`[WARN] リプライ投稿失敗、代替パラメータでリトライ: ${r.status} ${errText}`);
+      
+      // replied_to_id を reply_to_id に変更してリトライ
+      const retryBody = { ...body };
+      delete retryBody.replied_to_id;
+      retryBody.reply_to_id = inReplyTo;
+      
+      console.log(`[DEBUG] リトライペイロード: ${JSON.stringify({...retryBody, access_token: "***"}, null, 2)}`);
+      
+      r = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(retryBody),
+      });
+      
+      if (!r.ok) {
+        const err2 = await r.text().catch(() => "");
+        console.error(`[ERROR] リトライも失敗: first=${errText} / retry=${err2}`);
+      } else {
+        console.log(`[INFO] リトライ成功`);
+      }
+    }
+    
     const tx = await r.text().catch(() => "");
     if (!r.ok) throw new Error(`threads_create_failed: ${r.status} ${tx}`);
     let j: any = {};
