@@ -263,30 +263,45 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
           // 優先: APIが返すis_reply_owned_by_meを使って除外
           if (rep.is_reply_owned_by_me === true) {
             console.log(`[DEBUG] 自分のリプライを除外 (is_reply_owned_by_me): ${externalReplyId}`);
+            try {
+              await putLog({
+                userId,
+                type: "reply-fetch-exclude",
+                accountId: acct.accountId,
+                status: "info",
+                message: "is_reply_owned_by_me=true のため除外",
+                detail: { replyId: rep.id, reason: 'is_reply_owned_by_me' }
+              });
+            } catch (e) { console.log('[warn] putLog failed for is_reply flag exclude:', e); }
             continue;
           }
 
-          // フォールバック: 投稿者フィールドで除外
-          const authorId = rep.from?.id ?? rep.from?.username ?? rep.user?.id ?? rep.user?.username ?? rep.author?.id ?? rep.author?.username ?? "";
-          if (authorId && acct.providerUserId && authorId === acct.providerUserId) {
-            console.log(`[DEBUG] 自分のリプライを除外 (author match): ${externalReplyId}`);
-            continue;
-          }
-
-          // フォールバック2: 二段階投稿の本文と一致する場合は除外
+          // フラグが付いていない場合は除外しないが、フィールド名や値の差異を調査するためログを出力する
           try {
+            const authorCandidates = [
+              rep.from?.id,
+              rep.from?.username,
+              rep.username,
+              rep.user?.id,
+              rep.user?.username,
+              rep.author?.id,
+              rep.author?.username,
+            ].map(x => (x == null ? "" : String(x)));
+
             const s2 = (acct.secondStageContent || "").trim();
             const rt = (rep.text || "").trim();
-            if (s2 && rt) {
-              const s2n = s2.replace(/\s+/g, ' ').toLowerCase();
-              const rtn = rt.replace(/\s+/g, ' ').toLowerCase();
-              if (s2n === rtn || s2n.includes(rtn) || rtn.includes(s2n)) {
-                console.log(`[DEBUG] 二段階投稿の本文と一致するため除外: reply=${externalReplyId}`);
-                continue;
-              }
+
+            // putLogでデバッグ情報を残す（除外はしない）
+            const debugDetail: any = { replyId: rep.id, authorCandidates, providerUserId: acct.providerUserId };
+            if (s2 && rt) debugDetail.secondStageSample = { s2: s2.replace(/\s+/g,' ').toLowerCase(), rt: rt.replace(/\s+/g,' ').toLowerCase() };
+
+            // only log when there's a potential match to investigate
+            const potentialMatch = authorCandidates.some(a => a && acct.providerUserId && a === acct.providerUserId) || (s2 && rt && (s2.replace(/\s+/g,' ').toLowerCase() === rt.replace(/\s+/g,' ').toLowerCase()));
+            if (potentialMatch) {
+              await putLog({ userId, type: "reply-fetch-flag-mismatch", accountId: acct.accountId, status: "info", message: "flag missing but candidate fields matched", detail: debugDetail });
             }
           } catch (e) {
-            console.log("[warn] secondStage exclusion check failed:", e);
+            console.log('[warn] flag-mismatch logging failed:', e);
           }
 
           const createdAt = nowSec();

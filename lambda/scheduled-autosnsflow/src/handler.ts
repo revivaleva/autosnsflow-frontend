@@ -1237,7 +1237,7 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
     }
     const json = await r.json();
     for (const rep of (json?.data || [])) {
-      // is_reply_owned_by_me フィールドが利用可能な場合はそれを優先
+      // is_reply_owned_by_me フィールドが利用可能な場合はそれを優先して除外
       if (rep.is_reply_owned_by_me === true) {
         console.log(`[DEBUG] lambda: is_reply_owned_by_me=true のため除外: ${String(rep.id || "")}`);
         try {
@@ -1255,33 +1255,29 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
         continue;
       }
 
-      // is_reply_owned_by_me が利用できない場合のフォールバック: 投稿者がアカウント自身（providerUserId）であれば除外
-      const authorCandidates = [
-        rep.from?.id,
-        rep.from?.username,
-        rep.username,
-        rep.user?.id,
-        rep.user?.username,
-        rep.author?.id,
-        rep.author?.username,
-      ].map(x => (x == null ? "" : String(x)));
+      // フラグが付いていない場合は除外しないが、原因調査のため候補一致時にログを残す
+      try {
+        const authorCandidates = [
+          rep.from?.id,
+          rep.from?.username,
+          rep.username,
+          rep.user?.id,
+          rep.user?.username,
+          rep.author?.id,
+          rep.author?.username,
+        ].map(x => (x == null ? "" : String(x)));
 
-      const isSelf = authorCandidates.some(a => a && acct.providerUserId && a === acct.providerUserId);
-      if (isSelf) {
-        console.log(`[DEBUG] lambda: 自分のリプライを除外: ${String(rep.id || "")}, candidates=${authorCandidates.join(',')}`);
-        try {
-          await putLog({
-            userId,
-            type: "reply-fetch-exclude",
-            accountId: acct.accountId,
-            status: "info",
-            message: "自分のリプライを除外しました",
-            detail: { replyId: rep.id, authorCandidates, providerUserId: acct.providerUserId, reason: 'author_match' }
-          });
-        } catch (e) {
-          console.log("[warn] putLog failed for exclude log:", e);
+        const s2 = (acct.secondStageContent || "").trim();
+        const rt = (rep.text || "").trim();
+
+        const potentialMatch = authorCandidates.some(a => a && acct.providerUserId && a === acct.providerUserId) || (s2 && rt && (s2.replace(/\s+/g,' ').toLowerCase() === rt.replace(/\s+/g,' ').toLowerCase()));
+        if (potentialMatch) {
+          const detail: any = { replyId: rep.id, authorCandidates, providerUserId: acct.providerUserId };
+          if (s2 && rt) detail.secondStageSample = { s2: s2.replace(/\s+/g,' ').toLowerCase(), rt: rt.replace(/\s+/g,' ').toLowerCase() };
+          await putLog({ userId, type: "reply-fetch-flag-mismatch", accountId: acct.accountId, status: "info", message: "flag missing but candidate fields matched", detail });
         }
-        continue;
+      } catch (e) {
+        console.log('[warn] flag-mismatch logging failed in lambda:', e);
       }
 
       const externalReplyId = String(rep.id);
