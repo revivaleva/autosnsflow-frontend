@@ -24,18 +24,18 @@ export async function postToThreads({
     };
     if (textPostAppId) body.text_post_app_id = textPostAppId;
     
-    // リプライパラメータ（GAS/Lambda準拠）
+    // リプライパラメータ（公式ドキュメント準拠）
+    // https://developers.facebook.com/docs/threads/retrieve-and-manage-replies/create-replies
     if (inReplyTo) {
-      body.replied_to_id = inReplyTo;
+      body.reply_to_id = inReplyTo;  // 🔧 公式準拠: replied_to_id → reply_to_id
       console.log(`[DEBUG] リプライとして投稿: inReplyTo=${inReplyTo}`);
     } else {
       console.log(`[DEBUG] 通常投稿: inReplyToなし`);
     }
 
-    // 送信先をGAS/Lambda準拠に修正
-    const endpoint = userIdOnPlatform 
-      ? `${base}/${encodeURIComponent(userIdOnPlatform)}/threads`
-      : `${base}/me/threads`;
+    // 🔧 公式ドキュメント準拠: Create は常に /me/threads を使用
+    // https://developers.facebook.com/docs/threads/retrieve-and-manage-replies/create-replies
+    const endpoint = `${base}/me/threads`;
 
     console.log(`[DEBUG] 投稿エンドポイント: ${endpoint}`);
     console.log(`[DEBUG] 投稿ペイロード: ${JSON.stringify({...body, access_token: "***"}, null, 2)}`);
@@ -49,15 +49,15 @@ export async function postToThreads({
       body: JSON.stringify(body),
     });
     
-    // リプライ失敗時のリトライ（GAS/Lambda準拠）
+    // リプライ失敗時のリトライ（代替パラメータで再試行）
     if (!r.ok && inReplyTo) {
       const errText = await r.text().catch(() => "");
       console.log(`[WARN] リプライ投稿失敗、代替パラメータでリトライ: ${r.status} ${errText}`);
       
-      // replied_to_id を reply_to_id に変更してリトライ
+      // reply_to_id を replied_to_id に変更してリトライ（フォールバック）
       const retryBody = { ...body };
-      delete retryBody.replied_to_id;
-      retryBody.reply_to_id = inReplyTo;
+      delete retryBody.reply_to_id;
+      retryBody.replied_to_id = inReplyTo;
       
       console.log(`[DEBUG] リトライペイロード: ${JSON.stringify({...retryBody, access_token: "***"}, null, 2)}`);
       
@@ -71,7 +71,7 @@ export async function postToThreads({
         const err2 = await r.text().catch(() => "");
         console.error(`[ERROR] リトライも失敗: first=${errText} / retry=${err2}`);
       } else {
-        console.log(`[INFO] リトライ成功`);
+        console.log(`[INFO] リトライ成功 (replied_to_id)`);
       }
     }
     
@@ -85,10 +85,11 @@ export async function postToThreads({
   };
 
   const publish = async (creationId: string) => {
-    // 公開エンドポイントもGAS/Lambda準拠に修正
+    // 🔧 公式ドキュメント準拠: Publish は /{threads-user-id}/threads_publish を使用
+    // https://developers.facebook.com/docs/threads/retrieve-and-manage-replies/create-replies  
     const publishEndpoint = userIdOnPlatform 
       ? `${base}/${encodeURIComponent(userIdOnPlatform)}/threads_publish`
-      : `${base}/me/threads_publish`;
+      : `${base}/me/threads_publish`;  // フォールバック（公式仕様では threads-user-id が必須）
     
     console.log(`[DEBUG] 公開エンドポイント: ${publishEndpoint}`);
     console.log(`[DEBUG] 公開creationId: ${creationId}`);
