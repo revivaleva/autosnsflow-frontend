@@ -26,6 +26,7 @@ type EditModalProps = {
   onClose: () => void;
   onSave: (value: string) => void;
   value: string;
+  replyData?: ReplyType; // AI生成用のデータ
 };
 
 // ==========================
@@ -40,19 +41,47 @@ const statusOptions = [
 // ==========================
 // 返信内容編集モーダル
 // ==========================
-function EditModal({ open, onClose, onSave, value }: EditModalProps) {
+function EditModal({ open, onClose, onSave, value, replyData }: EditModalProps) {
   const [text, setText] = useState<string>(value);
   const [aiLoading, setAiLoading] = useState<boolean>(false);
 
   useEffect(() => { setText(value); }, [value]);
 
-  // 自動生成
-  const handleAIGenerate = () => {
+  // 自動生成（実際のAI API呼び出し）
+  const handleAIGenerate = async () => {
+    if (!replyData) return;
+    
     setAiLoading(true);
-    setTimeout(() => {
-      setText("（AIで自動生成された返信内容サンプル）");
+    try {
+      const response = await fetch("/api/ai-gateway", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          purpose: "reply-generate",
+          input: {
+            originalPost: replyData.postContent,
+            incomingReply: replyData.replyContent,
+            accountId: replyData.accountId,
+          },
+        }),
+      });
+      
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.error || `HTTP ${response.status}`);
+      }
+      
+      setText(data.text || "（生成に失敗しました）");
+      
+    } catch (error: any) {
+      console.error("AI generation error:", error);
+      alert(`AI生成に失敗しました: ${error.message}`);
+      setText("（AI生成に失敗しました）");
+    } finally {
       setAiLoading(false);
-    }, 800);
+    }
   };
 
   if (!open) return null;
@@ -326,6 +355,7 @@ export default function RepliesList() {
         onClose={() => setEditModalOpen(false)}
         onSave={handleEditSave}
         value={editTarget?.responseContent || ""}
+        replyData={editTarget || undefined}
       />
 
       <div className="flex justify-between items-center mb-4">
@@ -448,9 +478,33 @@ export default function RepliesList() {
               <tr key={r.id}>
                 <td className="border p-1">{r.accountId}</td>
                 <td className="border p-1">{r.threadsPostedAt}</td>
-                <td className="border p-1">{r.postContent}</td>
-                <td className="border p-1">{r.replyContent}</td>
-                <td className="border p-1">{r.responseContent}</td>
+                <td className="border p-1">
+                  <div 
+                    className="truncate max-w-xs cursor-pointer" 
+                    title={r.postContent}
+                    onClick={() => r.postContent && alert(`投稿本文:\n\n${r.postContent}`)}
+                  >
+                    {r.postContent}
+                  </div>
+                </td>
+                <td className="border p-1">
+                  <div 
+                    className="truncate max-w-xs cursor-pointer" 
+                    title={r.replyContent}
+                    onClick={() => r.replyContent && alert(`リプライ内容:\n\n${r.replyContent}`)}
+                  >
+                    {r.replyContent}
+                  </div>
+                </td>
+                <td className="border p-1">
+                  <div 
+                    className="truncate max-w-xs cursor-pointer" 
+                    title={r.responseContent || "返信内容未作成"}
+                    onClick={() => r.responseContent && alert(`返信内容:\n\n${r.responseContent}`)}
+                  >
+                    {r.responseContent || "（未作成）"}
+                  </div>
+                </td>
                 <td className="border p-1">{r.responseAt}</td>
                 <td className="border p-1 space-x-1">
                   {r.status !== "replied" && (
