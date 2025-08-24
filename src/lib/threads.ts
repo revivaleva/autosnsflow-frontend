@@ -39,6 +39,9 @@ export async function postToThreads({
 
     console.log(`[DEBUG] 投稿エンドポイント: ${endpoint}`);
     console.log(`[DEBUG] 投稿ペイロード: ${JSON.stringify({...body, access_token: "***"}, null, 2)}`);
+    console.log(`[DEBUG] userIdOnPlatform: ${userIdOnPlatform}`);
+    console.log(`[DEBUG] inReplyTo: ${inReplyTo}`);
+    console.log(`[DEBUG] リプライモード: ${inReplyTo ? 'YES' : 'NO'}`);
 
     let r = await fetch(endpoint, {
       method: "POST",
@@ -87,6 +90,9 @@ export async function postToThreads({
       ? `${base}/${encodeURIComponent(userIdOnPlatform)}/threads_publish`
       : `${base}/me/threads_publish`;
     
+    console.log(`[DEBUG] 公開エンドポイント: ${publishEndpoint}`);
+    console.log(`[DEBUG] 公開creationId: ${creationId}`);
+    
     const r = await fetch(publishEndpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -102,7 +108,10 @@ export async function postToThreads({
   };
 
   const creationId = await create();
+  console.log(`[DEBUG] 作成完了 creationId: ${creationId}`);
+  
   const postId = await publish(creationId);
+  console.log(`[DEBUG] 公開完了 postId: ${postId}`);
   
   // 数字IDを取得（投稿詳細から）
   let numericId: string | undefined;

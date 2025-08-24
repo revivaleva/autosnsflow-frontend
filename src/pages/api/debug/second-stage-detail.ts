@@ -70,7 +70,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     // Threads API テスト用情報
-    const debugInfo = {
+    const debugInfo: {
+      scheduledPost: any;
+      account: any;
+      validation: any;
+      diagnosis: any;
+      testEndpoints?: any;
+    } = {
       scheduledPost: {
         scheduledPostId,
         accountId,
