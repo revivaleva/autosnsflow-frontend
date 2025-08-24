@@ -1647,6 +1647,12 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
       updateValues[":nid"] = { S: postResult.numericId };
     }
 
+    // 二段階投稿の初期化
+    if (acct.secondStageContent && acct.secondStageContent.trim()) {
+      updateExpr += ", doublePostStatus = :waiting";
+      updateValues[":waiting"] = { S: "waiting" };
+    }
+
     await ddb.send(new UpdateItemCommand({
       TableName: TBL_SCHEDULED,
       Key: { PK: { S: pk }, SK: { S: sk } },

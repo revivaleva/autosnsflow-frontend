@@ -164,7 +164,7 @@ export default function ScheduledPostsTable() {
         alert(`即時投稿に失敗しました: ${data?.error || resp.statusText}`);
         return;
       }
-      // 成功したら postUrl / postId / postedAt / status を反映
+      // 成功したら postUrl / postId / postedAt / status / doublePostStatus を反映
       setPosts((prev) =>
         prev.map((x) =>
           x.scheduledPostId === p.scheduledPostId
@@ -174,6 +174,7 @@ export default function ScheduledPostsTable() {
                 postedAt: data.post.postedAt,
                 postUrl: data.post.postUrl,
                 postId: data.post.postId,
+                doublePostStatus: data.post.doublePostStatus || undefined,
               }
             : x
         )
