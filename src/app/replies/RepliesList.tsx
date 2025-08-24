@@ -181,10 +181,38 @@ export default function RepliesList() {
       console.log("[CLIENT] レスポンスデータ:", data);
       // デバッグ: リプライがある箇所のみ抽出してアラート表示
       try {
-        // デバッグ出力は一覧画面下部のテキストエリアに表示する
+        // リプライデータのみ抽出してデバッグ出力
         const results = data.results || [];
-        const jsonStr = JSON.stringify({ ok: data.ok, results }, null, 2);
-        setDebugJson(jsonStr);
+        const replyList: any[] = [];
+        for (const resItem of results) {
+          const apiLogs = resItem.apiLogs || [];
+          for (const logEntry of apiLogs) {
+            if (!logEntry || !logEntry.response) continue;
+            try {
+              const parsed = JSON.parse(logEntry.response);
+              const items = parsed?.data || [];
+              for (const rep of items) {
+                replyList.push({
+                  accountId: resItem.accountId,
+                  postId: logEntry.postId || resItem.postId || null,
+                  replyApiId: logEntry.replyApiId || null,
+                  id: rep.id || null,
+                  text: rep.text || null,
+                  username: rep.username || null,
+                  is_reply_owned_by_me: rep.is_reply_owned_by_me ?? null,
+                  raw: rep
+                });
+              }
+            } catch (e) {
+              // ignore parse errors for this log entry
+            }
+          }
+        }
+        if (replyList.length === 0) {
+          setDebugJson(JSON.stringify({ ok: false, message: 'no replies found' }, null, 2));
+        } else {
+          setDebugJson(JSON.stringify(replyList, null, 2));
+        }
       } catch (e) {
         console.log('[DEBUG] JSON processing failed:', e);
         setDebugJson(String(e));
