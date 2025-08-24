@@ -43,6 +43,7 @@ function mapItem(it: any) {
     postedAt: getN("postedAt"),
     // [ADD] 一覧にも返す
     postId: getS("postId"),
+    numericPostId: getS("numericPostId"), // 数字の投稿ID
     postUrl: getS("postUrl"),
     isDeleted: getB("isDeleted"),
     replyCount: getN("replyCount") ?? 0,

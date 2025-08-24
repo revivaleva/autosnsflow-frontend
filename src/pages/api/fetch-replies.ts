@@ -121,21 +121,27 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
   for (const item of (q.Items || [])) {
     const post = {
       postId: item.postId?.S || "",
+      numericPostId: item.numericPostId?.S || "",
       content: item.content?.S || "",
       postedAt: Number(item.postedAt?.N || "0"),
       scheduledPostId: item.scheduledPostId?.S || "",
     };
 
+    // リプライ取得用のIDを決定（numericPostId優先、なければpostId）
+    const replyApiId = post.numericPostId || post.postId;
+
     const postInfo: any = {
       postId: post.postId || "空",
+      numericPostId: post.numericPostId || "空",
+      replyApiId: replyApiId || "空",
       content: (post.content || "").substring(0, 100),
       postedAt: post.postedAt || "空",
-      hasPostId: !!(post.postId),
+      hasReplyApiId: !!replyApiId,
       apiLog: ""
     };
 
-    if (!post.postId) {
-      postInfo.apiLog = "SKIP: postId無し";
+    if (!replyApiId) {
+      postInfo.apiLog = "SKIP: リプライ取得用ID無し";
       postsInfo.push(postInfo);
       continue;
     }
@@ -146,11 +152,13 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
     
     while (attempt < maxRetries) {
       try {
-        // 方法1: GAS同様の直接リプライ取得
-        let url = `https://graph.threads.net/v1.0/${encodeURIComponent(post.postId)}/replies?fields=id,text,username,permalink&access_token=${encodeURIComponent(acct.accessToken)}`;
+        // 方法1: GAS同様の直接リプライ取得（replyApiId使用）
+        let url = `https://graph.threads.net/v1.0/${encodeURIComponent(replyApiId)}/replies?fields=id,text,username,permalink&access_token=${encodeURIComponent(acct.accessToken)}`;
         
         console.log(`[DEBUG] Threads API リクエスト開始 (試行${attempt + 1}/${maxRetries}):`);
         console.log(`[DEBUG] - postId: ${post.postId}`);
+        console.log(`[DEBUG] - numericPostId: ${post.numericPostId}`);
+        console.log(`[DEBUG] - replyApiId: ${replyApiId} (使用中)`);
         console.log(`[DEBUG] - URL: ${url.replace(acct.accessToken, "***TOKEN***")}`);
         console.log(`[DEBUG] - アクセストークン長: ${acct.accessToken?.length || 0}`);
         
@@ -159,12 +167,14 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
         // 方法1が失敗した場合、conversation エンドポイントを試行
         if (!r.ok && attempt === 0) {
           console.log(`[DEBUG] replies失敗 (${r.status}), conversation を試行`);
-          url = `https://graph.threads.net/v1.0/${encodeURIComponent(post.postId)}/conversation?fields=id,text,username,permalink&access_token=${encodeURIComponent(acct.accessToken)}`;
+          url = `https://graph.threads.net/v1.0/${encodeURIComponent(replyApiId)}/conversation?fields=id,text,username,permalink&access_token=${encodeURIComponent(acct.accessToken)}`;
           r = await fetch(url);
         }
       
         const apiLogEntry: {
           postId: string;
+          numericPostId: string;
+          replyApiId: string;
           url: string;
           status: string;
           content: string;
@@ -173,6 +183,8 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
           response?: string;
         } = {
           postId: post.postId,
+          numericPostId: post.numericPostId,
+          replyApiId: replyApiId,
           url: url.replace(acct.accessToken, "***TOKEN***"),
           status: `${r.status} ${r.statusText}`,
           content: post.content.substring(0, 50)
@@ -225,7 +237,7 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
           if (externalReplyId && text) {
             const ok = await upsertReplyItem(userId, acct, { 
               externalReplyId, 
-              postId: post.postId, 
+              postId: replyApiId, // リプライ取得に使ったIDを保存
               text, 
               createdAt,
               originalPost: post
@@ -256,6 +268,8 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
         postInfo.apiLog = `ERROR: ${String(e).substring(0, 50)}`;
         apiLogs.push({
           postId: post.postId,
+          numericPostId: post.numericPostId,
+          replyApiId: replyApiId,
           url: "",
           status: "ERROR",
           content: post.content.substring(0, 50),

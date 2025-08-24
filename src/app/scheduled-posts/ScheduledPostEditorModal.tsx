@@ -16,6 +16,8 @@ export type ScheduledPostType = {
   status?: ScheduledPostStatus;
   postedAt?: string | number;
   postId?: string;
+  numericPostId?: string; // 数字の投稿ID（リプライ取得用）
+  postUrl?: string; // 投稿URL
   isDeleted?: boolean;
   replyCount?: number;
   // 二段階投稿関連

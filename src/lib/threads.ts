@@ -8,7 +8,7 @@ export async function postToThreads({
 }: {
   accessToken: string;
   text: string;
-}): Promise<{ postId: string }> {
+}): Promise<{ postId: string; numericId?: string }> {
   const base = process.env.THREADS_GRAPH_BASE || "https://graph.threads.net/v1.0";
   const textPostAppId = process.env.THREADS_TEXT_APP_ID;
 
@@ -51,7 +51,22 @@ export async function postToThreads({
 
   const creationId = await create();
   const postId = await publish(creationId);
-  return { postId };
+  
+  // 数字IDを取得（投稿詳細から）
+  let numericId: string | undefined;
+  try {
+    const detailUrl = `${base}/${encodeURIComponent(postId)}?fields=id&access_token=${encodeURIComponent(accessToken)}`;
+    const detailRes = await fetch(detailUrl);
+    if (detailRes.ok) {
+      const detailJson = await detailRes.json();
+      numericId = detailJson?.id;
+      console.log(`[DEBUG] 投稿詳細取得: postId=${postId}, numericId=${numericId}`);
+    }
+  } catch (e) {
+    console.log(`[DEBUG] 数字ID取得失敗: ${e}`);
+  }
+  
+  return { postId, numericId };
 }
 
 // [MOD] permalink のみを返す。取得できなければ null（DB保存もしない方針）
