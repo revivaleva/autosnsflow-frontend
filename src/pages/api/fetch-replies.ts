@@ -219,6 +219,12 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
           error?: string;
           repliesFound?: number;
           response?: string;
+          replies?: Array<{
+            id: string | null;
+            text: string | null;
+            username: string | null;
+            is_reply_owned_by_me: boolean | null;
+          }>;
         } = {
           postId: post.postId,
           numericPostId: post.numericPostId,
@@ -312,7 +318,8 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
           url: "",
           status: "ERROR",
           content: post.content.substring(0, 50),
-          error: String(e).substring(0, 100)
+          error: String(e).substring(0, 100),
+          replies: []
         });
         break; // エラーで while ループを抜ける
       }
