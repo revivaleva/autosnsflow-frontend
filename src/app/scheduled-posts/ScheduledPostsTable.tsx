@@ -38,6 +38,10 @@ export default function ScheduledPostsTable() {
   
   // [ADD] 即時二段階投稿の実行中フラグ（多重押し防止）
   const [secondStagePostingId, setSecondStagePostingId] = useState<string>("");
+  
+  // [ADD] デバッグ関連のstate
+  const [debugModalOpen, setDebugModalOpen] = useState<boolean>(false);
+  const [debugData, setDebugData] = useState<any>(null);
 
   // 一覧取得（既存API）
   const loadPosts = async () => {
@@ -179,6 +183,56 @@ export default function ScheduledPostsTable() {
     }
   };
 
+  // [ADD] デバッグ詳細情報を取得する関数
+  const handleDebugDetails = async (scheduledPostId: string) => {
+    try {
+      const res = await fetch("/api/debug/second-stage-detail", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ scheduledPostId }),
+      });
+      
+      const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      
+      setDebugData(data);
+      setDebugModalOpen(true);
+      
+    } catch (e: any) {
+      console.error("Debug details error:", e);
+      alert(`デバッグ情報の取得に失敗しました: ${e.message}`);
+    }
+  };
+
+  // [ADD] テストデータ作成関数
+  const handleCreateTestData = async (dataType: string = "complete") => {
+    try {
+      const res = await fetch("/api/debug/create-test-data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ dataType }),
+      });
+      
+      const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      
+      alert(`テストデータを作成しました!\nスケジュールID: ${data.scheduledPostId}\n\n${data.testData.message}`);
+      loadPosts(); // 一覧を再読み込み
+      
+    } catch (e: any) {
+      console.error("Test data creation error:", e);
+      alert(`テストデータの作成に失敗しました: ${e.message}`);
+    }
+  };
+
   const sortedPosts = posts
     .filter((post) => !post.isDeleted)
     .filter((post) => !filterStatus || (post.status || "pending") === filterStatus)
@@ -256,6 +310,12 @@ export default function ScheduledPostsTable() {
             disabled={loading}
           >
             {loading ? "読み込み中..." : "再読み込み"}
+          </button>
+          <button
+            className="bg-orange-500 text-white px-3 py-2 rounded hover:bg-orange-600 text-sm"
+            onClick={() => handleCreateTestData("complete")}
+          >
+            🧪 テストデータ作成
           </button>
           <button
             onClick={openAdd}
@@ -482,6 +542,15 @@ export default function ScheduledPostsTable() {
                         削除
                       </button>
                     )}
+                    {/* デバッグボタン（二段階投稿関連の投稿のみ） */}
+                    {post.status === "posted" && (
+                      <button
+                        className="bg-gray-400 text-white px-2 py-1 rounded hover:bg-gray-500 text-xs"
+                        onClick={() => handleDebugDetails(post.scheduledPostId)}
+                      >
+                        🔍 DEBUG
+                      </button>
+                    )}
                   </td>
                 </tr>
               );
@@ -524,6 +593,78 @@ export default function ScheduledPostsTable() {
               <button
                 className="bg-blue-500 text-white px-4 py-1 rounded hover:bg-blue-600"
                 onClick={() => setRepliesModalOpen(false)}
+              >
+                閉じる
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* デバッグモーダル */}
+      {debugModalOpen && debugData && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white p-6 rounded-xl shadow-lg w-3/4 max-w-4xl max-h-3/4 overflow-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-bold">🔍 デバッグ詳細情報</h3>
+              <button
+                className="text-gray-500 hover:text-gray-700"
+                onClick={() => setDebugModalOpen(false)}
+              >
+                ✕
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              {/* 診断結果 */}
+              <div className="p-3 bg-gray-50 rounded">
+                <h4 className="font-semibold mb-2">診断結果</h4>
+                <p className={`font-mono text-sm ${debugData.debugInfo?.diagnosis?.canPerformSecondStage ? 'text-green-600' : 'text-red-600'}`}>
+                  {debugData.message}
+                </p>
+                {debugData.debugInfo?.diagnosis?.issues?.length > 0 && (
+                  <ul className="mt-2 text-sm text-red-600">
+                    {debugData.debugInfo.diagnosis.issues.map((issue: string, i: number) => (
+                      <li key={i}>• {issue}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              {/* 投稿情報 */}
+              <div className="p-3 bg-yellow-50 rounded">
+                <h4 className="font-semibold mb-2">投稿情報</h4>
+                <div className="text-sm space-y-1">
+                  <div><strong>Post ID:</strong> {debugData.debugInfo?.scheduledPost?.postId || 'なし'}</div>
+                  <div><strong>Numeric ID:</strong> {debugData.debugInfo?.scheduledPost?.numericPostId || 'なし'}</div>
+                  <div><strong>Status:</strong> {debugData.debugInfo?.scheduledPost?.status}</div>
+                  <div><strong>Double Status:</strong> {debugData.debugInfo?.scheduledPost?.doublePostStatus || 'なし'}</div>
+                </div>
+              </div>
+
+              {/* アカウント情報 */}
+              {debugData.debugInfo?.account && (
+                <div className="p-3 bg-green-50 rounded">
+                  <h4 className="font-semibold mb-2">アカウント情報</h4>
+                  <div className="text-sm space-y-1">
+                    <div><strong>Account ID:</strong> {debugData.debugInfo.account.accountId}</div>
+                    <div><strong>Provider User ID:</strong> {debugData.debugInfo.account.providerUserId || 'なし'}</div>
+                    <div><strong>Access Token:</strong> {debugData.debugInfo.account.hasAccessToken ? '設定済み' : '未設定'}</div>
+                    <div><strong>Second Stage Content:</strong> {debugData.debugInfo.account.secondStageContentLength}文字</div>
+                    {debugData.debugInfo.account.secondStageContent && (
+                      <div className="mt-2 p-2 bg-white rounded text-xs">
+                        {debugData.debugInfo.account.secondStageContent}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+            
+            <div className="mt-6 flex justify-end">
+              <button
+                className="bg-gray-500 text-white px-4 py-2 rounded hover:bg-gray-600"
+                onClick={() => setDebugModalOpen(false)}
               >
                 閉じる
               </button>
