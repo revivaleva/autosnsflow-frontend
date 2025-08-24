@@ -1258,12 +1258,38 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
             accountId: acct.accountId,
             status: "info",
             message: "自分のリプライを除外しました",
-            detail: { replyId: rep.id, authorCandidates, providerUserId: acct.providerUserId }
+            detail: { replyId: rep.id, authorCandidates, providerUserId: acct.providerUserId, reason: 'author_match' }
           });
         } catch (e) {
           console.log("[warn] putLog failed for exclude log:", e);
         }
         continue;
+      }
+
+      // 二段階投稿の本文と一致する場合も除外（author一致が取れないケースのフォールバック）
+      try {
+        const s2 = (acct.secondStageContent || "").trim();
+        const rt = (rep.text || "").trim();
+        if (s2 && rt) {
+          const s2n = s2.replace(/\s+/g, ' ').toLowerCase();
+          const rtn = rt.replace(/\s+/g, ' ').toLowerCase();
+          if (s2n === rtn || s2n.includes(rtn) || rtn.includes(s2n)) {
+            console.log(`[DEBUG] lambda: 二段階投稿の本文と一致するため除外: reply=${rep.id}`);
+            try {
+              await putLog({
+                userId,
+                type: "reply-fetch-exclude",
+                accountId: acct.accountId,
+                status: "info",
+                message: "自分の二段階投稿と本文一致のため除外",
+                detail: { replyId: rep.id, secondStageContentSample: s2n }
+              });
+            } catch (e) { console.log("[warn] putLog failed for secondStage exclude:", e); }
+            continue;
+          }
+        }
+      } catch (e) {
+        console.log("[warn] secondStage exclusion check failed:", e);
       }
 
       const externalReplyId = String(rep.id);
