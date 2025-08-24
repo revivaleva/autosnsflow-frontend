@@ -1213,6 +1213,14 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
       replyApiId = post.numericPostId || post.postId;
     }
     
+    // 二段階投稿の特定パターン（numericPostId と replyApiId が一致）で、
+    // アカウントに二段階投稿設定がある場合は除外（二段階投稿が自分由来の可能性が高いため）
+    if (post.numericPostId && replyApiId && acct.secondStageContent && post.numericPostId === replyApiId) {
+      console.log(`[DEBUG] lambda: 投稿 ${post.postId} は numericPostId === replyApiId のため除外`);
+      try { await putLog({ userId, type: 'reply-fetch-exclude', accountId: acct.accountId, status: 'info', message: 'numericPostId===replyApiId で除外', detail: { postId: post.postId, numericPostId: post.numericPostId } }); } catch (e){}
+      continue;
+    }
+
     // 手動実行と同じ複数エンドポイント試行
     let url = new URL(`https://graph.threads.net/v1.0/${encodeURIComponent(replyApiId)}/replies`);
     url.searchParams.set("fields", "id,text,username,permalink");
