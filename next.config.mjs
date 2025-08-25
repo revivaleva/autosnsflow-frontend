@@ -1,9 +1,21 @@
+<<<<<<<< HEAD:next.config.js
 // /next.config.js
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
     // packages/shared や backend-core をフロントで使う場合のため
     transpilePackages: ["@autosnsflow/shared", "@autosnsflow/backend-core"],
+========
+// next.config.mjs
+// [IMPORTANT] AWS Amplifyでは next.config.ts はサポートされていません
+// このファイルは next.config.mjs または next.config.js として保存する必要があります
+// 参考: https://docs.aws.amazon.com/amplify/latest/userguide/troubleshooting-ssr-deployment.html
+
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  // packages/shared や backend-core をフロントで使う場合のため
+  transpilePackages: ["@autosnsflow/shared", "@autosnsflow/backend-core"],
+>>>>>>>> staging:next.config.mjs
 
   // [ADD] Amplify用のスタンドアロンビルド出力
   output: "standalone",
@@ -31,4 +43,8 @@ const nextConfig = {
   /* config options here */
 };
 
+<<<<<<<< HEAD:next.config.js
 module.exports = nextConfig;
+========
+export default nextConfig;
+>>>>>>>> staging:next.config.mjs

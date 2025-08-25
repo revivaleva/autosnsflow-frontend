@@ -17,7 +17,7 @@ const DEFAULTS = {
   masterPrompt: "",
   replyPrompt: "",
   autoPost: false as boolean,            // [MOD] "active"|"inactive" → boolean
-  doublePostDelay: "0",
+  doublePostDelay: "5",                  // [FIX] フロントエンドと統一
 };
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -54,7 +54,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         masterPrompt: it.masterPrompt?.S || "",
         replyPrompt: it.replyPrompt?.S || "",
         autoPost,
-        doublePostDelay: it.doublePostDelay?.N ? String(it.doublePostDelay.N) : "0",
+        doublePostDelay: it.doublePostDelay?.N ? String(it.doublePostDelay.N) : "5",
       };
 
       return res.status(200).json({ settings });

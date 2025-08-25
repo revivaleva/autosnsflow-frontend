@@ -1,6 +1,8 @@
 // /lambda/scheduled-autosnsflow/src/handler.ts
 // 定期実行で予約投稿の作成・実投稿・返信処理・2段階投稿を行い、必要な通知と計測を行う。
 // 本実装は Threads のみを対象とする（X/Twitter は扱わない）。
+// [UPDATE] 2025-01-17: リプライデバッグ機能とグローバル認証保護機能を統合
+// [DEPLOY] 2025-01-24: GitHub Actions自動デプロイテスト実行
 
 import { fetchThreadsAccounts } from "@autosnsflow/backend-core";
 import {
@@ -506,7 +508,7 @@ async function deleteUnpostedAutoPosts(userId: any, acct: any, groupTypeStr: any
 async function createScheduledPost(userId: any, { acct, group, type, whenJst }: any) {
   const themeStr = (type === 1 ? group.theme1 : type === 2 ? group.theme2 : group.theme3) || "";
   const groupTypeStr = `${group.groupName}-自動投稿${type}`;
-  const timeRange = (type === 1 ? group.time1 : type === 2 ? group.time2 : group.time3) || "";
+  const timeRange = (type === 1 ? (group.time1 || "05:00-08:00") : type === 2 ? (group.time2 || "12:00-13:00") : (group.time3 || "20:00-23:00")) || "";
   const id = crypto.randomUUID();
   const item = {
     PK: { S: `USER#${userId}` },
@@ -701,7 +703,8 @@ export const handler = async (event: any = {}) => {
             break;
           }
           case "runAutoPost": {
-            const r = await runAutoPostForAccount(acct, userId, settings);
+            // テスト時は詳細デバッグ情報を返す
+            const r = await runAutoPostForAccount(acct, userId, settings, true);
             results.push({ accountId: acct.accountId, runAutoPost: r });
             break;
           }
@@ -808,6 +811,15 @@ export const handler = async (event: any = {}) => {
         results.push({ accountId: acct?.accountId || "-", error: String(e) });
       }
     }
+    // テスト実行時はマスタDiscordへ詳細を送信して調査しやすくする
+    try {
+      const payload = { action, userId, results };
+      const bodyStr = JSON.stringify(payload, null, 2).slice(0, 1900); // Discord制限に配慮
+      await postDiscordMaster(`**[TEST RUN] action=${action} user=${userId}**\n\n\`\`\`json\n${bodyStr}\n\`\`\``);
+    } catch (e) {
+      console.log("[warn] postDiscordMaster for test failed:", String(e));
+    }
+
     return { statusCode: 200, body: JSON.stringify({ action, userId, results }) };
   }
 
@@ -1080,7 +1092,37 @@ async function upsertReplyItem(userId: any, acct: any, { externalReplyId, postId
           max_tokens: settings.openAiMaxTokens ?? DEFAULT_OPENAI_MAXTOKENS,
           prompt: replyPrompt,
         });
-        responseContent = generatedReply || "";
+        
+        // 投稿生成と同様のクリーニング処理を適用
+        let cleanReply = generatedReply || "";
+        
+        if (cleanReply) {
+          cleanReply = cleanReply.trim();
+          
+          // プロンプトの指示部分が含まれている場合の除去処理
+          if (cleanReply.includes("【指示】") || cleanReply.includes("【運用方針】") || cleanReply.includes("【受信したリプライ】")) {
+            // 【指示】以降のテキストを除去
+            const instructionIndex = cleanReply.lastIndexOf("【指示】");
+            if (instructionIndex !== -1) {
+              cleanReply = cleanReply.substring(0, instructionIndex).trim();
+            }
+            
+            // 他の指示セクションも除去
+            cleanReply = cleanReply.replace(/【運用方針[^】]*】\n?/g, "");
+            cleanReply = cleanReply.replace(/【元の投稿】\n?[^【]*\n?/g, "");
+            cleanReply = cleanReply.replace(/【受信したリプライ】\n?[^【]*\n?/g, "");
+            
+            // 空行を整理
+            cleanReply = cleanReply.replace(/\n\s*\n/g, "\n").trim();
+          }
+          
+          // 引用符やマークダウン記法の除去
+          cleanReply = cleanReply.replace(/^[「『"']|[」』"']$/g, "");
+          cleanReply = cleanReply.replace(/^\*\*|\*\*$/g, "");
+          cleanReply = cleanReply.trim();
+        }
+        
+        responseContent = cleanReply;
       } catch (e) {
         console.log(`[warn] 返信コンテンツ生成失敗: ${String(e)}`);
         await putLog({ 
@@ -1135,7 +1177,7 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
       },
       FilterExpression: "#st = :posted AND attribute_exists(postId)",
       ExpressionAttributeNames: { "#st": "status" },
-      ProjectionExpression: "postId, content, postedAt",
+      ProjectionExpression: "postId, numericPostId, content, postedAt",
       Limit: 3,
     }));
   } catch (e) {
@@ -1153,13 +1195,14 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
       },
       FilterExpression: "accountId = :acc AND postedAt >= :since AND #st = :posted AND attribute_exists(postId)",
       ExpressionAttributeNames: { "#st": "status" },
-      ProjectionExpression: "postId, content, postedAt",
+      ProjectionExpression: "postId, numericPostId, content, postedAt",
       Limit: 3,
     }));
   }
 
-  const posts = (q.Items || []).map((i: any) => ({
+    const posts = (q.Items || []).map((i: any) => ({
     postId: i.postId?.S,
+    numericPostId: i.numericPostId?.S,
     content: i.content?.S || "",
     postedAt: i.postedAt?.N ? Number(i.postedAt.N) : 0,
   })).filter(p => p.postId);
@@ -1167,27 +1210,95 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
   let saved = 0;
 
   for (const post of posts) {
-    const url = new URL(`https://graph.threads.net/v1.0/${encodeURIComponent(post.postId)}/replies`);
+    // 手動実行と同じID選択ロジック: 数字ID優先
+    const isNumericPostId = post.numericPostId && /^\d+$/.test(post.numericPostId);
+    const isNumericMainPostId = post.postId && /^\d+$/.test(post.postId);
+    
+    let replyApiId: string;
+    if (isNumericPostId) {
+      replyApiId = post.numericPostId;
+    } else if (isNumericMainPostId) {
+      replyApiId = post.postId;
+    } else {
+      replyApiId = post.numericPostId || post.postId;
+    }
+    
+    // 手動実行と同じ複数エンドポイント試行
+    let url = new URL(`https://graph.threads.net/v1.0/${encodeURIComponent(replyApiId)}/replies`);
+    // is_reply_owned_by_me を要求すると "自分の返信か" を正確に判断できる
+    url.searchParams.set("fields", "id,text,username,permalink,is_reply_owned_by_me,replied_to,root_post");
     url.searchParams.set("access_token", acct.accessToken);
-    const r = await fetch(url.toString());
+    let r = await fetch(url.toString());
+    
+    // repliesが失敗した場合、conversationを試行
+    if (!r.ok) {
+      url = new URL(`https://graph.threads.net/v1.0/${encodeURIComponent(replyApiId)}/conversation`);
+      url.searchParams.set("fields", "id,text,username,permalink");
+      url.searchParams.set("access_token", acct.accessToken);
+      r = await fetch(url.toString());
+    }
+    
     if (!r.ok) { 
       await putLog({ 
         userId, type: "reply-fetch", accountId: acct.accountId, 
-        status: "error", message: `Threads replies error: ${r.status}` 
+        status: "error", message: `Threads replies error: ${r.status} for ID ${replyApiId}` 
       }); 
       continue; 
     }
     const json = await r.json();
     for (const rep of (json?.data || [])) {
+      // is_reply_owned_by_me フィールドが利用可能な場合はそれを優先して除外
+      if (rep.is_reply_owned_by_me === true) {
+        console.log(`[DEBUG] lambda: is_reply_owned_by_me=true のため除外: ${String(rep.id || "")}`);
+        try {
+          await putLog({
+            userId,
+            type: "reply-fetch-exclude",
+            accountId: acct.accountId,
+            status: "info",
+            message: "is_reply_owned_by_me=true のため除外",
+            detail: { replyId: rep.id, reason: 'is_reply_owned_by_me' }
+          });
+        } catch (e) {
+          console.log("[warn] putLog failed for exclude log:", e);
+        }
+        continue;
+      }
+
+      // フラグが付いていない場合は除外しないが、原因調査のため候補一致時にログを残す
+      try {
+        const authorCandidates = [
+          rep.from?.id,
+          rep.from?.username,
+          rep.username,
+          rep.user?.id,
+          rep.user?.username,
+          rep.author?.id,
+          rep.author?.username,
+        ].map(x => (x == null ? "" : String(x)));
+
+        const s2 = (acct.secondStageContent || "").trim();
+        const rt = (rep.text || "").trim();
+
+        const potentialMatch = authorCandidates.some(a => a && acct.providerUserId && a === acct.providerUserId) || (s2 && rt && (s2.replace(/\s+/g,' ').toLowerCase() === rt.replace(/\s+/g,' ').toLowerCase()));
+        if (potentialMatch) {
+          const detail: any = { replyId: rep.id, authorCandidates, providerUserId: acct.providerUserId };
+          if (s2 && rt) detail.secondStageSample = { s2: s2.replace(/\s+/g,' ').toLowerCase(), rt: rt.replace(/\s+/g,' ').toLowerCase() };
+          await putLog({ userId, type: "reply-fetch-flag-mismatch", accountId: acct.accountId, status: "info", message: "flag missing but candidate fields matched", detail });
+        }
+      } catch (e) {
+        console.log('[warn] flag-mismatch logging failed in lambda:', e);
+      }
+
       const externalReplyId = String(rep.id);
       const text = rep.text || "";
       const createdAt = nowSec();
-      const ok = await upsertReplyItem(userId, acct, { 
-        externalReplyId, 
-        postId: post.postId, 
-        text, 
+      const ok = await upsertReplyItem(userId, acct, {
+        externalReplyId,
+        postId: replyApiId, // 実際に使用したIDを保存
+        text,
         createdAt,
-        originalPost: post
+        originalPost: post,
       });
       if (ok) saved++;
     }
@@ -1228,6 +1339,9 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
   const group = await getAutoPostGroup(userId, acct.autoPostGroupId);
   if (!group || !group.groupName) return { created: 0, skipped: true };
 
+  // デバッグ: time1/time2/time3 の実値をログ出力
+  console.log(`[debug] auto-post group loaded: ${group.groupName} time1=${group.time1}, time2=${group.time2}, time3=${group.time3}`);
+
   const today = jstNow();
   const settings = await getUserSettings(userId);
 
@@ -1241,6 +1355,8 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
     const groupTypeStr = `${group.groupName}-自動投稿${type}`;
     const timeRange =
       (type === 1 ? group.time1 : type === 2 ? group.time2 : group.time3) || "";
+    // time window presence flag
+    const timeWindowPresent = !!timeRange;
 
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
@@ -1300,7 +1416,16 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
     }
 
     // JSTレンジから翌日分の時刻を乱択
-    const when = randomTimeInRangeJst(timeRange, today, true);
+    let when: Date | null;
+    if (timeRange) {
+      when = randomTimeInRangeJst(timeRange, today, true);
+    } else {
+      // timeRange が空の場合は、明日を現在時刻と同じ時刻で予約する
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      when = new Date(tomorrow);
+      when.setHours(today.getHours(), today.getMinutes(), 0, 0);
+    }
     trace.when = when?.toISOString?.() || null;
     if (!when) {
       debug.push({ ...trace, reason: "time_pick_failed" });
@@ -1347,21 +1472,23 @@ async function postToThreads({ accessToken, text, userIdOnPlatform, inReplyTo = 
   if (!accessToken) throw new Error("Threads accessToken 未設定");
   if (!userIdOnPlatform) throw new Error("Threads userId 未設定");
 
-  const base = `https://graph.threads.net/v1.0/${encodeURIComponent(userIdOnPlatform)}`;
+  const base = `https://graph.threads.net/v1.0`;
 
-  // --- コンテナ作成（GAS と同じ：media_type は必須） ---
-  // GAS 側と同じく TEXT 投稿。返信のときは replied_to_id を付与
+  // --- コンテナ作成（公式ドキュメント準拠：media_type は必須） ---
+  // 🔧 公式ドキュメント準拠: reply_to_id を使用
+  // https://developers.facebook.com/docs/threads/retrieve-and-manage-replies/create-replies
   const createPayload: any = {
     media_type: "TEXT",
     text,
     access_token: accessToken,
   };
   if (inReplyTo) {
-    // ※GAS と同じキー名。万一 API 変更でエラーになったら下のフォールバックが動きます
-    createPayload.replied_to_id = inReplyTo;
+    // 公式ドキュメント準拠: reply_to_id を使用
+    createPayload.reply_to_id = inReplyTo;
   }
 
-  let createRes = await fetch(`${base}/threads`, {
+  // 🔧 公式ドキュメント準拠: Create は /me/threads を使用
+  let createRes = await fetch(`${base}/me/threads`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(createPayload),
@@ -1369,14 +1496,16 @@ async function postToThreads({ accessToken, text, userIdOnPlatform, inReplyTo = 
 
   // フォールバック（ドキュメント差異対策）
   if (!createRes.ok && inReplyTo) {
-    // 一部資料では reply_to_id / parent_id の表記があるため順に試す
+    // reply_to_id で失敗した場合、replied_to_id で再試行
     const errText = await createRes.text().catch(() => "");
-    // reply_to_id で再試行
+    console.log(`[WARN] リプライ作成失敗、代替パラメータでリトライ: ${errText}`);
+    
+    // replied_to_id で再試行
     const altPayload1 = { ...createPayload };
-    delete altPayload1.replied_to_id;
-    altPayload1.reply_to_id = inReplyTo;
+    delete altPayload1.reply_to_id;
+    altPayload1.replied_to_id = inReplyTo;
 
-    let retried = await fetch(`${base}/threads`, {
+    let retried = await fetch(`${base}/me/threads`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(altPayload1),
@@ -1385,10 +1514,10 @@ async function postToThreads({ accessToken, text, userIdOnPlatform, inReplyTo = 
     if (!retried.ok) {
       // parent_id でさらに再試行
       const altPayload2 = { ...createPayload };
-      delete altPayload2.replied_to_id;
+      delete altPayload2.reply_to_id;
       altPayload2.parent_id = inReplyTo;
 
-      retried = await fetch(`${base}/threads`, {
+      retried = await fetch(`${base}/me/threads`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(altPayload2),
@@ -1413,8 +1542,9 @@ async function postToThreads({ accessToken, text, userIdOnPlatform, inReplyTo = 
   const creation_id = createJson?.id;
   if (!creation_id) throw new Error("Threads creation_id 取得失敗");
 
-  // --- 公開（GAS と同じ） ---
-  const pubRes = await fetch(`${base}/threads_publish`, {
+  // --- 公開（公式ドキュメント準拠） ---
+  // 🔧 公式ドキュメント準拠: Publish は /{threads-user-id}/threads_publish を使用
+  const pubRes = await fetch(`${base}/${encodeURIComponent(userIdOnPlatform)}/threads_publish`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ creation_id, access_token: accessToken }),
@@ -1424,12 +1554,35 @@ async function postToThreads({ accessToken, text, userIdOnPlatform, inReplyTo = 
     throw new Error(`Threads publish error: ${pubRes.status} ${t}`);
   }
   const pubJson = await pubRes.json().catch(() => ({}));
-  return { postId: pubJson?.id || creation_id };
+  const initialPostId = pubJson?.id || creation_id;
+  
+  // Threads APIで投稿詳細を取得してリンク用IDを取得
+  try {
+    const postDetailUrl = `https://graph.threads.net/v1.0/${encodeURIComponent(initialPostId)}?fields=id,permalink&access_token=${accessToken}`;
+    const detailRes = await fetch(postDetailUrl);
+    if (detailRes.ok) {
+      const detailJson = await detailRes.json();
+      // permalinkからリンク用IDを抽出: https://www.threads.net/@username/post/ABC123
+      const permalink = detailJson?.permalink;
+      if (permalink) {
+        const linkIdMatch = permalink.match(/\/post\/([^/?]+)/);
+        if (linkIdMatch) {
+          const linkId = linkIdMatch[1];
+          console.log(`[postToThreads] 投稿ID変換: ${initialPostId} -> ${linkId}`);
+          return { postId: linkId, numericId: initialPostId };
+        }
+      }
+    }
+  } catch (e) {
+    console.log("[postToThreads] permalink取得失敗、数字IDをそのまま使用:", e);
+  }
+  
+  return { postId: initialPostId };
 }
 
 /// ========== 5分ジョブ（実投稿・返信送信・2段階投稿） ==========
 // 5分ジョブ：実投稿
-async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any = undefined) {
+async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any = undefined, debugMode = false) {
   if (!acct.autoPost) return { posted: 0 };
   if (acct.status && acct.status !== "active") {
     await putLog({ userId, type: "auto-post", accountId: acct.accountId, status: "skip", message: `status=${acct.status} のためスキップ` });
@@ -1442,17 +1595,24 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
     TableName: TBL_SCHEDULED,
     IndexName: GSI_SCH_BY_ACC_TIME,
     KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
+    FilterExpression: "#st = :scheduled AND postedAt = :zero",
+    ExpressionAttributeNames: { "#st": "status" },
     ExpressionAttributeValues: {
       ":acc": { S: acct.accountId },
       ":now": { N: String(nowSec()) },
+      ":scheduled": { S: "scheduled" },
+      ":zero": { N: "0" },
     },
     // Keys only でも動くように PK/SK と scheduledAt だけ取得
-    ProjectionExpression: "PK, SK, scheduledAt",
+    ProjectionExpression: "PK, SK, scheduledAt, postedAt, #st",
     ScanIndexForward: true, // 古い順に見る
-    Limit: 10               // 念のため複数拾って精査
+    Limit: 50               // 上限を増やして取りこぼしを回避
   }));
+  // debug: capture raw q items if requested
+  const debugInfo: any = debugMode ? { qItemsCount: (q.Items || []).length, items: [] as any[] } : undefined;
 
   let cand = null;
+  let iterIndex = 0;
   for (const it of (q.Items || [])) {
     const pk = it.PK.S;
     const sk = it.SK.S;
@@ -1474,6 +1634,19 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
       return !endJst || nowSec() <= toEpochSec(endJst);
     })();
 
+    if (debugMode && (debugInfo.items as any[]).length < 6) {
+      (debugInfo.items as any[]).push({
+        idx: iterIndex,
+        pk, sk,
+        status: x.status,
+        postedAt: x.postedAt,
+        scheduledAt: x.scheduledAt,
+        timeRange: x.timeRange,
+        stOK, postedZero, notExpired,
+      });
+    }
+    iterIndex++;
+
     if (stOK && postedZero && notExpired) {
       cand = { pk, sk, ...x };
       await putLog({
@@ -1485,12 +1658,31 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
         message: "candidate found",
         detail: { scheduledAt: x.scheduledAt, timeRange: x.timeRange }
       });
+      if (debugMode) {
+        debugInfo.candidate = { pk, sk, scheduledAt: x.scheduledAt, timeRange: x.timeRange, hasContent: !!x.content };
+      }
       break;
+    } else {
+      // notExpired が false の場合、時刻範囲を過ぎている可能性がある
+      if (stOK && postedZero && !notExpired) {
+        await putLog({
+          userId,
+          type: "auto-post",
+          accountId: acct.accountId,
+          targetId: sk,
+          status: "skip",
+          message: `時刻範囲(${x.timeRange})を過ぎたため投稿せず失効`
+        });
+        if (debugMode) {
+          if (!debugInfo.skips) debugInfo.skips = [];
+          debugInfo.skips.push({ sk, reason: 'window_expired', scheduledAt: x.scheduledAt, timeRange: x.timeRange });
+        }
+      }
     }
   }
 
   // 候補が無ければ今回は投稿なし
-  if (!cand) return { posted: 0 };
+  if (!cand) return debugMode ? { posted: 0, debug: debugInfo } : { posted: 0 };
 
   // 以降の処理で使う値（従来の q.Items[0] 由来の値を置き換える）
   const pk = cand.pk;
@@ -1502,6 +1694,12 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
   // 本文が空ならスキップ（次回リトライ）
   if (!text) {
     await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "skip", message: "本文が未生成のためスキップ" });
+    if (debugMode) {
+      debugInfo.reason = 'no_content';
+      debugInfo.scheduledAt = scheduledAtSec;
+      debugInfo.textLength = text ? text.length : 0;
+      return { posted: 0, debug: debugInfo };
+    }
     return { posted: 0 };
   }
 
@@ -1547,24 +1745,39 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
 
   // 実投稿 → 成功時のみ posted に更新（冪等）
   try {
-    const { postId } = await postToThreads({
+    const postResult = await postToThreads({
       accessToken: acct.accessToken,
       text,
       userIdOnPlatform: acct.providerUserId,
     });
 
+    let updateExpr = "SET #st = :posted, postedAt = :ts, postId = :pid";
+    const updateValues: any = {
+      ":posted":   { S: "posted" },
+      ":scheduled":{ S: "scheduled" },
+      ":ts":       { N: String(nowSec()) },
+      ":pid":      { S: postResult.postId || "" },
+    };
+
+    // 数字IDも保存（リンク用IDと異なる場合）
+    if (postResult.numericId && postResult.numericId !== postResult.postId) {
+      updateExpr += ", numericPostId = :nid";
+      updateValues[":nid"] = { S: postResult.numericId };
+    }
+
+    // 二段階投稿の初期化
+    if (acct.secondStageContent && acct.secondStageContent.trim()) {
+      updateExpr += ", doublePostStatus = :waiting";
+      updateValues[":waiting"] = { S: "waiting" };
+    }
+
     await ddb.send(new UpdateItemCommand({
       TableName: TBL_SCHEDULED,
       Key: { PK: { S: pk }, SK: { S: sk } },
-      UpdateExpression: "SET #st = :posted, postedAt = :ts, postId = :pid",
+      UpdateExpression: updateExpr,
       ConditionExpression: "#st = :scheduled",
       ExpressionAttributeNames: { "#st": "status" },
-      ExpressionAttributeValues: {
-        ":posted":   { S: "posted" },
-        ":scheduled":{ S: "scheduled" },
-        ":ts":       { N: String(nowSec()) },
-        ":pid":      { S: postId || "" },
-      },
+      ExpressionAttributeValues: updateValues,
     }));
 
     await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "ok", message: "自動投稿を完了", detail: { platform: "threads" } });
@@ -1691,8 +1904,10 @@ async function runRepliesForAccount(acct: any, userId = USER_ID, settings: any =
 
 // 2段階投稿：postedAt + delay 経過、doublePostStatus != "done" のものに本文のみを返信
 async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: any = undefined) {
-  const delayMin = settings?.doublePostDelayMinutes ?? 0;
-  if (!acct.secondStageContent || delayMin <= 0) return { posted2: 0 };
+  if (!acct.secondStageContent) return { posted2: 0 };
+  
+  // アカウントに二段階投稿設定があれば実行。遅延時間は設定値またはデフォルト30分
+  const delayMin = Math.max(settings?.doublePostDelayMinutes ?? 30, 1);
 
   const threshold = nowSec() - delayMin * 60;
 
@@ -1797,6 +2012,7 @@ async function runHourlyJobForUser(userId: any) {
     try {
       const fr = await fetchIncomingReplies(userId, acct);
       fetchedReplies += fr.fetched || 0;
+      replyDrafts += fr.fetched || 0; // 取得したリプライ分だけ返信ドラフトが生成される
     } catch (e) {
       await putLog({ userId, type: "reply-fetch", accountId: acct.accountId, status: "error", message: "返信取得失敗", detail: { error: String(e) } });
     }
