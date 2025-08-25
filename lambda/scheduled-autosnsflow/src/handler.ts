@@ -1911,6 +1911,9 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
 
   const threshold = nowSec() - delayMin * 60;
 
+  // 観測性向上: 入口ログ
+  console.log(`[second-stage] start account=${acct.accountId} delayMin=${delayMin} threshold=${threshold}`);
+
   let q;
   try {
     q = await ddb.send(new QueryCommand({
@@ -1927,7 +1930,7 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
         ":posted": { S: "posted" },
         ":auto":   { S: "自動投稿" }
       },
-      ProjectionExpression: "PK, SK, postId",
+      ProjectionExpression: "PK, SK, postId, postedAt",
       Limit: 1
     }));
   } catch (e) {
@@ -1948,16 +1951,39 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
       FilterExpression:
         "accountId = :acc AND postedAt <= :th AND (attribute_not_exists(doublePostStatus) OR doublePostStatus <> :done) AND #st = :posted AND contains(autoPostGroupId, :auto)",
       ExpressionAttributeNames: { "#st": "status" },
-      ProjectionExpression: "PK, SK, postId",
+      ProjectionExpression: "PK, SK, postId, postedAt",
       Limit: 1
     }));
   }
 
-  if (!q.Items || q.Items.length === 0) return { posted2: 0 };
+  // 観測性向上: クエリ結果を記録
+  console.log(`[second-stage] query items=${q.Items?.length || 0}`);
+  if (!q.Items || q.Items.length === 0) {
+    await putLog({
+      userId,
+      type: "second-stage",
+      accountId: acct.accountId,
+      status: "noop",
+      message: "対象なし",
+      detail: { threshold, delayMin }
+    });
+    return { posted2: 0 };
+  }
 
   const pk = q.Items[0].PK.S;
   const sk = q.Items[0].SK.S;
   const firstPostId = q.Items[0].postId?.S || "";
+  const firstPostedAt = q.Items[0].postedAt?.N || "";
+
+  await putLog({
+    userId,
+    type: "second-stage",
+    accountId: acct.accountId,
+    targetId: sk,
+    status: "probe",
+    message: "candidate found",
+    detail: { firstPostId, firstPostedAt, threshold, delayMin }
+  });
 
   // Threads のユーザーIDが未取得であれば取得
   if (!acct.providerUserId) {
@@ -1970,6 +1996,7 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
 
   try {
     const text2 = acct.secondStageContent;
+    console.log(`[second-stage] attempt post reply account=${acct.accountId} parent=${firstPostId}`);
     const { postId: pid2 } = await postToThreads({ accessToken: acct.accessToken, text: text2, userIdOnPlatform: acct.providerUserId, inReplyTo: firstPostId });
     await ddb.send(new UpdateItemCommand({
       TableName: TBL_SCHEDULED,
@@ -1978,10 +2005,10 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
       ConditionExpression: "attribute_not_exists(doublePostStatus) OR doublePostStatus <> :done",
       ExpressionAttributeValues: { ":done": { S: "done" }, ":pid": { S: pid2 || `DUMMY2-${crypto.randomUUID()}` }, ":ts": { N: String(nowSec()) } }
     }));
-    await putLog({ userId, type: "second-stage", accountId: acct.accountId, targetId: sk, status: "ok", message: "2段階投稿を完了" });
+    await putLog({ userId, type: "second-stage", accountId: acct.accountId, targetId: sk, status: "ok", message: "2段階投稿を完了", detail: { secondStagePostId: pid2 } });
     return { posted2: 1 };
   } catch (e) {
-    await putLog({ userId, type: "second-stage", accountId: acct.accountId, targetId: sk, status: "error", message: "2段階投稿に失敗", detail: { error: String(e) } });
+    await putLog({ userId, type: "second-stage", accountId: acct.accountId, targetId: sk, status: "error", message: "2段階投稿に失敗", detail: { error: String(e), parentPostId: firstPostId } });
     await postDiscordLog({
       userId,
       isError: true,
