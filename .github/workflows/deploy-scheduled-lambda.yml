@@ -19,16 +19,27 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Install (root only for workspaces)
+      - name: Install shared
+        working-directory: packages/shared
         run: |
           npm ci
-          npm -w @autosnsflow/shared run build
-          npm -w @autosnsflow/backend-core run build
+          npm run build || true
+
+      - name: Install backend-core
+        working-directory: packages/backend-core
+        run: |
+          npm ci
+          npm run build || true
+
+      - name: Install (lambda only)
+        working-directory: lambda/scheduled-autosnsflow
+        run: npm ci
 
       - name: Build & Zip Lambda
+        working-directory: lambda/scheduled-autosnsflow
         run: |
-          npm -w lambda/scheduled-autosnsflow run build
-          npm -w lambda/scheduled-autosnsflow run zip
+          npm run build
+          npm run zip
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -38,7 +49,8 @@ jobs:
           aws-region: ap-northeast-1
 
       - name: Deploy to Lambda (scheduled-autosnsflow)
-        run: npm -w lambda/scheduled-autosnsflow run deploy:cli
+        working-directory: lambda/scheduled-autosnsflow
+        run: npm run deploy:cli
         env:
           LAMBDA_FUNCTION_NAME: scheduled-autosnsflow
 
