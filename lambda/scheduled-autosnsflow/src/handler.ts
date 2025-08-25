@@ -1551,14 +1551,18 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
     TableName: TBL_SCHEDULED,
     IndexName: GSI_SCH_BY_ACC_TIME,
     KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
+    FilterExpression: "#st = :scheduled AND postedAt = :zero",
+    ExpressionAttributeNames: { "#st": "status" },
     ExpressionAttributeValues: {
       ":acc": { S: acct.accountId },
       ":now": { N: String(nowSec()) },
+      ":scheduled": { S: "scheduled" },
+      ":zero": { N: "0" },
     },
     // Keys only でも動くように PK/SK と scheduledAt だけ取得
-    ProjectionExpression: "PK, SK, scheduledAt",
+    ProjectionExpression: "PK, SK, scheduledAt, postedAt, #st",
     ScanIndexForward: true, // 古い順に見る
-    Limit: 10               // 念のため複数拾って精査
+    Limit: 50               // 上限を増やして取りこぼしを回避
   }));
   // debug: capture raw q items if requested
   const debugInfo: any = debugMode ? { qItemsCount: (q.Items || []).length, items: [] as any[] } : undefined;
