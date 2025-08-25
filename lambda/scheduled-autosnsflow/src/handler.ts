@@ -2085,25 +2085,36 @@ async function runFiveMinJobForUser(userId: any) {
 
   const accounts = await getThreadsAccounts(userId);
   let totalAuto = 0, totalReply = 0, totalTwo = 0, rateSkipped = 0;
+  const perAccount: any[] = [];
 
   for (const acct of accounts) {
     const a = await runAutoPostForAccount(acct, userId, settings);
     const r = await runRepliesForAccount(acct, userId, settings);
-    const t = await runSecondStageForAccount(acct, userId, settings);
+    const t = await runSecondStageForAccount(acct, userId, settings, true);
 
     totalAuto += a.posted || 0;
     totalReply += r.replied || 0;
     totalTwo += t.posted2 || 0;
+    if (perAccount.length < 6) {
+      perAccount.push({
+        accountId: acct.accountId,
+        a: a.posted || 0,
+        r: r.replied || 0,
+        t: t.posted2 || 0,
+        reason: (t as any).debug?.reason || "-"
+      });
+    }
 
     if (a.skipped === "window_expired") rateSkipped++;
   }
 
   const urls = await getDiscordWebhooks(userId);
   const now = new Date().toISOString();
-  await postDiscordLog({
-    userId,
-    content: `**[定期実行レポート] ${now} (every-5min)**\n自動投稿: ${totalAuto} / リプ返信: ${totalReply} / 2段階投稿: ${totalTwo} / 失効(rate-limit): ${rateSkipped}`
-  });
+  const base = `**[定期実行レポート] ${now} (every-5min)**\n自動投稿: ${totalAuto} / リプ返信: ${totalReply} / 2段階投稿: ${totalTwo} / 失効(rate-limit): ${rateSkipped}`;
+  const extra = totalTwo === 0 && perAccount.length > 0
+    ? "\n詳細(先頭): " + perAccount.map(p => `${p.accountId}:{2nd=${p.t},reason=${p.reason}}`).join(", ")
+    : "";
+  await postDiscordLog({ userId, content: base + extra });
   return { userId, totalAuto, totalReply, totalTwo, rateSkipped };
 }
 
