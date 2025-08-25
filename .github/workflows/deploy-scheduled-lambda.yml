@@ -3,10 +3,6 @@ name: Deploy Scheduled Lambda
 on:
   push:
     branches: ["lambda"]
-    paths:
-      - "lambda/**"
-      - "packages/**"
-      - ".github/workflows/deploy-scheduled-lambda.yml"
 
 jobs:
   deploy:
