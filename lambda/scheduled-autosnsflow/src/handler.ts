@@ -508,7 +508,7 @@ async function deleteUnpostedAutoPosts(userId: any, acct: any, groupTypeStr: any
 async function createScheduledPost(userId: any, { acct, group, type, whenJst }: any) {
   const themeStr = (type === 1 ? group.theme1 : type === 2 ? group.theme2 : group.theme3) || "";
   const groupTypeStr = `${group.groupName}-自動投稿${type}`;
-  const timeRange = (type === 1 ? group.time1 : type === 2 ? group.time2 : group.time3) || "";
+  const timeRange = (type === 1 ? (group.time1 || "05:00-08:00") : type === 2 ? (group.time2 || "12:00-13:00") : (group.time3 || "20:00-23:00")) || "";
   const id = crypto.randomUUID();
   const item = {
     PK: { S: `USER#${userId}` },
@@ -1285,6 +1285,9 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
   const group = await getAutoPostGroup(userId, acct.autoPostGroupId);
   if (!group || !group.groupName) return { created: 0, skipped: true };
 
+  // デバッグ: time1/time2/time3 の実値をログ出力
+  console.log(`[debug] auto-post group loaded: ${group.groupName} time1=${group.time1}, time2=${group.time2}, time3=${group.time3}`);
+
   const today = jstNow();
   const settings = await getUserSettings(userId);
 
@@ -1298,6 +1301,8 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
     const groupTypeStr = `${group.groupName}-自動投稿${type}`;
     const timeRange =
       (type === 1 ? group.time1 : type === 2 ? group.time2 : group.time3) || "";
+    // time window presence flag
+    const timeWindowPresent = !!timeRange;
 
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
@@ -1571,6 +1576,18 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
         detail: { scheduledAt: x.scheduledAt, timeRange: x.timeRange }
       });
       break;
+    } else {
+      // notExpired が false の場合、時刻範囲を過ぎている可能性がある
+      if (stOK && postedZero && !notExpired) {
+        await putLog({
+          userId,
+          type: "auto-post",
+          accountId: acct.accountId,
+          targetId: sk,
+          status: "skip",
+          message: `時刻範囲(${x.timeRange})を過ぎたため投稿せず失効`
+        });
+      }
     }
   }
 
