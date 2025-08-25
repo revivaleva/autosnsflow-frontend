@@ -1561,9 +1561,10 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
     Limit: 10               // 念のため複数拾って精査
   }));
   // debug: capture raw q items if requested
-  const debugInfo: any = debugMode ? { qItemsCount: (q.Items || []).length } : undefined;
+  const debugInfo: any = debugMode ? { qItemsCount: (q.Items || []).length, items: [] as any[] } : undefined;
 
   let cand = null;
+  let iterIndex = 0;
   for (const it of (q.Items || [])) {
     const pk = it.PK.S;
     const sk = it.SK.S;
@@ -1584,6 +1585,19 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
       const endJst = rangeEndOfDayJst(x.timeRange, jstFromEpoch(Number(x.scheduledAt || 0)));
       return !endJst || nowSec() <= toEpochSec(endJst);
     })();
+
+    if (debugMode && (debugInfo.items as any[]).length < 6) {
+      (debugInfo.items as any[]).push({
+        idx: iterIndex,
+        pk, sk,
+        status: x.status,
+        postedAt: x.postedAt,
+        scheduledAt: x.scheduledAt,
+        timeRange: x.timeRange,
+        stOK, postedZero, notExpired,
+      });
+    }
+    iterIndex++;
 
     if (stOK && postedZero && notExpired) {
       cand = { pk, sk, ...x };
