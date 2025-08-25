@@ -22,18 +22,19 @@ jobs:
       - name: Install shared
         working-directory: packages/shared
         run: |
-          npm ci
+          if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi
           npm run build || true
 
       - name: Install backend-core
         working-directory: packages/backend-core
         run: |
-          npm ci
+          if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi
           npm run build || true
 
       - name: Install (lambda only)
         working-directory: lambda/scheduled-autosnsflow
-        run: npm ci
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi
 
       - name: Build & Zip Lambda
         working-directory: lambda/scheduled-autosnsflow
