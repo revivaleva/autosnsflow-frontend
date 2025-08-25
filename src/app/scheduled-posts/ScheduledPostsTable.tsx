@@ -387,11 +387,20 @@ export default function ScheduledPostsTable() {
                     </div>
                   </td>
                   <td className="border p-1">
-                    {post.postedAt
-                      ? typeof post.postedAt === "number"
-                        ? new Date(post.postedAt * 1000).toLocaleString()
-                        : post.postedAt
-                      : ""}
+                    {post.status === "posted" ? (
+                      post.postedAt
+                        ? typeof post.postedAt === "number"
+                          ? new Date(post.postedAt * 1000).toLocaleString()
+                          : (post.postedAt as any)
+                        : ""
+                    ) : (
+                      // 未投稿かつ自動投稿グループ使用時は timeRange を表示
+                      <span className="text-xs text-gray-600">
+                        {post.autoPostGroupId && post.autoPostGroupId.includes("自動投稿") && post.timeRange
+                          ? post.timeRange
+                          : ""}
+                      </span>
+                    )}
                   </td>
                   <td className="border p-1">
                     {/* [ADD] postUrl が無い場合はpostIdから生成したURLを使用、それもなければプロフィールURLへフォールバック */}
