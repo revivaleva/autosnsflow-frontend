@@ -703,7 +703,8 @@ export const handler = async (event: any = {}) => {
             break;
           }
           case "runAutoPost": {
-            const r = await runAutoPostForAccount(acct, userId, settings);
+            // テスト時は詳細デバッグ情報を返す
+            const r = await runAutoPostForAccount(acct, userId, settings, true);
             results.push({ accountId: acct.accountId, runAutoPost: r });
             break;
           }
@@ -810,6 +811,15 @@ export const handler = async (event: any = {}) => {
         results.push({ accountId: acct?.accountId || "-", error: String(e) });
       }
     }
+    // テスト実行時はマスタDiscordへ詳細を送信して調査しやすくする
+    try {
+      const payload = { action, userId, results };
+      const bodyStr = JSON.stringify(payload, null, 2).slice(0, 1900); // Discord制限に配慮
+      await postDiscordMaster(`**[TEST RUN] action=${action} user=${userId}**\n\n\`\`\`json\n${bodyStr}\n\`\`\``);
+    } catch (e) {
+      console.log("[warn] postDiscordMaster for test failed:", String(e));
+    }
+
     return { statusCode: 200, body: JSON.stringify({ action, userId, results }) };
   }
 
@@ -1572,7 +1582,7 @@ async function postToThreads({ accessToken, text, userIdOnPlatform, inReplyTo = 
 
 /// ========== 5分ジョブ（実投稿・返信送信・2段階投稿） ==========
 // 5分ジョブ：実投稿
-async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any = undefined) {
+async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any = undefined, debugMode = false) {
   if (!acct.autoPost) return { posted: 0 };
   if (acct.status && acct.status !== "active") {
     await putLog({ userId, type: "auto-post", accountId: acct.accountId, status: "skip", message: `status=${acct.status} のためスキップ` });
@@ -1585,17 +1595,24 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
     TableName: TBL_SCHEDULED,
     IndexName: GSI_SCH_BY_ACC_TIME,
     KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
+    FilterExpression: "#st = :scheduled AND postedAt = :zero",
+    ExpressionAttributeNames: { "#st": "status" },
     ExpressionAttributeValues: {
       ":acc": { S: acct.accountId },
       ":now": { N: String(nowSec()) },
+      ":scheduled": { S: "scheduled" },
+      ":zero": { N: "0" },
     },
     // Keys only でも動くように PK/SK と scheduledAt だけ取得
-    ProjectionExpression: "PK, SK, scheduledAt",
+    ProjectionExpression: "PK, SK, scheduledAt, postedAt, #st",
     ScanIndexForward: true, // 古い順に見る
-    Limit: 10               // 念のため複数拾って精査
+    Limit: 50               // 上限を増やして取りこぼしを回避
   }));
+  // debug: capture raw q items if requested
+  const debugInfo: any = debugMode ? { qItemsCount: (q.Items || []).length, items: [] as any[] } : undefined;
 
   let cand = null;
+  let iterIndex = 0;
   for (const it of (q.Items || [])) {
     const pk = it.PK.S;
     const sk = it.SK.S;
@@ -1617,6 +1634,19 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
       return !endJst || nowSec() <= toEpochSec(endJst);
     })();
 
+    if (debugMode && (debugInfo.items as any[]).length < 6) {
+      (debugInfo.items as any[]).push({
+        idx: iterIndex,
+        pk, sk,
+        status: x.status,
+        postedAt: x.postedAt,
+        scheduledAt: x.scheduledAt,
+        timeRange: x.timeRange,
+        stOK, postedZero, notExpired,
+      });
+    }
+    iterIndex++;
+
     if (stOK && postedZero && notExpired) {
       cand = { pk, sk, ...x };
       await putLog({
@@ -1628,6 +1658,9 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
         message: "candidate found",
         detail: { scheduledAt: x.scheduledAt, timeRange: x.timeRange }
       });
+      if (debugMode) {
+        debugInfo.candidate = { pk, sk, scheduledAt: x.scheduledAt, timeRange: x.timeRange, hasContent: !!x.content };
+      }
       break;
     } else {
       // notExpired が false の場合、時刻範囲を過ぎている可能性がある
@@ -1640,12 +1673,16 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
           status: "skip",
           message: `時刻範囲(${x.timeRange})を過ぎたため投稿せず失効`
         });
+        if (debugMode) {
+          if (!debugInfo.skips) debugInfo.skips = [];
+          debugInfo.skips.push({ sk, reason: 'window_expired', scheduledAt: x.scheduledAt, timeRange: x.timeRange });
+        }
       }
     }
   }
 
   // 候補が無ければ今回は投稿なし
-  if (!cand) return { posted: 0 };
+  if (!cand) return debugMode ? { posted: 0, debug: debugInfo } : { posted: 0 };
 
   // 以降の処理で使う値（従来の q.Items[0] 由来の値を置き換える）
   const pk = cand.pk;
@@ -1657,6 +1694,12 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
   // 本文が空ならスキップ（次回リトライ）
   if (!text) {
     await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "skip", message: "本文が未生成のためスキップ" });
+    if (debugMode) {
+      debugInfo.reason = 'no_content';
+      debugInfo.scheduledAt = scheduledAtSec;
+      debugInfo.textLength = text ? text.length : 0;
+      return { posted: 0, debug: debugInfo };
+    }
     return { posted: 0 };
   }
 

@@ -28,7 +28,24 @@ export function middleware(req: NextRequest) {
 
   // [KEEP] Cookie名は "idToken"
   const token = req.cookies.get("idToken")?.value;
-  if (token) return NextResponse.next();
+
+  // 追加: 有効期限(exp)を簡易チェック（署名検証なし、ミドルウェアで軽量判定）
+  if (token) {
+    try {
+      const [, payload] = token.split(".");
+      if (payload) {
+        // base64url → base64
+        const b64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+        const json = JSON.parse(Buffer.from(b64, "base64").toString("utf8"));
+        const expSec = Number(json?.exp || 0);
+        if (expSec && expSec * 1000 > Date.now()) {
+          return NextResponse.next();
+        }
+      }
+    } catch (_) {
+      // 失敗時は通常のリダイレクト処理へフォールバック
+    }
+  }
 
   const url = req.nextUrl.clone();
   url.pathname = "/login";
