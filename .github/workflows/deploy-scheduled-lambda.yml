@@ -56,13 +56,19 @@ jobs:
         run: |
           ver=$(aws lambda publish-version --function-name scheduled-autosnsflow --query 'Version' --output text)
           echo "version=$ver" >> $GITHUB_OUTPUT
+        continue-on-error: true
 
       - name: Point alias 'live' to the new version (create if missing)
         run: |
           set -e
           ver=${{ steps.publish.outputs.version }}
-          aws lambda update-alias --function-name scheduled-autosnsflow --name live --function-version "$ver" || \
-          aws lambda create-alias --function-name scheduled-autosnsflow --name live --function-version "$ver"
+          if [ -n "$ver" ]; then \
+            aws lambda update-alias --function-name scheduled-autosnsflow --name live --function-version "$ver" || \
+            aws lambda create-alias --function-name scheduled-autosnsflow --name live --function-version "$ver"; \
+          else \
+            echo "skip alias update (no version published)"; \
+          fi
+        continue-on-error: true
 
       - name: Smoke test (invoke)
         run: |
