@@ -810,6 +810,15 @@ export const handler = async (event: any = {}) => {
         results.push({ accountId: acct?.accountId || "-", error: String(e) });
       }
     }
+    // テスト実行時はマスタDiscordへ詳細を送信して調査しやすくする
+    try {
+      const payload = { action, userId, results };
+      const bodyStr = JSON.stringify(payload, null, 2).slice(0, 1900); // Discord制限に配慮
+      await postDiscordMaster(`**[TEST RUN] action=${action} user=${userId}**\n\n\`\`\`json\n${bodyStr}\n\`\`\``);
+    } catch (e) {
+      console.log("[warn] postDiscordMaster for test failed:", String(e));
+    }
+
     return { statusCode: 200, body: JSON.stringify({ action, userId, results }) };
   }
 
