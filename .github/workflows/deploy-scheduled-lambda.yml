@@ -51,6 +51,19 @@ jobs:
         env:
           LAMBDA_FUNCTION_NAME: scheduled-autosnsflow
 
+      - name: Publish new version
+        id: publish
+        run: |
+          ver=$(aws lambda publish-version --function-name scheduled-autosnsflow --query 'Version' --output text)
+          echo "version=$ver" >> $GITHUB_OUTPUT
+
+      - name: Point alias 'live' to the new version (create if missing)
+        run: |
+          set -e
+          ver=${{ steps.publish.outputs.version }}
+          aws lambda update-alias --function-name scheduled-autosnsflow --name live --function-version "$ver" || \
+          aws lambda create-alias --function-name scheduled-autosnsflow --name live --function-version "$ver"
+
       - name: Smoke test (invoke)
         run: |
           set +e
