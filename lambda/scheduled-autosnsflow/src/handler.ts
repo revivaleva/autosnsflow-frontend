@@ -1917,22 +1917,18 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
 
   let q;
   try {
+    // フィルタは使わず「直近最大50件のキー」を取得し、後段で条件判定する（LimitとFilterの組合せで取り逃すのを防ぐ）
     q = await ddb.send(new QueryCommand({
       TableName: TBL_SCHEDULED,
       IndexName: GSI_POS_BY_ACC_TIME,
       KeyConditionExpression: "accountId = :acc AND postedAt <= :th",
-      FilterExpression:
-        "(attribute_not_exists(doublePostStatus) OR doublePostStatus <> :done) AND #st = :posted AND contains(autoPostGroupId, :auto)",
-      ExpressionAttributeNames: { "#st": "status" },
       ExpressionAttributeValues: {
         ":acc":    { S: acct.accountId },
         ":th":     { N: String(threshold) },
-        ":done":   { S: "done" },
-        ":posted": { S: "posted" },
-        ":auto":   { S: "自動投稿" }
       },
-      ProjectionExpression: "PK, SK, postId, postedAt",
-      Limit: 1
+      ProjectionExpression: "PK, SK",
+      ScanIndexForward: false,
+      Limit: 50
     }));
   } catch (e) {
     if (!isGsiMissing(e)) throw e;
@@ -1945,15 +1941,10 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
         ":pfx":    { S: "SCHEDULEDPOST#" },
         ":acc":    { S: acct.accountId },
         ":th":     { N: String(threshold) },
-        ":done":   { S: "done" },
-        ":posted": { S: "posted" },
-        ":auto":   { S: "自動投稿" }
       },
-      FilterExpression:
-        "accountId = :acc AND postedAt <= :th AND (attribute_not_exists(doublePostStatus) OR doublePostStatus <> :done) AND #st = :posted AND contains(autoPostGroupId, :auto)",
-      ExpressionAttributeNames: { "#st": "status" },
-      ProjectionExpression: "PK, SK, postId, postedAt",
-      Limit: 1
+      FilterExpression: "accountId = :acc AND postedAt <= :th",
+      ProjectionExpression: "PK, SK",
+      Limit: 50
     }));
   }
 
@@ -1971,10 +1962,35 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
     return debugMode ? { posted2: 0, debug: { reason: "no_candidate", threshold, delayMin } } : { posted2: 0 };
   }
 
-  const pk = q.Items[0].PK.S;
-  const sk = q.Items[0].SK.S;
-  const firstPostId = q.Items[0].postId?.S || "";
-  const firstPostedAt = q.Items[0].postedAt?.N || "";
+  // 直近から本体を取得して条件判定
+  let pk = "", sk = "", firstPostId = "", firstPostedAt = "";
+  let found: any = null;
+  const debugTried: any[] = [];
+  for (const it of (q.Items || [])) {
+    const kpk = it.PK.S, ksk = it.SK.S;
+    const full = await ddb.send(new GetItemCommand({
+      TableName: TBL_SCHEDULED,
+      Key: { PK: { S: kpk }, SK: { S: ksk } },
+      ProjectionExpression: "postId, postedAt, doublePostStatus, autoPostGroupId, #st",
+      ExpressionAttributeNames: { "#st": "status" }
+    }));
+    const f = full.Item || {};
+    const st = f.status?.S || "";
+    const dp = f.doublePostStatus?.S || "";
+    const apg = f.autoPostGroupId?.S || "";
+    const pid = f.postId?.S || "";
+    const pat = f.postedAt?.N || "";
+    const ok = st === "posted" && pid && (!dp || dp !== "done") && apg.includes("自動投稿") && Number(pat || 0) <= threshold;
+    if (debugMode && debugTried.length < 5) debugTried.push({ ksk, st, dp, apg, pid, pat, ok });
+    if (ok) { found = { kpk, ksk, pid, pat }; break; }
+  }
+
+  if (!found) {
+    if (debugMode) return { posted2: 0, debug: { reason: "no_candidate_scan", tried: debugTried, threshold, delayMin } };
+    return { posted2: 0 };
+  }
+
+  pk = found.kpk; sk = found.ksk; firstPostId = found.pid; firstPostedAt = found.pat;
 
   await putLog({
     userId,
