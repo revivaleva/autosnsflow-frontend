@@ -8,10 +8,31 @@ const PUBLIC_PAGES = ["/login", "/logout", "/auth/callback"];
 export function middleware(req: NextRequest) {
   const { pathname, searchParams } = req.nextUrl;
 
+  // 簡易JWT有効チェック（署名検証は行わない）
+  const isValidToken = (tok?: string | null): boolean => {
+    if (!tok) return false;
+    try {
+      const [, payload] = tok.split(".");
+      if (!payload) return false;
+      const b64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+      // Edge Runtime 対応: Buffer が無い環境でも動くように atob を優先
+      const jsonStr = typeof atob === "function"
+        ? atob(b64)
+        : (globalThis as any).Buffer
+          ? (globalThis as any).Buffer.from(b64, "base64").toString("utf8")
+          : "{}";
+      const json = JSON.parse(jsonStr);
+      const expSec = Number(json?.exp || 0);
+      return !!expSec && expSec * 1000 > Date.now();
+    } catch (_) {
+      return false;
+    }
+  };
+
   // [MOD] ログイン済みで /login に来た場合は "/" へリダイレクト（要件B）
   if (pathname.startsWith("/login")) {
     const tokenOnLogin = req.cookies.get("idToken")?.value;
-    if (tokenOnLogin) {
+    if (isValidToken(tokenOnLogin)) {
       const to = req.nextUrl.clone();
       to.pathname = "/";
       to.search = "";
@@ -28,23 +49,8 @@ export function middleware(req: NextRequest) {
 
   // [KEEP] Cookie名は "idToken"
   const token = req.cookies.get("idToken")?.value;
-
-  // 追加: 有効期限(exp)を簡易チェック（署名検証なし、ミドルウェアで軽量判定）
-  if (token) {
-    try {
-      const [, payload] = token.split(".");
-      if (payload) {
-        // base64url → base64
-        const b64 = payload.replace(/-/g, "+").replace(/_/g, "/");
-        const json = JSON.parse(Buffer.from(b64, "base64").toString("utf8"));
-        const expSec = Number(json?.exp || 0);
-        if (expSec && expSec * 1000 > Date.now()) {
-          return NextResponse.next();
-        }
-      }
-    } catch (_) {
-      // 失敗時は通常のリダイレクト処理へフォールバック
-    }
+  if (isValidToken(token)) {
+    return NextResponse.next();
   }
 
   const url = req.nextUrl.clone();
