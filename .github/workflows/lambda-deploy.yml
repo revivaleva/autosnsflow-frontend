@@ -1,3 +1,56 @@
+name: deploy
+
+on:
+  push:
+    branches:
+      - lambda
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install shared
+        working-directory: packages/shared
+        run: |
+          npm ci
+          npm run build || true
+
+      - name: Install backend-core
+        working-directory: packages/backend-core
+        run: |
+          npm ci
+          npm run build || true
+
+      - name: Install (lambda only)
+        working-directory: lambda/scheduled-autosnsflow
+        run: npm ci
+
+      - name: Build & Zip Lambda
+        working-directory: lambda/scheduled-autosnsflow
+        run: |
+          npm run build
+          cd dist && zip -r ../bundle.zip .
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-northeast-1
+
+      - name: Deploy to Lambda (scheduled-autosnsflow)
+        working-directory: lambda/scheduled-autosnsflow
+        run: aws lambda update-function-code --function-name scheduled-autosnsflow --zip-file fileb://bundle.zip
+
 name: Deploy Lambda Function
 
 on:
