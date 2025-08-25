@@ -719,7 +719,8 @@ export const handler = async (event: any = {}) => {
             break;
           }
           case "runSecondStage": {
-            const r = await runSecondStageForAccount(acct, userId, settings);
+            // テストジョブからの呼び出し時は詳細デバッグ情報を返す
+            const r = await runSecondStageForAccount(acct, userId, settings, true);
             results.push({ accountId: acct.accountId, runSecondStage: r });
             break;
           }
@@ -1903,7 +1904,7 @@ async function runRepliesForAccount(acct: any, userId = USER_ID, settings: any =
 }
 
 // 2段階投稿：postedAt + delay 経過、doublePostStatus != "done" のものに本文のみを返信
-async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: any = undefined) {
+async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: any = undefined, debugMode = false) {
   if (!acct.secondStageContent) return { posted2: 0 };
   
   // アカウントに二段階投稿設定があれば実行。遅延時間は設定値またはデフォルト30分
@@ -1967,7 +1968,7 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
       message: "対象なし",
       detail: { threshold, delayMin }
     });
-    return { posted2: 0 };
+    return debugMode ? { posted2: 0, debug: { reason: "no_candidate", threshold, delayMin } } : { posted2: 0 };
   }
 
   const pk = q.Items[0].PK.S;
@@ -1990,7 +1991,7 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
     const pid = await ensureProviderUserId(userId, acct);
     if (!pid) {
       await putLog({ userId, type: "second-stage", accountId: acct.accountId, targetId: sk, status: "skip", message: "ThreadsのユーザーID未取得のためスキップ" });
-      return { posted2: 0 };
+      return debugMode ? { posted2: 0, debug: { reason: "no_provider_user_id", pk, sk, firstPostId } } : { posted2: 0 };
     }
   }
 
@@ -2006,15 +2007,21 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
       ExpressionAttributeValues: { ":done": { S: "done" }, ":pid": { S: pid2 || `DUMMY2-${crypto.randomUUID()}` }, ":ts": { N: String(nowSec()) } }
     }));
     await putLog({ userId, type: "second-stage", accountId: acct.accountId, targetId: sk, status: "ok", message: "2段階投稿を完了", detail: { secondStagePostId: pid2 } });
-    return { posted2: 1 };
+    return debugMode ? { posted2: 1, debug: { reason: "ok", pk, sk, firstPostId, secondStagePostId: pid2 } } : { posted2: 1 };
   } catch (e) {
-    await putLog({ userId, type: "second-stage", accountId: acct.accountId, targetId: sk, status: "error", message: "2段階投稿に失敗", detail: { error: String(e), parentPostId: firstPostId } });
+    const errStr = String(e);
+    await putLog({ userId, type: "second-stage", accountId: acct.accountId, targetId: sk, status: "error", message: "2段階投稿に失敗", detail: { error: errStr, parentPostId: firstPostId } });
     await postDiscordLog({
       userId,
       isError: true,
-      content: `**[ERROR second-stage] ${acct.displayName || acct.accountId}**\n${String(e).slice(0, 800)}`
+      content: `**[ERROR second-stage] ${acct.displayName || acct.accountId}**\n${errStr.slice(0, 800)}`
     });
-    return { posted2: 0 };
+    if (debugMode) {
+      try {
+        await postDiscordMaster(`**[TEST second-stage ERROR] ${acct.displayName || acct.accountId}**\nparent=${firstPostId}\n${errStr.slice(0, 1800)}`);
+      } catch {}
+    }
+    return debugMode ? { posted2: 0, debug: { reason: "post_error", pk, sk, firstPostId, error: errStr.slice(0,800) } } : { posted2: 0 };
   }
 }
 
