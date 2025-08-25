@@ -1362,7 +1362,16 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
     }
 
     // JSTレンジから翌日分の時刻を乱択
-    const when = randomTimeInRangeJst(timeRange, today, true);
+    let when: Date | null;
+    if (timeRange) {
+      when = randomTimeInRangeJst(timeRange, today, true);
+    } else {
+      // timeRange が空の場合は、明日を現在時刻と同じ時刻で予約する
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      when = new Date(tomorrow);
+      when.setHours(today.getHours(), today.getMinutes(), 0, 0);
+    }
     trace.when = when?.toISOString?.() || null;
     if (!when) {
       debug.push({ ...trace, reason: "time_pick_failed" });
