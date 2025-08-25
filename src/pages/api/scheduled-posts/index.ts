@@ -174,6 +174,7 @@ export default async function handler(
         content?: string;
         theme?: string;
         autoPostGroupId?: string;
+        timeRange?: string;
       };
 
       const id = crypto.randomUUID();
@@ -198,6 +199,7 @@ export default async function handler(
         status: { S: "scheduled" },
         isDeleted: { BOOL: false },
         createdAt: { N: String(Math.floor(Date.now() / 1000)) },
+        timeRange: { S: body.timeRange ?? "" },
       };
 
       await ddb.send(new PutItemCommand({ TableName: TBL_SCHEDULED, Item: item }));
@@ -216,6 +218,7 @@ export default async function handler(
         isDeleted?: boolean;
         content?: string;
         scheduledAt?: number | string;
+        timeRange?: string;
       };
       if (!body.scheduledPostId) {
         res.status(400).json({ error: "missing_scheduledPostId" });
@@ -259,6 +262,11 @@ export default async function handler(
             : Math.floor(new Date(body.scheduledAt).getTime() / 1000);
         expr.push("scheduledAt = :sa");
         values[":sa"] = { N: String(sec) };
+      }
+
+      if (typeof body.timeRange === "string") {
+        expr.push("timeRange = :tr");
+        values[":tr"] = { S: body.timeRange };
       }
 
       if (expr.length === 0) {
