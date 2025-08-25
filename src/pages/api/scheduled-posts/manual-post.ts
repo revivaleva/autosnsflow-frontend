@@ -42,19 +42,25 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const accountId = it.accountId?.S || ""; // ハンドル（プロフィールURL用）
     if (!content || !accountId) return res.status(400).json({ error: "invalid_item" });
 
-    // Threads 資格情報
+    // Threads 資格情報とアカウント設定（providerUserIdも取得）
     const acct = await ddb.send(
       new GetItemCommand({
         TableName: TBL_THREADS,
         Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } },
-        ProjectionExpression: "accessToken",
+        ProjectionExpression: "accessToken, providerUserId, secondStageContent",
       })
     );
     const accessToken = acct.Item?.accessToken?.S || "";
+    const providerUserId = acct.Item?.providerUserId?.S || "";
+    const secondStageContent = acct.Item?.secondStageContent?.S || "";
     if (!accessToken) return res.status(400).json({ error: "missing_threads_credentials" });
 
-    // 実投稿（/me: 作成→公開）
-    const { postId } = await postToThreads({ accessToken, text: content });
+    // 実投稿（GAS/Lambda準拠の送信先指定）
+    const { postId, numericId } = await postToThreads({ 
+      accessToken, 
+      text: content,
+      userIdOnPlatform: providerUserId 
+    });
 
     // [MOD] permalink 取得（失敗時は null）
     const permalink = await getThreadsPermalink({ accessToken, postId });
@@ -70,9 +76,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       ":f": { BOOL: false },
     };
     const sets = ["#st = :posted", "postedAt = :ts", "postId = :pid"];
+    
+    // numericIdがあれば保存
+    if (numericId) {
+      values[":nid"] = { S: numericId };
+      sets.push("numericPostId = :nid");
+    }
+    
     if (permalink?.url) {
       sets.push("postUrl = :purl");
       values[":purl"] = { S: permalink.url };
+    }
+    
+    // 二段階投稿の初期化
+    if (secondStageContent && secondStageContent.trim()) {
+      sets.push("doublePostStatus = :waiting");
+      values[":waiting"] = { S: "waiting" };
     }
 
     await ddb.send(
@@ -96,6 +115,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         ...(permalink?.url ? { postUrl: permalink.url } : {}),
         postedAt: now,
         status: "posted",
+        ...(secondStageContent?.trim() ? { doublePostStatus: "waiting" } : {}),
       },
     });
   } catch (e: any) {

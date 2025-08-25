@@ -57,6 +57,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         updatedAt: it.updatedAt,
 
         accessToken: it.accessToken, // [KEEP]
+        providerUserId: it.providerUserId, // [ADD] リプライ取得に必要
 
         autoPost: it.autoPost,
         autoGenerate: it.autoGenerate,

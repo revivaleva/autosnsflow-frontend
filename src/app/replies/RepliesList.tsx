@@ -9,7 +9,7 @@ import dayjs from "dayjs";
 // 型定義
 // ==========================
 
-type ReplyStatus = "" | "replied" | "unreplied";
+type ReplyStatus = "" | "draft" | "unreplied" | "replied";
 type ReplyType = {
   id: string;
   accountId: string;
@@ -26,6 +26,7 @@ type EditModalProps = {
   onClose: () => void;
   onSave: (value: string) => void;
   value: string;
+  replyData?: ReplyType; // AI生成用のデータ
 };
 
 // ==========================
@@ -33,26 +34,55 @@ type EditModalProps = {
 // ==========================
 const statusOptions = [
   { value: "", label: "すべて" },
-  { value: "replied", label: "返信済" },
+  { value: "draft", label: "下書き" },
   { value: "unreplied", label: "未返信" },
+  { value: "replied", label: "返信済" },
 ];
 
 // ==========================
 // 返信内容編集モーダル
 // ==========================
-function EditModal({ open, onClose, onSave, value }: EditModalProps) {
+function EditModal({ open, onClose, onSave, value, replyData }: EditModalProps) {
   const [text, setText] = useState<string>(value);
   const [aiLoading, setAiLoading] = useState<boolean>(false);
 
   useEffect(() => { setText(value); }, [value]);
 
-  // 自動生成
-  const handleAIGenerate = () => {
+  // 自動生成（実際のAI API呼び出し）
+  const handleAIGenerate = async () => {
+    if (!replyData) return;
+    
     setAiLoading(true);
-    setTimeout(() => {
-      setText("（AIで自動生成された返信内容サンプル）");
+    try {
+      const response = await fetch("/api/ai-gateway", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          purpose: "reply-generate",
+          input: {
+            originalPost: replyData.postContent,
+            incomingReply: replyData.replyContent,
+            accountId: replyData.accountId,
+          },
+        }),
+      });
+      
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.error || `HTTP ${response.status}`);
+      }
+      
+      setText(data.text || "（生成に失敗しました）");
+      
+    } catch (error: any) {
+      console.error("AI generation error:", error);
+      alert(`AI生成に失敗しました: ${error.message}`);
+      setText("（AI生成に失敗しました）");
+    } finally {
       setAiLoading(false);
-    }, 800);
+    }
   };
 
   if (!open) return null;
@@ -98,34 +128,115 @@ export default function RepliesList() {
   const [editModalOpen, setEditModalOpen] = useState<boolean>(false);
   const [editTarget, setEditTarget] = useState<ReplyType | null>(null);
 
+  
+  // [ADD] リプライ取得の状態管理
+  const [fetchingReplies, setFetchingReplies] = useState<boolean>(false);
+
+  // 返信一覧を読み込む関数
+  const loadReplies = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch("/api/replies", { credentials: "include" });
+      const data = await response.json();
+      
+      setReplies(
+        (data.replies || []).map((r: any): ReplyType => ({
+          id: r.id,
+          accountId: r.accountId,
+          threadsPostedAt: r.scheduledAt
+            ? dayjs(r.scheduledAt * 1000).format("YYYY/MM/DD HH:mm")
+            : "",
+          postContent: r.content,
+          replyContent: r.incomingReply || "",
+          responseContent: r.replyContent || "",
+          responseAt: r.replyAt
+            ? dayjs(r.replyAt * 1000).format("YYYY/MM/DD HH:mm")
+            : "",
+          status: r.status as ReplyStatus,
+        }))
+      );
+    } catch (error: any) {
+      alert(`読み込みエラー: ${error.message}`);
+      setReplies([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // [ADD] リプライ手動取得関数
+  const fetchReplies = async () => {
+    if (fetchingReplies) return;
+    
+    setFetchingReplies(true);
+    try {
+      console.log("[CLIENT] リプライ取得開始...");
+      const response = await fetch("/api/fetch-replies", { 
+        method: "POST",
+        credentials: "include" 
+      });
+      console.log("[CLIENT] API応答:", response.status, response.statusText);
+      
+      const data = await response.json();
+      console.log("[CLIENT] レスポンスデータ:", data);
+
+      
+      if (data.ok) {
+        const results = data.results || [];
+        const detailMsg = results.length > 0 ? 
+          results.map((r: any) => {
+            const parts = [`${r.displayName || r.accountId}: リプライ${r.fetched}件取得`];
+            if (r.postsFound !== undefined) parts.push(`投稿${r.postsFound}件発見`);
+            if (r.postsWithPostId !== undefined) parts.push(`postId有り${r.postsWithPostId}件`);
+            if (r.error) parts.push(`エラー: ${r.error}`);
+            
+            // 投稿内容とAPI結果を追加
+            if (r.postsInfo && r.postsInfo.length > 0) {
+              const postsDetail = r.postsInfo.map((p: any, i: number) => 
+                `[${i+1}] ${p.hasPostId ? 'ID:' + p.postId.substring(0, 8) + '...' : 'ID無し'} "${p.content}" → ${p.apiLog || '未処理'}`
+              ).join('\n  ');
+              parts.push(`\n  対象投稿:\n  ${postsDetail}`);
+            }
+            
+            // API詳細ログを追加
+            if (r.apiLogs && r.apiLogs.length > 0) {
+              const apiDetail = r.apiLogs.map((log: any, i: number) => {
+                const parts = [
+                  `[${i+1}] postId: ${log.postId?.substring(0, 8)}...`,
+                  `Status: ${log.status || 'N/A'}`,
+                  `Found: ${log.repliesFound || 0}件`
+                ];
+                if (log.error) parts.push(`Error: ${log.error}`);
+                if (log.response) parts.push(`Response: ${log.response}`);
+                return parts.join(' / ');
+              }).join('\n  ');
+              parts.push(`\n  API詳細:\n  ${apiDetail}`);
+            }
+            
+            return parts.join(' / ');
+          }).join('\n\n') : 
+          '処理対象アカウントなし';
+
+        const summary = data.debug ? 
+          `\n\n📊 全体サマリー:\n投稿${data.debug.totalPostsFound || 0}件発見 / postId有り${data.debug.totalPostsWithPostId || 0}件 / リプライ${data.debug.totalFetched || 0}件取得` : 
+          '';
+        
+        alert(`✅ ${data.message}\n\n${detailMsg}${summary}`);
+        // 取得後に一覧を再読み込み
+        await loadReplies();
+      } else {
+        alert(`❌ リプライ取得に失敗しました: ${data.message || data.error}`);
+      }
+    } catch (error: any) {
+      console.error("[CLIENT] リプライ取得エラー:", error);
+      alert(`❌ リプライ取得エラー: ${error.message}`);
+    } finally {
+      setFetchingReplies(false);
+    }
+  };
+
   // APIからデータ取得
   useEffect(() => {
-    setLoading(true);
-    fetch(`/api/replies`, { credentials: "include" }) // userId送信しない
-      .then(res => res.json())
-      .then(data => {
-        setReplies(
-          (data.replies || []).map((r: any): ReplyType => ({
-            id: r.id,
-            accountId: r.accountId,
-            threadsPostedAt: r.scheduledAt
-              ? dayjs(r.scheduledAt * 1000).format("YYYY/MM/DD HH:mm")
-              : "",
-            postContent: r.content,
-            replyContent: r.incomingReply || "",
-            responseContent: r.replyContent || "",
-            responseAt: r.replyAt
-              ? dayjs(r.replyAt * 1000).format("YYYY/MM/DD HH:mm")
-              : "",
-            status: r.status as ReplyStatus,
-          }))
-        );
-        setLoading(false);
-      })
-      .catch(() => {
-        setReplies([]);
-        setLoading(false);
-      });
+    loadReplies();
   }, []);
 
   // フィルタ
@@ -153,27 +264,75 @@ export default function RepliesList() {
   });
 
   // アクション
-  const handleReply = (id: string) => {
-    alert(`即時返信: ${id}`);
-    setReplies(replies =>
-      replies.map(r =>
-        r.id === id
-          ? { ...r, responseContent: "（即時返信内容）", responseAt: dayjs().format("YYYY/MM/DD HH:mm"), status: "replied" }
-          : r
-      )
-    );
-  };
-
-  const handleDelete = (id: string) => {
-    if (window.confirm("この返信内容を削除しますか？")) {
+  const handleReply = async (id: string) => {
+    const reply = replies.find(r => r.id === id);
+    if (!reply) return;
+    
+    if (!reply.responseContent?.trim()) {
+      alert("返信内容が入力されていません。編集ボタンで返信内容を入力してください。");
+      return;
+    }
+    
+    if (reply.status === "replied") {
+      alert("この返信は既に送信済みです。");
+      return;
+    }
+    
+    if (!window.confirm(`この内容で返信を送信しますか？\n\n${reply.responseContent}`)) {
+      return;
+    }
+    
+    try {
+      const response = await fetch("/api/replies/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          replyId: id,
+          replyContent: reply.responseContent,
+        }),
+      });
+      
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.error || `HTTP ${response.status}`);
+      }
+      
+      // UIを更新
       setReplies(replies =>
         replies.map(r =>
           r.id === id
-            ? { ...r, responseContent: "", responseAt: dayjs().format("YYYY/MM/DD HH:mm"), status: "replied" }
+            ? { ...r, responseAt: dayjs().format("YYYY/MM/DD HH:mm"), status: "replied" }
             : r
         )
       );
+      
+      alert(`✅ 返信を送信しました！\n投稿ID: ${data.responsePostId}`);
+      
+    } catch (error: any) {
+      console.error("Reply send error:", error);
+      alert(`❌ 返信送信に失敗しました: ${error.message}`);
     }
+  };
+
+  const handleDelete = (id: string) => {
+    if (!window.confirm("この返信内容を削除しますか？")) return;
+    (async () => {
+      try {
+        const response = await fetch("/api/replies/delete", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ replyId: id }),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        // 成功したらローカル state を更新（論理削除フラグに合わせて除外またはステータス更新）
+        setReplies(prev => prev.map(r => r.id === id ? { ...r, status: 'deleted' as any } : r));
+      } catch (e: any) {
+        alert(`削除に失敗しました: ${e.message || String(e)}`);
+      }
+    })();
   };
 
   const handleEdit = (reply: ReplyType) => {
@@ -181,16 +340,50 @@ export default function RepliesList() {
     setEditModalOpen(true);
   };
 
-  const handleEditSave = (newContent: string) => {
+  const handleEditSave = async (newContent: string) => {
     if (!editTarget) return;
-    setReplies(replies =>
-      replies.map(r =>
-        r.id === editTarget.id
-          ? { ...r, responseContent: newContent, responseAt: dayjs().format("YYYY/MM/DD HH:mm"), status: "replied" }
-          : r
-      )
-    );
-    setEditModalOpen(false);
+    
+    try {
+      const response = await fetch("/api/replies/update", {
+        method: "PUT",
+        headers: { 
+          "Content-Type": "application/json" 
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          replyId: editTarget.id,
+          responseContent: newContent
+        })
+      });
+      
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.message || `HTTP ${response.status}`);
+      }
+      
+      // サーバー保存成功後にローカルstateを更新
+      setReplies(replies =>
+        replies.map(r =>
+          r.id === editTarget.id
+            ? { 
+                ...r, 
+                responseContent: newContent, 
+                responseAt: dayjs().format("YYYY/MM/DD HH:mm"), 
+                status: newContent.trim() ? "unreplied" : "draft"
+              }
+            : r
+        )
+      );
+      setEditModalOpen(false);
+      
+      // 成功メッセージ
+      console.log("✅ リプライ内容を保存しました");
+      
+    } catch (error: any) {
+      console.error("Edit save error:", error);
+      alert(`❌ 保存に失敗しました: ${error.message}`);
+    }
   };
 
   // アカウントID一覧（フィルタ用）
@@ -205,9 +398,61 @@ export default function RepliesList() {
         onClose={() => setEditModalOpen(false)}
         onSave={handleEditSave}
         value={editTarget?.responseContent || ""}
+        replyData={editTarget || undefined}
       />
 
-      <h2 className="text-xl font-bold mb-4">リプライ一覧</h2>
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="text-xl font-bold">リプライ一覧</h2>
+        <div className="flex gap-2">
+          <button
+            onClick={loadReplies}
+            disabled={loading}
+            className="px-3 py-1 text-sm bg-blue-500 hover:bg-blue-600 text-white rounded disabled:bg-gray-400"
+          >
+            {loading ? "読み込み中..." : "再読み込み"}
+          </button>
+          <button 
+            onClick={fetchReplies}
+            disabled={fetchingReplies || loading}
+            className="px-3 py-1 text-sm bg-green-500 hover:bg-green-600 text-white rounded disabled:bg-gray-400"
+          >
+            {fetchingReplies ? "取得中..." : "⇓ リプライ取得"}
+          </button>
+        </div>
+      </div>
+
+
+
+      {/* リプライ取得に関する案内 */}
+      {replies.length === 0 && !loading && (
+        <div className="mb-4 p-4 bg-yellow-50 border border-yellow-200 rounded">
+          <h3 className="font-bold text-yellow-800 mb-2">リプライが取得できていません</h3>
+          <p className="text-yellow-700 mb-2">以下の点をご確認ください：</p>
+          <ul className="list-disc list-inside text-yellow-700 text-sm space-y-1">
+            <li>
+              <a href="/accounts" className="text-blue-600 hover:underline">アカウント設定</a>
+              で「リプ返信」機能がオンになっているか
+            </li>
+            <li>Lambda関数が定期実行されているか
+              <details className="ml-4 mt-1">
+                <summary className="cursor-pointer text-xs text-blue-600">ログ確認方法</summary>
+                <div className="text-xs mt-1 p-2 bg-white rounded border">
+                  <p className="mb-1"><strong>AWS CLIコマンド:</strong></p>
+                  <code className="block bg-gray-100 p-1 rounded">
+                    aws logs describe-log-groups --log-group-name-prefix "/aws/lambda/scheduled-autosnsflow"
+                  </code>
+                  <p className="mt-2 mb-1"><strong>ログの確認:</strong></p>
+                  <code className="block bg-gray-100 p-1 rounded">
+                    aws logs tail /aws/lambda/scheduled-autosnsflow --follow
+                  </code>
+                </div>
+              </details>
+            </li>
+            <li>Threadsのアクセストークンが有効で、適切な権限があるか</li>
+            <li>実際にThreads投稿にリプライが投稿されているか</li>
+          </ul>
+        </div>
+      )}
 
       {/* フィルタ */}
       <div className="flex flex-wrap gap-4 mb-4">
@@ -276,9 +521,33 @@ export default function RepliesList() {
               <tr key={r.id}>
                 <td className="border p-1">{r.accountId}</td>
                 <td className="border p-1">{r.threadsPostedAt}</td>
-                <td className="border p-1">{r.postContent}</td>
-                <td className="border p-1">{r.replyContent}</td>
-                <td className="border p-1">{r.responseContent}</td>
+                <td className="border p-1">
+                  <div 
+                    className="truncate max-w-xs cursor-pointer" 
+                    title={r.postContent}
+                    onClick={() => r.postContent && alert(`投稿本文:\n\n${r.postContent}`)}
+                  >
+                    {r.postContent}
+                  </div>
+                </td>
+                <td className="border p-1">
+                  <div 
+                    className="truncate max-w-xs cursor-pointer" 
+                    title={r.replyContent}
+                    onClick={() => r.replyContent && alert(`リプライ内容:\n\n${r.replyContent}`)}
+                  >
+                    {r.replyContent}
+                  </div>
+                </td>
+                <td className="border p-1">
+                  <div 
+                    className="truncate max-w-xs cursor-pointer" 
+                    title={r.responseContent || "返信内容未作成"}
+                    onClick={() => r.responseContent && alert(`返信内容:\n\n${r.responseContent}`)}
+                  >
+                    {r.responseContent || "（未作成）"}
+                  </div>
+                </td>
                 <td className="border p-1">{r.responseAt}</td>
                 <td className="border p-1 space-x-1">
                   {r.status !== "replied" && (
@@ -316,6 +585,7 @@ export default function RepliesList() {
           </tbody>
         </table>
       </div>
+
     </div>
   );
 }

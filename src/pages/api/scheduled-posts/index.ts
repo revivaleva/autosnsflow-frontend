@@ -14,6 +14,64 @@ import crypto from "crypto";
 
 const ddb = createDynamoClient();
 const TBL_SCHEDULED = "ScheduledPosts";
+const TBL_REPLIES = "Replies";
+
+// リプライ状況を取得する関数（postIdとnumericPostIdの両方で検索）
+async function getReplyStatusForPost(userId: string, postId: string | undefined, numericPostId?: string | undefined): Promise<{ replied: number; total: number }> {
+  if (!postId && !numericPostId) return { replied: 0, total: 0 };
+  
+  try {
+    const searchIds = [postId, numericPostId].filter(Boolean);
+    console.log(`[DEBUG] リプライ状況検索開始 - 検索ID: [${searchIds.join(', ')}]`);
+    
+    let allItems: any[] = [];
+    
+    // 複数のpostIDで検索
+    for (const searchId of searchIds) {
+      if (!searchId) continue;
+      
+      const result = await ddb.send(new QueryCommand({
+        TableName: TBL_REPLIES,
+        KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+        FilterExpression: "postId = :postId",
+        ExpressionAttributeValues: {
+          ":pk": { S: `USER#${userId}` },
+          ":pfx": { S: "REPLY#" },
+          ":postId": { S: searchId },
+        },
+        ProjectionExpression: "#st, postId, SK",
+        ExpressionAttributeNames: { "#st": "status" },
+      }));
+      
+      if (result.Items) {
+        console.log(`[DEBUG] postId "${searchId}" で ${result.Items.length} 件のリプライを発見`);
+        allItems.push(...result.Items);
+      }
+    }
+    
+    // 重複を除去（同じSKは1つだけ）
+    const uniqueItems = allItems.reduce((acc, item) => {
+      const sk = item.SK?.S;
+      if (sk && !acc.some((existing: any) => existing.SK?.S === sk)) {
+        acc.push(item);
+      }
+      return acc;
+    }, [] as any[]);
+    
+    const total = uniqueItems.length;
+    const replied = uniqueItems.filter((item: any) => item.status?.S === "replied").length;
+    
+    console.log(`[DEBUG] 最終リプライ状況: ${replied}/${total} (重複除去後)`);
+    if (total > 0) {
+      console.log(`[DEBUG] 見つかったリプライのpostId例:`, uniqueItems.slice(0, 3).map((i: any) => i.postId?.S));
+    }
+    
+    return { replied, total };
+  } catch (e) {
+    console.error(`Error getting reply status for posts [${postId}, ${numericPostId}]:`, e);
+    return { replied: 0, total: 0 };
+  }
+}
 
 // DynamoDB アイテムをフロント用の形へ
 function mapItem(it: any) {
@@ -43,6 +101,7 @@ function mapItem(it: any) {
     postedAt: getN("postedAt"),
     // [ADD] 一覧にも返す
     postId: getS("postId"),
+    numericPostId: getS("numericPostId"), // 数字の投稿ID
     postUrl: getS("postUrl"),
     isDeleted: getB("isDeleted"),
     replyCount: getN("replyCount") ?? 0,
@@ -80,7 +139,29 @@ export default async function handler(
       );
       const items = out.Items ?? [];
       const posts = items.map(mapItem).filter((x) => !x.isDeleted);
-      res.status(200).json({ ok: true, posts });
+      
+      // リプライ状況を並行して取得
+      const postsWithReplies = await Promise.all(
+        posts.map(async (post) => {
+          if (post.status === "posted" && (post.postId || post.numericPostId)) {
+            // postIdとnumericPostIdの両方を使ってリプライ状況を取得
+            const replyStatus = await getReplyStatusForPost(userId, post.postId, post.numericPostId);
+            return {
+              ...post,
+              replyStatus: {
+                replied: replyStatus.replied,
+                total: replyStatus.total,
+              }
+            };
+          }
+          return {
+            ...post,
+            replyStatus: { replied: 0, total: 0 }
+          };
+        })
+      );
+      
+      res.status(200).json({ ok: true, posts: postsWithReplies });
       return;
     }
 
@@ -93,6 +174,7 @@ export default async function handler(
         content?: string;
         theme?: string;
         autoPostGroupId?: string;
+        timeRange?: string;
       };
 
       const id = crypto.randomUUID();
@@ -117,6 +199,7 @@ export default async function handler(
         status: { S: "scheduled" },
         isDeleted: { BOOL: false },
         createdAt: { N: String(Math.floor(Date.now() / 1000)) },
+        timeRange: { S: body.timeRange ?? "" },
       };
 
       await ddb.send(new PutItemCommand({ TableName: TBL_SCHEDULED, Item: item }));
@@ -135,6 +218,7 @@ export default async function handler(
         isDeleted?: boolean;
         content?: string;
         scheduledAt?: number | string;
+        timeRange?: string;
       };
       if (!body.scheduledPostId) {
         res.status(400).json({ error: "missing_scheduledPostId" });
@@ -178,6 +262,11 @@ export default async function handler(
             : Math.floor(new Date(body.scheduledAt).getTime() / 1000);
         expr.push("scheduledAt = :sa");
         values[":sa"] = { N: String(sec) };
+      }
+
+      if (typeof body.timeRange === "string") {
+        expr.push("timeRange = :tr");
+        values[":tr"] = { S: body.timeRange };
       }
 
       if (expr.length === 0) {

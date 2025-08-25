@@ -146,6 +146,70 @@ ${input?.theme ?? ""}
     max_tokens = 300;
     // ====== 刷新ここまで ======
 
+  } else if (purpose === "reply-generate") {
+    // リプライ生成（新機能）
+    const accountId = (input?.accountId ?? "").toString();
+    const originalPost = (input?.originalPost ?? "").toString();
+    const incomingReply = (input?.incomingReply ?? "").toString();
+    
+    if (!accountId || !originalPost || !incomingReply) {
+      res.status(400).json({ error: "accountId, originalPost, and incomingReply are required for reply-generate" }); return;
+    }
+
+    // アカウントのペルソナ情報を取得
+    let personaText = "";
+    try {
+      const acc = await client.send(new GetItemCommand({
+        TableName: process.env.TBL_THREADS_ACCOUNTS || 'ThreadsAccounts',
+        Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } },
+        ProjectionExpression: "#pm, #ps, #pd",
+        ExpressionAttributeNames: {
+          "#pm": "personaMode",
+          "#ps": "personaSimple",
+          "#pd": "personaDetail",
+        }
+      }));
+      const mode = (acc.Item?.personaMode?.S || "").toLowerCase();
+      const simple = acc.Item?.personaSimple?.S || "";
+      const detail = acc.Item?.personaDetail?.S || "";
+
+      if (mode === "detail") {
+        personaText = detail ? `【詳細ペルソナ(JSON)】\n${detail}` : "";
+      } else if (mode === "simple") {
+        personaText = simple ? `【簡易ペルソナ】${simple}` : "";
+      } else {
+        personaText = detail
+          ? `【詳細ペルソナ(JSON)】\n${detail}`
+          : (simple ? `【簡易ペルソナ】${simple}` : "");
+      }
+    } catch (e) {
+      console.log("fetch persona for reply failed:", e);
+      personaText = "";
+    }
+
+    systemPrompt = "あなたはSNS運用代行のプロです。受信したリプライに対して、アカウントのペルソナに合った自然で魅力的な返信を作成してください。";
+    const policy = masterPrompt ? `\n【運用方針（masterPrompt）】\n${masterPrompt}\n` : "";
+
+    userPrompt = `
+${policy}
+${personaText ? `【アカウントのペルソナ】\n${personaText}\n` : "【アカウントのペルソナ】\n(未設定)\n"}
+【元の投稿】
+${originalPost}
+
+【受信したリプライ】
+${incomingReply}
+
+【指示】
+上記のリプライに対して、アカウントのペルソナに合った返信を作成してください。
+- 自然で親しみやすい文体で
+- 相手のメッセージに適切に応答し
+- 会話を続けやすい内容で
+- 絵文字も適度に使用
+- 150文字以内で簡潔に
+
+返信内容のみを出力してください（説明や前置きは不要）。`;
+    max_tokens = 300;
+
   } else if (purpose === "persona-generate") {
     systemPrompt = "あなたはSNS運用の専門家です。";
     userPrompt = `
