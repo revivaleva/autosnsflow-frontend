@@ -3,6 +3,7 @@
 // 本実装は Threads のみを対象とする（X/Twitter は扱わない）。
 // [UPDATE] 2025-01-17: リプライデバッグ機能とグローバル認証保護機能を統合
 // [DEPLOY] 2025-01-24: GitHub Actions自動デプロイテスト実行
+// [NO-OP] build trigger
 
 import { fetchThreadsAccounts } from "@autosnsflow/backend-core";
 import {
