@@ -5,7 +5,6 @@ import { GetItemCommand, UpdateItemCommand } from "@aws-sdk/client-dynamodb";
 import { createDynamoClient } from "@/lib/ddb";
 import { verifyUserFromRequest } from "@/lib/auth";
 import { postReplyViaThreads } from "@/lib/replies/common";
-import { postToThreads } from "@/lib/threads"; // existing import remains if used elsewhere
 
 const ddb = createDynamoClient();
 const TBL_REPLIES = "Replies";

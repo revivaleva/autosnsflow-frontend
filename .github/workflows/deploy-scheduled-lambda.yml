@@ -3,10 +3,6 @@ name: Deploy Scheduled Lambda
 on:
   push:
     branches: ["lambda"]
-    paths:
-      - "lambda/**"
-      - "packages/**"
-      - ".github/workflows/deploy-scheduled-lambda.yml"
 
 jobs:
   deploy:
@@ -19,16 +15,28 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Install (root only for workspaces)
+      - name: Install shared
+        working-directory: packages/shared
         run: |
-          npm ci
-          npm -w @autosnsflow/shared run build
-          npm -w @autosnsflow/backend-core run build
+          if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi
+          npm run build || true
+
+      - name: Install backend-core
+        working-directory: packages/backend-core
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi
+          npm run build || true
+
+      - name: Install (lambda only)
+        working-directory: lambda/scheduled-autosnsflow
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi
 
       - name: Build & Zip Lambda
+        working-directory: lambda/scheduled-autosnsflow
         run: |
-          npm -w lambda/scheduled-autosnsflow run build
-          npm -w lambda/scheduled-autosnsflow run zip
+          npm run build
+          npm run zip
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -38,9 +46,29 @@ jobs:
           aws-region: ap-northeast-1
 
       - name: Deploy to Lambda (scheduled-autosnsflow)
-        run: npm -w lambda/scheduled-autosnsflow run deploy:cli
+        working-directory: lambda/scheduled-autosnsflow
+        run: npm run deploy:cli
         env:
           LAMBDA_FUNCTION_NAME: scheduled-autosnsflow
+
+      - name: Publish new version
+        id: publish
+        run: |
+          ver=$(aws lambda publish-version --function-name scheduled-autosnsflow --query 'Version' --output text)
+          echo "version=$ver" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      - name: Point alias 'live' to the new version (create if missing)
+        run: |
+          set -e
+          ver=${{ steps.publish.outputs.version }}
+          if [ -n "$ver" ]; then \
+            aws lambda update-alias --function-name scheduled-autosnsflow --name live --function-version "$ver" || \
+            aws lambda create-alias --function-name scheduled-autosnsflow --name live --function-version "$ver"; \
+          else \
+            echo "skip alias update (no version published)"; \
+          fi
+        continue-on-error: true
 
       - name: Smoke test (invoke)
         run: |

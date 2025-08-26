@@ -39,7 +39,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     const accountId = scheduledPost.Item.accountId?.S;
-    const postId = scheduledPost.Item.postId?.S; // 初回投稿のpostId（リプライ先）
+    const postId = scheduledPost.Item.numericPostId?.S || scheduledPost.Item.postId?.S; // 数字IDを優先
     const doublePostStatus = scheduledPost.Item.doublePostStatus?.S;
     const status = scheduledPost.Item.status?.S;
 

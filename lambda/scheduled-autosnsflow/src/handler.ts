@@ -3,6 +3,7 @@
 // 本実装は Threads のみを対象とする（X/Twitter は扱わない）。
 // [UPDATE] 2025-01-17: リプライデバッグ機能とグローバル認証保護機能を統合
 // [DEPLOY] 2025-01-24: GitHub Actions自動デプロイテスト実行
+// [NO-OP] build trigger
 
 import { fetchThreadsAccounts } from "@autosnsflow/backend-core";
 import {
@@ -170,17 +171,18 @@ async function getDiscordWebhooks(userId = USER_ID) {
     new GetItemCommand({
       TableName: TBL_SETTINGS,
       Key: { PK: { S: `USER#${userId}` }, SK: { S: "SETTINGS" } },
+      ProjectionExpression: "discordWebhook"
     })
   );
   const single = out.Item?.discordWebhook?.S;
-  const list = (out.Item?.discordWebhooks?.L || []).map((x: any) => x.S).filter(Boolean);
-  const urls = single ? [single] : list;
+  const urls = single ? [single] : [];
   return urls;
 }
 
 async function postDiscordLog({ userId = USER_ID, content, isError = false }: any) {
   const { normal, error } = await getDiscordWebhookSets(userId);
-  const urls = isError ? (error.length ? error : normal) : normal;
+  // 厳密ルーティング: 通常は normal のみ、エラーは error のみ（相互フォールバックしない）
+  const urls = isError ? error : normal;
   await postDiscord(urls, content);
 }
 
@@ -189,15 +191,13 @@ async function getDiscordWebhookSets(userId = USER_ID) {
     new GetItemCommand({
       TableName: TBL_SETTINGS,
       Key: { PK: { S: `USER#${userId}` }, SK: { S: "SETTINGS" } },
-      ProjectionExpression: "discordWebhook, discordWebhooks, errorDiscordWebhook, errorDiscordWebhooks",
+      ProjectionExpression: "discordWebhook, errorDiscordWebhook",
     })
   );
   const nSingle = out.Item?.discordWebhook?.S;
-  const nList = (out.Item?.discordWebhooks?.L || []).map((x: any) => x.S).filter(Boolean);
   const eSingle = out.Item?.errorDiscordWebhook?.S;
-  const eList = (out.Item?.errorDiscordWebhooks?.L || []).map((x: any) => x.S).filter(Boolean);
-  const normal = nSingle ? [nSingle, ...nList] : nList;
-  const error = eSingle ? [eSingle, ...eList] : eList;
+  const normal = nSingle ? [nSingle] : [];
+  const error = eSingle ? [eSingle] : [];
   return { normal, error };
 }
 
@@ -405,6 +405,27 @@ async function getAutoPostGroup(userId: any, groupId: any) {
   };
 }
 
+async function getAutoPostGroupItems(userId: any, groupKey: any) {
+  if (!groupKey) return [] as any[];
+  const out = await ddb.send(new QueryCommand({
+    TableName: TBL_GROUPS,
+    KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+    ExpressionAttributeValues: { ":pk": { S: `USER#${userId}` }, ":pfx": { S: `GROUPITEM#${groupKey}#` } },
+    ProjectionExpression: "SK, #od, timeRange, theme, enabled",
+    ExpressionAttributeNames: { "#od": "order" },
+    ScanIndexForward: true,
+    Limit: 100,
+  }));
+  const items = (out.Items || []).map((i: any) => ({
+    slotId: (i.SK?.S || '').split('#').pop() || '',
+    order: i.order?.N ? Number(i.order.N) : 0,
+    timeRange: i.timeRange?.S || '',
+    theme: i.theme?.S || '',
+    enabled: i.enabled?.BOOL === true,
+  })).filter(x => x.enabled !== false).sort((a, b) => a.order - b.order);
+  return items;
+}
+
 /// ========== 予約投稿（毎時の"翌日分作成"） ==========
 async function isPostedToday(userId: any, acct: any, groupTypeStr: any) {
   const t0 = toEpochSec(startOfDayJst(jstNow()));
@@ -505,10 +526,10 @@ async function deleteUnpostedAutoPosts(userId: any, acct: any, groupTypeStr: any
   return deletedCount;
 }
 
-async function createScheduledPost(userId: any, { acct, group, type, whenJst }: any) {
-  const themeStr = (type === 1 ? group.theme1 : type === 2 ? group.theme2 : group.theme3) || "";
+async function createScheduledPost(userId: any, { acct, group, type, whenJst, overrideTheme = "", overrideTimeRange = "" }: any) {
+  const themeStr = (overrideTheme || ((type === 1 ? group.theme1 : type === 2 ? group.theme2 : group.theme3) || ""));
   const groupTypeStr = `${group.groupName}-自動投稿${type}`;
-  const timeRange = (type === 1 ? (group.time1 || "05:00-08:00") : type === 2 ? (group.time2 || "12:00-13:00") : (group.time3 || "20:00-23:00")) || "";
+  const timeRange = (overrideTimeRange || (type === 1 ? (group.time1 || "05:00-08:00") : type === 2 ? (group.time2 || "12:00-13:00") : (group.time3 || "20:00-23:00")) || "");
   const id = crypto.randomUUID();
   const item = {
     PK: { S: `USER#${userId}` },
@@ -719,7 +740,8 @@ export const handler = async (event: any = {}) => {
             break;
           }
           case "runSecondStage": {
-            const r = await runSecondStageForAccount(acct, userId, settings);
+            // テストジョブからの呼び出し時は詳細デバッグ情報を返す
+            const r = await runSecondStageForAccount(acct, userId, settings, true);
             results.push({ accountId: acct.accountId, runSecondStage: r });
             break;
           }
@@ -838,6 +860,7 @@ export const handler = async (event: any = {}) => {
         userSucceeded++;
       } catch (e) {
         console.log("hourly error for", uid, e);
+        await putLog({ userId: uid, type: "job", status: "error", message: "hourly job failed", detail: { error: String(e) } });
         await postDiscordLog({
           userId: uid,
           isError: true,
@@ -873,6 +896,7 @@ export const handler = async (event: any = {}) => {
       userSucceeded++;
     } catch (e) {
       console.log("5min error for", uid, e);
+      await putLog({ userId: uid, type: "job", status: "error", message: "every-5min job failed", detail: { error: String(e) } });
       await postDiscordLog({
         userId: uid,
         isError: true,
@@ -1157,6 +1181,7 @@ async function upsertReplyItem(userId: any, acct: any, { externalReplyId, postId
 }
 
 async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 }: any) {
+  console.log(`[reply-fetch] start account=${acct?.accountId} lookbackSec=${lookbackSec}`);
   if (!acct?.accessToken) throw new Error("Threads のトークン不足");
   if (!acct?.providerUserId) {
     const pid = await ensureProviderUserId(userId, acct);
@@ -1178,7 +1203,7 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
       FilterExpression: "#st = :posted AND attribute_exists(postId)",
       ExpressionAttributeNames: { "#st": "status" },
       ProjectionExpression: "postId, numericPostId, content, postedAt",
-      Limit: 3,
+      Limit: 20,
     }));
   } catch (e) {
     if (!isGsiMissing(e)) throw e;
@@ -1196,7 +1221,7 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
       FilterExpression: "accountId = :acc AND postedAt >= :since AND #st = :posted AND attribute_exists(postId)",
       ExpressionAttributeNames: { "#st": "status" },
       ProjectionExpression: "postId, numericPostId, content, postedAt",
-      Limit: 3,
+      Limit: 20,
     }));
   }
 
@@ -1213,48 +1238,104 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
     // 手動実行と同じID選択ロジック: 数字ID優先
     const isNumericPostId = post.numericPostId && /^\d+$/.test(post.numericPostId);
     const isNumericMainPostId = post.postId && /^\d+$/.test(post.postId);
-    
     let replyApiId: string;
-    if (isNumericPostId) {
-      replyApiId = post.numericPostId;
-    } else if (isNumericMainPostId) {
-      replyApiId = post.postId;
-    } else {
-      replyApiId = post.numericPostId || post.postId;
-    }
-    
-    // 手動実行と同じ複数エンドポイント試行
-    let url = new URL(`https://graph.threads.net/v1.0/${encodeURIComponent(replyApiId)}/replies`);
-    url.searchParams.set("fields", "id,text,username,permalink");
-    url.searchParams.set("access_token", acct.accessToken);
-    let r = await fetch(url.toString());
-    
-    // repliesが失敗した場合、conversationを試行
+    if (isNumericPostId) replyApiId = post.numericPostId; else if (isNumericMainPostId) replyApiId = post.postId; else replyApiId = post.numericPostId || post.postId;
+    const hasAlt = !!(post.numericPostId && post.postId && post.numericPostId !== post.postId);
+    const alternativeId = hasAlt ? (post.numericPostId === replyApiId ? post.postId : post.numericPostId) : "";
+
+    // 手動実行に合わせて、replies → conversation → 代替ID(replies) の順に試行
+    const buildRepliesUrl = (id: string) => {
+      const u = new URL(`https://graph.threads.net/v1.0/${encodeURIComponent(id)}/replies`);
+      u.searchParams.set("fields", "id,text,username,permalink,is_reply_owned_by_me,replied_to,root_post");
+      u.searchParams.set("access_token", acct.accessToken);
+      return u.toString();
+    };
+    const buildConversationUrl = (id: string) => {
+      const u = new URL(`https://graph.threads.net/v1.0/${encodeURIComponent(id)}/conversation`);
+      u.searchParams.set("fields", "id,text,username,permalink");
+      u.searchParams.set("access_token", acct.accessToken);
+      return u.toString();
+    };
+
+    let usedUrl = buildRepliesUrl(replyApiId);
+    let r = await fetch(usedUrl);
     if (!r.ok) {
-      url = new URL(`https://graph.threads.net/v1.0/${encodeURIComponent(replyApiId)}/conversation`);
-      url.searchParams.set("fields", "id,text,username,permalink");
-      url.searchParams.set("access_token", acct.accessToken);
-      r = await fetch(url.toString());
+      console.log(`[reply-fetch] replies failed ${r.status} for id=${replyApiId}, trying conversation`);
+      usedUrl = buildConversationUrl(replyApiId);
+      r = await fetch(usedUrl);
+      if (!r.ok && alternativeId) {
+        console.log(`[reply-fetch] conversation failed ${r.status}, trying alternative id=${alternativeId} with replies`);
+        usedUrl = buildRepliesUrl(alternativeId);
+        r = await fetch(usedUrl);
+      }
     }
-    
-    if (!r.ok) { 
-      await putLog({ 
-        userId, type: "reply-fetch", accountId: acct.accountId, 
-        status: "error", message: `Threads replies error: ${r.status} for ID ${replyApiId}` 
-      }); 
-      continue; 
+
+    if (!r.ok) {
+      const errTxt = await r.text().catch(() => "");
+      await putLog({
+        userId,
+        type: "reply-fetch",
+        accountId: acct.accountId,
+        status: "error",
+        message: `Threads replies error: ${r.status} for ID ${replyApiId}`,
+        detail: { url: usedUrl.replace(acct.accessToken, "***TOKEN***"), error: errTxt.slice(0, 200) }
+      });
+      continue;
     }
     const json = await r.json();
     for (const rep of (json?.data || [])) {
+      // is_reply_owned_by_me フィールドが利用可能な場合はそれを優先して除外
+      if (rep.is_reply_owned_by_me === true) {
+        console.log(`[DEBUG] lambda: is_reply_owned_by_me=true のため除外: ${String(rep.id || "")}`);
+        try {
+          await putLog({
+            userId,
+            type: "reply-fetch-exclude",
+            accountId: acct.accountId,
+            status: "info",
+            message: "is_reply_owned_by_me=true のため除外",
+            detail: { replyId: rep.id, reason: 'is_reply_owned_by_me' }
+          });
+        } catch (e) {
+          console.log("[warn] putLog failed for exclude log:", e);
+        }
+        continue;
+      }
+
+      // フラグが付いていない場合は除外しないが、原因調査のため候補一致時にログを残す
+      try {
+        const authorCandidates = [
+          rep.from?.id,
+          rep.from?.username,
+          rep.username,
+          rep.user?.id,
+          rep.user?.username,
+          rep.author?.id,
+          rep.author?.username,
+        ].map(x => (x == null ? "" : String(x)));
+
+        const s2 = (acct.secondStageContent || "").trim();
+        const rt = (rep.text || "").trim();
+
+        const potentialMatch = authorCandidates.some(a => a && acct.providerUserId && a === acct.providerUserId) || (s2 && rt && (s2.replace(/\s+/g,' ').toLowerCase() === rt.replace(/\s+/g,' ').toLowerCase()));
+        if (potentialMatch) {
+          const detail: any = { replyId: rep.id, authorCandidates, providerUserId: acct.providerUserId };
+          if (s2 && rt) detail.secondStageSample = { s2: s2.replace(/\s+/g,' ').toLowerCase(), rt: rt.replace(/\s+/g,' ').toLowerCase() };
+          await putLog({ userId, type: "reply-fetch-flag-mismatch", accountId: acct.accountId, status: "info", message: "flag missing but candidate fields matched", detail });
+        }
+      } catch (e) {
+        console.log('[warn] flag-mismatch logging failed in lambda:', e);
+      }
+
       const externalReplyId = String(rep.id);
       const text = rep.text || "";
       const createdAt = nowSec();
-      const ok = await upsertReplyItem(userId, acct, { 
-        externalReplyId, 
+      const ok = await upsertReplyItem(userId, acct, {
+        externalReplyId,
         postId: replyApiId, // 実際に使用したIDを保存
-        text, 
+        text,
         createdAt,
-        originalPost: post
+        originalPost: post,
       });
       if (ok) saved++;
     }
@@ -1264,6 +1345,7 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
 }
 
 async function fetchIncomingReplies(userId: any, acct: any) {
+  // 仕様: autoReply が OFF のアカウントはスキップ
   if (!acct.autoReply) return { fetched: 0 };
   try {
     const r = await fetchThreadsRepliesAndSave({ acct, userId });
@@ -1294,9 +1376,14 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
   // グループ取得
   const group = await getAutoPostGroup(userId, acct.autoPostGroupId);
   if (!group || !group.groupName) return { created: 0, skipped: true };
-
-  // デバッグ: time1/time2/time3 の実値をログ出力
-  console.log(`[debug] auto-post group loaded: ${group.groupName} time1=${group.time1}, time2=${group.time2}, time3=${group.time3}`);
+  // 新形式: スロットを取得（最大10）。無ければ旧3件形式をフォールバックとして使用
+  const slots = await getAutoPostGroupItems(userId, group.groupKey || acct.autoPostGroupId);
+  const useSlots = (slots && slots.length > 0) ? slots.slice(0, 10) : [
+    { order: 0, timeRange: group.time1 || '', theme: group.theme1 || '' },
+    { order: 1, timeRange: group.time2 || '', theme: group.theme2 || '' },
+    { order: 2, timeRange: group.time3 || '', theme: group.theme3 || '' },
+  ];
+  console.log(`[debug] auto-post group loaded: ${group.groupName} slots=${useSlots.length}`);
 
   const today = jstNow();
   const settings = await getUserSettings(userId);
@@ -1307,10 +1394,11 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
   const debug: any[] = [];
 
   // ★実績チェック（isPostedToday）は廃止：投稿がまだ無くても翌日分を作る
-  for (const type of [1, 2, 3]) {
-    const groupTypeStr = `${group.groupName}-自動投稿${type}`;
-    const timeRange =
-      (type === 1 ? group.time1 : type === 2 ? group.time2 : group.time3) || "";
+  let idx = 0;
+  for (const slot of useSlots) {
+    idx += 1;
+    const groupTypeStr = `${group.groupName}-自動投稿${idx}`;
+    const timeRange = String(slot.timeRange || "");
     // time window presence flag
     const timeWindowPresent = !!timeRange;
 
@@ -1394,7 +1482,10 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
 
     // 予約作成 → 本文生成
     const { id, themeStr } = await createScheduledPost(userId, {
-      acct, group, type, whenJst: when
+      acct, group, type: idx, whenJst: when,
+      // テーマ/時間帯：スロットに設定があればそれを優先
+      overrideTheme: String(slot.theme || ""),
+      overrideTimeRange: String(slot.timeRange || ""),
     });
     await generateAndAttachContent(userId, acct, id, themeStr, settings);
 
@@ -1439,7 +1530,8 @@ async function postToThreads({ accessToken, text, userIdOnPlatform, inReplyTo = 
     access_token: accessToken,
   };
   if (inReplyTo) {
-    // 公式ドキュメント準拠: reply_to_id を使用
+    // ドキュメント準拠: reply_to_id を使用
+    // https://developers.facebook.com/docs/threads/retrieve-and-manage-replies/create-replies
     createPayload.reply_to_id = inReplyTo;
   }
 
@@ -1450,44 +1542,7 @@ async function postToThreads({ accessToken, text, userIdOnPlatform, inReplyTo = 
     body: JSON.stringify(createPayload),
   });
 
-  // フォールバック（ドキュメント差異対策）
-  if (!createRes.ok && inReplyTo) {
-    // reply_to_id で失敗した場合、replied_to_id で再試行
-    const errText = await createRes.text().catch(() => "");
-    console.log(`[WARN] リプライ作成失敗、代替パラメータでリトライ: ${errText}`);
-    
-    // replied_to_id で再試行
-    const altPayload1 = { ...createPayload };
-    delete altPayload1.reply_to_id;
-    altPayload1.replied_to_id = inReplyTo;
-
-    let retried = await fetch(`${base}/me/threads`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(altPayload1),
-    });
-
-    if (!retried.ok) {
-      // parent_id でさらに再試行
-      const altPayload2 = { ...createPayload };
-      delete altPayload2.reply_to_id;
-      altPayload2.parent_id = inReplyTo;
-
-      retried = await fetch(`${base}/me/threads`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(altPayload2),
-      });
-
-      if (!retried.ok) {
-        const err2 = await retried.text().catch(() => "");
-        throw new Error(
-          `Threads create error: first=${createRes.status} ${errText} / retry=${retried.status} ${err2}`
-        );
-      }
-    }
-    createRes = retried;
-  }
+  // フォールバックは行わない
 
   if (!createRes.ok) {
     const t = await createRes.text().catch(() => "");
@@ -1512,6 +1567,28 @@ async function postToThreads({ accessToken, text, userIdOnPlatform, inReplyTo = 
   const pubJson = await pubRes.json().catch(() => ({}));
   const initialPostId = pubJson?.id || creation_id;
   
+  // リプライ妥当性を検証（reply_to_id による返信になっているか）
+  if (inReplyTo) {
+    try {
+      const verifyUrl = `${base}/${encodeURIComponent(initialPostId)}?fields=id,reply_to_id,parent_id&access_token=${encodeURIComponent(accessToken)}`;
+      const vRes = await fetch(verifyUrl);
+      const vText = await vRes.text().catch(() => "");
+      let vJson: any = {};
+      try { vJson = JSON.parse(vText); } catch {}
+      const ok = !!(vJson?.reply_to_id === inReplyTo || vJson?.parent_id === inReplyTo);
+      if (!ok) {
+        // 間違って通常投稿になっていた場合は削除し、上位にエラーを返す
+        try {
+          await fetch(`${base}/${encodeURIComponent(initialPostId)}?access_token=${encodeURIComponent(accessToken)}`, { method: "DELETE" });
+        } catch {}
+        throw new Error(`not_reply_posted: expected reply to ${inReplyTo} but created normal post`);
+      }
+    } catch (e) {
+      // 検証APIが使えない場合は続行（以後のpermalink取得で補助）
+      console.log(`[warn] reply verification failed: ${String(e).slice(0,200)}`);
+    }
+  }
+
   // Threads APIで投稿詳細を取得してリンク用IDを取得
   try {
     const postDetailUrl = `https://graph.threads.net/v1.0/${encodeURIComponent(initialPostId)}?fields=id,permalink&access_token=${accessToken}`;
@@ -1859,7 +1936,7 @@ async function runRepliesForAccount(acct: any, userId = USER_ID, settings: any =
 }
 
 // 2段階投稿：postedAt + delay 経過、doublePostStatus != "done" のものに本文のみを返信
-async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: any = undefined) {
+async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: any = undefined, debugMode = false) {
   if (!acct.secondStageContent) return { posted2: 0 };
   
   // アカウントに二段階投稿設定があれば実行。遅延時間は設定値またはデフォルト30分
@@ -1867,24 +1944,23 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
 
   const threshold = nowSec() - delayMin * 60;
 
+  // 観測性向上: 入口ログ
+  console.log(`[second-stage] start account=${acct.accountId} delayMin=${delayMin} threshold=${threshold}`);
+
   let q;
   try {
+    // フィルタは使わず「直近最大50件のキー」を取得し、後段で条件判定する（LimitとFilterの組合せで取り逃すのを防ぐ）
     q = await ddb.send(new QueryCommand({
       TableName: TBL_SCHEDULED,
       IndexName: GSI_POS_BY_ACC_TIME,
       KeyConditionExpression: "accountId = :acc AND postedAt <= :th",
-      FilterExpression:
-        "(attribute_not_exists(doublePostStatus) OR doublePostStatus <> :done) AND #st = :posted AND contains(autoPostGroupId, :auto)",
-      ExpressionAttributeNames: { "#st": "status" },
       ExpressionAttributeValues: {
         ":acc":    { S: acct.accountId },
         ":th":     { N: String(threshold) },
-        ":done":   { S: "done" },
-        ":posted": { S: "posted" },
-        ":auto":   { S: "自動投稿" }
       },
-      ProjectionExpression: "PK, SK, postId",
-      Limit: 1
+      ProjectionExpression: "PK, SK",
+      ScanIndexForward: false,
+      Limit: 50
     }));
   } catch (e) {
     if (!isGsiMissing(e)) throw e;
@@ -1897,35 +1973,80 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
         ":pfx":    { S: "SCHEDULEDPOST#" },
         ":acc":    { S: acct.accountId },
         ":th":     { N: String(threshold) },
-        ":done":   { S: "done" },
-        ":posted": { S: "posted" },
-        ":auto":   { S: "自動投稿" }
       },
-      FilterExpression:
-        "accountId = :acc AND postedAt <= :th AND (attribute_not_exists(doublePostStatus) OR doublePostStatus <> :done) AND #st = :posted AND contains(autoPostGroupId, :auto)",
-      ExpressionAttributeNames: { "#st": "status" },
-      ProjectionExpression: "PK, SK, postId",
-      Limit: 1
+      FilterExpression: "accountId = :acc AND postedAt <= :th",
+      ProjectionExpression: "PK, SK",
+      Limit: 50
     }));
   }
 
-  if (!q.Items || q.Items.length === 0) return { posted2: 0 };
+  // 観測性向上: クエリ結果を記録
+  console.log(`[second-stage] query items=${q.Items?.length || 0}`);
+  if (!q.Items || q.Items.length === 0) {
+    await putLog({
+      userId,
+      type: "second-stage",
+      accountId: acct.accountId,
+      status: "noop",
+      message: "対象なし",
+      detail: { threshold, delayMin }
+    });
+    return debugMode ? { posted2: 0, debug: { reason: "no_candidate", threshold, delayMin } } : { posted2: 0 };
+  }
 
-  const pk = q.Items[0].PK.S;
-  const sk = q.Items[0].SK.S;
-  const firstPostId = q.Items[0].postId?.S || "";
+  // 直近から本体を取得して条件判定
+  let pk = "", sk = "", firstPostId = "", firstPostedAt = "";
+  let found: any = null;
+  const debugTried: any[] = [];
+  for (const it of (q.Items || [])) {
+    const kpk = it.PK.S, ksk = it.SK.S;
+    const full = await ddb.send(new GetItemCommand({
+      TableName: TBL_SCHEDULED,
+      Key: { PK: { S: kpk }, SK: { S: ksk } },
+      ProjectionExpression: "postId, numericPostId, postedAt, doublePostStatus, autoPostGroupId, #st",
+      ExpressionAttributeNames: { "#st": "status" }
+    }));
+    const f = full.Item || {};
+    const st = f.status?.S || "";
+    const dp = f.doublePostStatus?.S || "";
+    const apg = f.autoPostGroupId?.S || "";
+    const pid = f.postId?.S || "";
+    const nid = f.numericPostId?.S || "";
+    const pat = f.postedAt?.N || "";
+    const ok = st === "posted" && pid && (!dp || dp !== "done") && apg.includes("自動投稿") && Number(pat || 0) <= threshold;
+    if (debugMode && debugTried.length < 5) debugTried.push({ ksk, st, dp, apg, pid, nid, pat, ok });
+    if (ok) { found = { kpk, ksk, pid, nid, pat }; break; }
+  }
+
+  if (!found) {
+    if (debugMode) return { posted2: 0, debug: { reason: "no_candidate_scan", tried: debugTried, threshold, delayMin } };
+    return { posted2: 0 };
+  }
+
+  pk = found.kpk; sk = found.ksk; firstPostId = found.nid || found.pid; firstPostedAt = found.pat;
+
+  await putLog({
+    userId,
+    type: "second-stage",
+    accountId: acct.accountId,
+    targetId: sk,
+    status: "probe",
+    message: "candidate found",
+    detail: { firstPostId, firstPostedAt, threshold, delayMin }
+  });
 
   // Threads のユーザーIDが未取得であれば取得
   if (!acct.providerUserId) {
     const pid = await ensureProviderUserId(userId, acct);
     if (!pid) {
       await putLog({ userId, type: "second-stage", accountId: acct.accountId, targetId: sk, status: "skip", message: "ThreadsのユーザーID未取得のためスキップ" });
-      return { posted2: 0 };
+      return debugMode ? { posted2: 0, debug: { reason: "no_provider_user_id", pk, sk, firstPostId } } : { posted2: 0 };
     }
   }
 
   try {
     const text2 = acct.secondStageContent;
+    console.log(`[second-stage] attempt post reply account=${acct.accountId} parent=${firstPostId}`);
     const { postId: pid2 } = await postToThreads({ accessToken: acct.accessToken, text: text2, userIdOnPlatform: acct.providerUserId, inReplyTo: firstPostId });
     await ddb.send(new UpdateItemCommand({
       TableName: TBL_SCHEDULED,
@@ -1934,16 +2055,22 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
       ConditionExpression: "attribute_not_exists(doublePostStatus) OR doublePostStatus <> :done",
       ExpressionAttributeValues: { ":done": { S: "done" }, ":pid": { S: pid2 || `DUMMY2-${crypto.randomUUID()}` }, ":ts": { N: String(nowSec()) } }
     }));
-    await putLog({ userId, type: "second-stage", accountId: acct.accountId, targetId: sk, status: "ok", message: "2段階投稿を完了" });
-    return { posted2: 1 };
+    await putLog({ userId, type: "second-stage", accountId: acct.accountId, targetId: sk, status: "ok", message: "2段階投稿を完了", detail: { secondStagePostId: pid2 } });
+    return debugMode ? { posted2: 1, debug: { reason: "ok", pk, sk, firstPostId, secondStagePostId: pid2 } } : { posted2: 1 };
   } catch (e) {
-    await putLog({ userId, type: "second-stage", accountId: acct.accountId, targetId: sk, status: "error", message: "2段階投稿に失敗", detail: { error: String(e) } });
+    const errStr = String(e);
+    await putLog({ userId, type: "second-stage", accountId: acct.accountId, targetId: sk, status: "error", message: "2段階投稿に失敗", detail: { error: errStr, parentPostId: firstPostId } });
     await postDiscordLog({
       userId,
       isError: true,
-      content: `**[ERROR second-stage] ${acct.displayName || acct.accountId}**\n${String(e).slice(0, 800)}`
+      content: `**[ERROR second-stage] ${acct.displayName || acct.accountId}**\n${errStr.slice(0, 800)}`
     });
-    return { posted2: 0 };
+    if (debugMode) {
+      try {
+        await postDiscordMaster(`**[TEST second-stage ERROR] ${acct.displayName || acct.accountId}**\nparent=${firstPostId}\n${errStr.slice(0, 1800)}`);
+      } catch {}
+    }
+    return debugMode ? { posted2: 0, debug: { reason: "post_error", pk, sk, firstPostId, error: errStr.slice(0,800) } } : { posted2: 0 };
   }
 }
 
@@ -1991,25 +2118,36 @@ async function runFiveMinJobForUser(userId: any) {
 
   const accounts = await getThreadsAccounts(userId);
   let totalAuto = 0, totalReply = 0, totalTwo = 0, rateSkipped = 0;
+  const perAccount: any[] = [];
 
   for (const acct of accounts) {
     const a = await runAutoPostForAccount(acct, userId, settings);
     const r = await runRepliesForAccount(acct, userId, settings);
-    const t = await runSecondStageForAccount(acct, userId, settings);
+    const t = await runSecondStageForAccount(acct, userId, settings, true);
 
     totalAuto += a.posted || 0;
     totalReply += r.replied || 0;
     totalTwo += t.posted2 || 0;
+    if (perAccount.length < 6) {
+      perAccount.push({
+        accountId: acct.accountId,
+        a: a.posted || 0,
+        r: r.replied || 0,
+        t: t.posted2 || 0,
+        reason: (t as any).debug?.reason || "-"
+      });
+    }
 
     if (a.skipped === "window_expired") rateSkipped++;
   }
 
   const urls = await getDiscordWebhooks(userId);
   const now = new Date().toISOString();
-  await postDiscordLog({
-    userId,
-    content: `**[定期実行レポート] ${now} (every-5min)**\n自動投稿: ${totalAuto} / リプ返信: ${totalReply} / 2段階投稿: ${totalTwo} / 失効(rate-limit): ${rateSkipped}`
-  });
+  const base = `**[定期実行レポート] ${now} (every-5min)**\n自動投稿: ${totalAuto} / リプ返信: ${totalReply} / 2段階投稿: ${totalTwo} / 失効(rate-limit): ${rateSkipped}`;
+  const extra = totalTwo === 0 && perAccount.length > 0
+    ? "\n詳細(先頭): " + perAccount.map(p => `${p.accountId}:{2nd=${p.t},reason=${p.reason}}`).join(", ")
+    : "";
+  await postDiscordLog({ userId, content: base + extra });
   return { userId, totalAuto, totalReply, totalTwo, rateSkipped };
 }
 
