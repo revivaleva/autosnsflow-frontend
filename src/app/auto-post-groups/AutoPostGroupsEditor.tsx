@@ -10,15 +10,18 @@ import React, { useState, useEffect } from "react";
 export type AutoPostGroupType = {
   groupKey: string;
   groupName: string;
-  time1: string;
-  theme1: string;
-  time2: string;
-  theme2: string;
-  time3: string;
-  theme3: string;
+  createdAt?: number;
 };
 
-type ScheduleType = { start: string; end: string; theme: string; };
+type SlotType = {
+  slotId: string;
+  order: number;
+  timeRange: string; // "HH:MM-HH:MM"
+  theme: string;
+  enabled: boolean;
+};
+
+type ScheduleType = { start: string; end: string; theme: string };
 
 type GroupModalProps = {
   open: boolean;
@@ -32,6 +35,7 @@ type GroupModalProps = {
 // APIエンドポイント
 // =======================
 const API = "/api/auto-post-groups";
+const API_ITEMS = "/api/auto-post-group-items";
 
 // [MOD] "07:00-09:30" → {start, end}。余分な空白をトリムして安全化
 function parseTimeRange(time: string = "", theme: string = ""): ScheduleType {
@@ -55,11 +59,7 @@ function GroupModal({
 
   // [MOD] 初期値は空。実データは下の useEffect で毎回セットし直す
   const [groupName, setGroupName] = useState<string>("");
-  const [schedule, setSchedule] = useState<ScheduleType[]>([
-    { start: "", end: "", theme: "" },
-    { start: "", end: "", theme: "" },
-    { start: "", end: "", theme: "" },
-  ]);
+  const [schedule, setSchedule] = useState<ScheduleType[]>([{ start: "", end: "", theme: "" }]);
   const [copySource, setCopySource] = useState<string>("");
 
   // [ADD] モーダルを開いた/編集対象が変わったタイミングでフォームを再初期化
@@ -67,34 +67,16 @@ function GroupModal({
     if (!open) return;
     if (group && isEdit) {
       setGroupName(group.groupName || "");
-      setSchedule([
-        parseTimeRange(group.time1, group.theme1),
-        parseTimeRange(group.time2, group.theme2),
-        parseTimeRange(group.time3, group.theme3),
-      ]);
+      setSchedule([{ start: "", end: "", theme: "" }]);
     } else {
       setGroupName("");
-      setSchedule([
-        { start: "", end: "", theme: "" },
-        { start: "", end: "", theme: "" },
-        { start: "", end: "", theme: "" },
-      ]);
+      setSchedule([{ start: "", end: "", theme: "" }]);
     }
     setCopySource("");
   }, [open, group, isEdit]);
 
-  // 既存の「複製」機能はそのまま
-  useEffect(() => {
-    if (!copySource) return;
-    const src = groups.find((g) => g.groupKey === copySource);
-    if (src) {
-      setSchedule([
-        parseTimeRange(src.time1, src.theme1),
-        parseTimeRange(src.time2, src.theme2),
-        parseTimeRange(src.time3, src.theme3),
-      ]);
-    }
-  }, [copySource, groups]);
+  // 既存の「複製」は不要になったため無効化
+  useEffect(() => { /* no-op */ }, [copySource, groups]);
 
   function makeTimeRange(start: string, end: string): string {
     return start && end ? `${start}-${end}` : "";
@@ -117,50 +99,7 @@ function GroupModal({
             onChange={e => setGroupName(e.target.value)}
           />
         </div>
-        <div className="mb-4 flex flex-col gap-4">
-          {[0, 1, 2].map((i) => (
-            <div key={i} className="border rounded-lg p-4 bg-gray-50 flex flex-col gap-2">
-              <div className="flex gap-4 items-center">
-                <span className="font-bold w-16">時刻{i + 1}</span>
-                <input
-                  type="time"
-                  className="border rounded p-1 w-28"
-                  value={schedule[i]?.start || ""}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                    const newSch = [...schedule];
-                    newSch[i].start = e.target.value;
-                    setSchedule(newSch);
-                  }}
-                />
-                <span className="mx-1 text-sm">〜</span>
-                <input
-                  type="time"
-                  className="border rounded p-1 w-28"
-                  value={schedule[i]?.end || ""}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                    const newSch = [...schedule];
-                    newSch[i].end = e.target.value;
-                    setSchedule(newSch);
-                  }}
-                />
-              </div>
-              <div className="flex flex-col mt-1">
-                <label className="font-bold text-sm mb-1">テーマ{i + 1}</label>
-                <textarea
-                  className="border rounded p-2 w-full min-h-[48px] resize-y"
-                  value={schedule[i]?.theme || ""}
-                  onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => {
-                    const newSch = [...schedule];
-                    newSch[i].theme = e.target.value;
-                    setSchedule(newSch);
-                  }}
-                  placeholder="テーマを入力"
-                  rows={2}
-                />
-              </div>
-            </div>
-          ))}
-        </div>
+        {/* グループ名のみ編集（スロットは展開行で編集） */}
         {!isEdit && (
           <div className="mb-4">
             <label className="font-semibold block mb-1">他グループから複製</label>
@@ -180,16 +119,7 @@ function GroupModal({
           <button
             className="bg-blue-500 text-white px-6 py-2 rounded hover:bg-blue-600"
             onClick={() => {
-              onSave({
-                ...(isEdit && group ? { groupKey: group.groupKey } : {}),
-                groupName,
-                time1: makeTimeRange(schedule[0].start, schedule[0].end),
-                theme1: schedule[0].theme || "",
-                time2: makeTimeRange(schedule[1].start, schedule[1].end),
-                theme2: schedule[1].theme || "",
-                time3: makeTimeRange(schedule[2].start, schedule[2].end),
-                theme3: schedule[2].theme || "",
-              } as AutoPostGroupType);
+              onSave({ ...(isEdit && group ? { groupKey: group.groupKey } : {}), groupName } as AutoPostGroupType);
               onClose();
             }}
             disabled={!groupName.trim()}
@@ -210,12 +140,26 @@ export default function AutoPostGroupsEditor() {
   const [usedGroupKeys, setUsedGroupKeys] = useState<string[]>([]);
   const [modalOpen, setModalOpen] = useState<boolean>(false);
   const [editTarget, setEditTarget] = useState<AutoPostGroupType | null>(null);
+  const [openGroupKey, setOpenGroupKey] = useState<string>("");
+  const [slots, setSlots] = useState<Record<string, SlotType[]>>({});
+  const [loadingSlots, setLoadingSlots] = useState<Record<string, boolean>>({});
 
   // 一覧取得
   const loadGroups = async () => {
     const res = await fetch(API, { credentials: "include" });
     const data = await res.json();
     setGroups(data.groups ?? []);
+  };
+
+  const loadSlots = async (groupKey: string) => {
+    setLoadingSlots((s) => ({ ...s, [groupKey]: true }));
+    try {
+      const res = await fetch(`${API_ITEMS}?groupKey=${encodeURIComponent(groupKey)}`, { credentials: "include" });
+      const data = await res.json();
+      setSlots((s) => ({ ...s, [groupKey]: (data.items || []) as SlotType[] }));
+    } finally {
+      setLoadingSlots((s) => ({ ...s, [groupKey]: false }));
+    }
   };
 
   // グループ一覧・使用中グループ取得
@@ -263,12 +207,7 @@ export default function AutoPostGroupsEditor() {
     const body = {
       groupKey: group.groupKey || `GROUP#${Date.now()}`,
       groupName: group.groupName,
-      time1: group.time1,
-      theme1: group.theme1,
-      time2: group.time2,
-      theme2: group.theme2,
-      time3: group.time3,
-      theme3: group.theme3,
+      time1: "", theme1: "", time2: "", theme2: "", time3: "", theme3: "",
     };
     const res = await fetch(API, {
       method,
@@ -308,46 +247,59 @@ export default function AutoPostGroupsEditor() {
           <thead>
             <tr>
               <th className="border p-1">自動投稿グループ名</th>
-              <th className="border p-1">時刻1</th>
-              <th className="border p-1">テーマ1</th>
-              <th className="border p-1">時刻2</th>
-              <th className="border p-1">テーマ2</th>
-              <th className="border p-1">時刻3</th>
-              <th className="border p-1">テーマ3</th>
               <th className="border p-1">アクション</th>
             </tr>
           </thead>
           <tbody>
             {groups.map((group: AutoPostGroupType) => (
-              <tr key={group.groupKey}>
-                <td className="border p-1">{group.groupName}</td>
-                <td className="border p-1">{group.time1}</td>
-                <td className="border p-1 whitespace-pre-wrap">{group.theme1}</td>
-                <td className="border p-1">{group.time2}</td>
-                <td className="border p-1 whitespace-pre-wrap">{group.theme2}</td>
-                <td className="border p-1">{group.time3}</td>
-                <td className="border p-1 whitespace-pre-wrap">{group.theme3}</td>
-                <td className="border p-1 space-x-1">
-                  <button
-                    className="bg-yellow-500 text-white px-2 py-1 rounded hover:bg-yellow-600"
-                    onClick={() => handleEdit(group)}
-                  >
-                    編集
-                  </button>
-                  {!usedGroupKeys.includes(group.groupKey) && (
+              <React.Fragment key={group.groupKey}>
+                <tr>
+                  <td className="border p-1">
                     <button
-                      className="bg-red-500 text-white px-2 py-1 rounded hover:bg-red-600"
-                      onClick={() => handleDelete(group.groupKey)}
+                      className="text-blue-600 underline mr-2"
+                      onClick={() => {
+                        const next = openGroupKey === group.groupKey ? "" : group.groupKey;
+                        setOpenGroupKey(next);
+                        if (next) loadSlots(group.groupKey);
+                      }}
                     >
-                      削除
+                      {openGroupKey === group.groupKey ? "▼" : "▶"} {group.groupName}
                     </button>
-                  )}
-                </td>
-              </tr>
+                  </td>
+                  <td className="border p-1 space-x-1 text-right">
+                    <button
+                      className="bg-yellow-500 text-white px-2 py-1 rounded hover:bg-yellow-600"
+                      onClick={() => handleEdit(group)}
+                    >
+                      グループ名編集
+                    </button>
+                    {!usedGroupKeys.includes(group.groupKey) && (
+                      <button
+                        className="bg-red-500 text-white px-2 py-1 rounded hover:bg-red-600"
+                        onClick={() => handleDelete(group.groupKey)}
+                      >
+                        削除
+                      </button>
+                    )}
+                  </td>
+                </tr>
+                {openGroupKey === group.groupKey && (
+                  <tr>
+                    <td colSpan={2} className="border p-0">
+                      <SlotEditor
+                        groupKey={group.groupKey}
+                        items={slots[group.groupKey] || []}
+                        loading={!!loadingSlots[group.groupKey]}
+                        onReload={() => loadSlots(group.groupKey)}
+                      />
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
             ))}
             {groups.length === 0 && (
               <tr>
-                <td colSpan={8} className="text-center text-gray-500 p-4">
+                <td colSpan={2} className="text-center text-gray-500 p-4">
                   データがありません
                 </td>
               </tr>
@@ -355,6 +307,139 @@ export default function AutoPostGroupsEditor() {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+function SlotEditor({ groupKey, items, loading, onReload }: { groupKey: string; items: SlotType[]; loading: boolean; onReload: () => void }) {
+  const [rows, setRows] = useState<SlotType[]>(items);
+
+  useEffect(() => setRows(items), [items]);
+
+  const updateOrder = (index: number, dir: -1 | 1) => {
+    const arr = [...rows];
+    const j = index + dir;
+    if (j < 0 || j >= arr.length) return;
+    const a = arr[index];
+    const b = arr[j];
+    arr[index] = { ...b, order: a.order };
+    arr[j] = { ...a, order: b.order };
+    setRows(arr);
+  };
+
+  const saveOrder = async () => {
+    for (let i = 0; i < rows.length; i++) {
+      const it = rows[i];
+      await fetch(API_ITEMS, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ groupKey, slotId: it.slotId, order: i }),
+      });
+    }
+    onReload();
+  };
+
+  const saveRow = async (it: SlotType) => {
+    await fetch(API_ITEMS, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ groupKey, slotId: it.slotId, timeRange: it.timeRange, theme: it.theme, enabled: it.enabled }),
+    });
+    onReload();
+  };
+
+  const deleteRow = async (slotId: string) => {
+    if (!window.confirm("スロットを削除しますか？")) return;
+    await fetch(API_ITEMS, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ groupKey, slotId }),
+    });
+    onReload();
+  };
+
+  const addRow = async () => {
+    const id = `${Date.now()}`;
+    await fetch(API_ITEMS, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ groupKey, slotId: id, order: rows.length, timeRange: "", theme: "", enabled: true }),
+    });
+    onReload();
+  };
+
+  const setField = (i: number, key: keyof SlotType, value: any) => {
+    const arr = [...rows];
+    (arr[i] as any)[key] = value;
+    setRows(arr);
+  };
+
+  return (
+    <div className="p-3 bg-gray-50">
+      <div className="flex justify-between items-center mb-2">
+        <div className="font-semibold">スロット（最大10件）</div>
+        <div className="space-x-2">
+          <button className="bg-green-600 text-white px-3 py-1 rounded" onClick={addRow}>＋追加</button>
+          <button className="bg-blue-600 text-white px-3 py-1 rounded" onClick={saveOrder}>並び順を保存</button>
+        </div>
+      </div>
+      {loading ? (
+        <div className="text-gray-500">読み込み中...</div>
+      ) : rows.length === 0 ? (
+        <div className="text-gray-500">スロットがありません</div>
+      ) : (
+        <table className="w-full bg-white border">
+          <thead>
+            <tr>
+              <th className="border p-1 w-20">順序</th>
+              <th className="border p-1 w-56">時間帯</th>
+              <th className="border p-1">テーマ</th>
+              <th className="border p-1 w-24">有効</th>
+              <th className="border p-1 w-40">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((it, i) => {
+              const [start = "", end = ""] = (it.timeRange || "").split("-");
+              return (
+                <tr key={it.slotId}>
+                  <td className="border p-1 text-center space-x-1">
+                    <button className="px-2 py-0.5 bg-gray-200 rounded" onClick={() => updateOrder(i, -1)}>↑</button>
+                    <button className="px-2 py-0.5 bg-gray-200 rounded" onClick={() => updateOrder(i, +1)}>↓</button>
+                  </td>
+                  <td className="border p-1">
+                    <div className="flex items-center gap-1">
+                      <input type="time" className="border rounded p-1 w-24"
+                        value={start}
+                        onChange={(e) => setField(i, 'timeRange', `${e.target.value}-${end}`)} />
+                      <span>〜</span>
+                      <input type="time" className="border rounded p-1 w-24"
+                        value={end}
+                        onChange={(e) => setField(i, 'timeRange', `${start}-${e.target.value}`)} />
+                    </div>
+                  </td>
+                  <td className="border p-1">
+                    <textarea className="border rounded p-2 w-full min-h-[40px]" value={it.theme}
+                      onChange={(e) => setField(i, 'theme', e.target.value)} />
+                  </td>
+                  <td className="border p-1 text-center">
+                    <input type="checkbox" checked={it.enabled}
+                      onChange={(e) => setField(i, 'enabled', e.target.checked)} />
+                  </td>
+                  <td className="border p-1 text-center space-x-2">
+                    <button className="bg-blue-600 text-white px-3 py-1 rounded" onClick={() => saveRow(it)}>保存</button>
+                    <button className="bg-red-600 text-white px-3 py-1 rounded" onClick={() => deleteRow(it.slotId)}>削除</button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }

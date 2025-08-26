@@ -404,6 +404,27 @@ async function getAutoPostGroup(userId: any, groupId: any) {
   };
 }
 
+async function getAutoPostGroupItems(userId: any, groupKey: any) {
+  if (!groupKey) return [] as any[];
+  const out = await ddb.send(new QueryCommand({
+    TableName: TBL_GROUPS,
+    KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+    ExpressionAttributeValues: { ":pk": { S: `USER#${userId}` }, ":pfx": { S: `GROUPITEM#${groupKey}#` } },
+    ProjectionExpression: "SK, #od, timeRange, theme, enabled",
+    ExpressionAttributeNames: { "#od": "order" },
+    ScanIndexForward: true,
+    Limit: 100,
+  }));
+  const items = (out.Items || []).map((i: any) => ({
+    slotId: (i.SK?.S || '').split('#').pop() || '',
+    order: i.order?.N ? Number(i.order.N) : 0,
+    timeRange: i.timeRange?.S || '',
+    theme: i.theme?.S || '',
+    enabled: i.enabled?.BOOL === true,
+  })).filter(x => x.enabled !== false).sort((a, b) => a.order - b.order);
+  return items;
+}
+
 /// ========== 予約投稿（毎時の"翌日分作成"） ==========
 async function isPostedToday(userId: any, acct: any, groupTypeStr: any) {
   const t0 = toEpochSec(startOfDayJst(jstNow()));
@@ -504,10 +525,10 @@ async function deleteUnpostedAutoPosts(userId: any, acct: any, groupTypeStr: any
   return deletedCount;
 }
 
-async function createScheduledPost(userId: any, { acct, group, type, whenJst }: any) {
-  const themeStr = (type === 1 ? group.theme1 : type === 2 ? group.theme2 : group.theme3) || "";
+async function createScheduledPost(userId: any, { acct, group, type, whenJst, overrideTheme = "", overrideTimeRange = "" }: any) {
+  const themeStr = (overrideTheme || ((type === 1 ? group.theme1 : type === 2 ? group.theme2 : group.theme3) || ""));
   const groupTypeStr = `${group.groupName}-自動投稿${type}`;
-  const timeRange = (type === 1 ? (group.time1 || "05:00-08:00") : type === 2 ? (group.time2 || "12:00-13:00") : (group.time3 || "20:00-23:00")) || "";
+  const timeRange = (overrideTimeRange || (type === 1 ? (group.time1 || "05:00-08:00") : type === 2 ? (group.time2 || "12:00-13:00") : (group.time3 || "20:00-23:00")) || "");
   const id = crypto.randomUUID();
   const item = {
     PK: { S: `USER#${userId}` },
@@ -1159,6 +1180,7 @@ async function upsertReplyItem(userId: any, acct: any, { externalReplyId, postId
 }
 
 async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 }: any) {
+  console.log(`[reply-fetch] start account=${acct?.accountId} lookbackSec=${lookbackSec}`);
   if (!acct?.accessToken) throw new Error("Threads のトークン不足");
   if (!acct?.providerUserId) {
     const pid = await ensureProviderUserId(userId, acct);
@@ -1180,7 +1202,7 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
       FilterExpression: "#st = :posted AND attribute_exists(postId)",
       ExpressionAttributeNames: { "#st": "status" },
       ProjectionExpression: "postId, numericPostId, content, postedAt",
-      Limit: 3,
+      Limit: 20,
     }));
   } catch (e) {
     if (!isGsiMissing(e)) throw e;
@@ -1198,7 +1220,7 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
       FilterExpression: "accountId = :acc AND postedAt >= :since AND #st = :posted AND attribute_exists(postId)",
       ExpressionAttributeNames: { "#st": "status" },
       ProjectionExpression: "postId, numericPostId, content, postedAt",
-      Limit: 3,
+      Limit: 20,
     }));
   }
 
@@ -1215,37 +1237,49 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
     // 手動実行と同じID選択ロジック: 数字ID優先
     const isNumericPostId = post.numericPostId && /^\d+$/.test(post.numericPostId);
     const isNumericMainPostId = post.postId && /^\d+$/.test(post.postId);
-    
     let replyApiId: string;
-    if (isNumericPostId) {
-      replyApiId = post.numericPostId;
-    } else if (isNumericMainPostId) {
-      replyApiId = post.postId;
-    } else {
-      replyApiId = post.numericPostId || post.postId;
-    }
-    
-    // 手動実行と同じ複数エンドポイント試行
-    let url = new URL(`https://graph.threads.net/v1.0/${encodeURIComponent(replyApiId)}/replies`);
-    // is_reply_owned_by_me を要求すると "自分の返信か" を正確に判断できる
-    url.searchParams.set("fields", "id,text,username,permalink,is_reply_owned_by_me,replied_to,root_post");
-    url.searchParams.set("access_token", acct.accessToken);
-    let r = await fetch(url.toString());
-    
-    // repliesが失敗した場合、conversationを試行
+    if (isNumericPostId) replyApiId = post.numericPostId; else if (isNumericMainPostId) replyApiId = post.postId; else replyApiId = post.numericPostId || post.postId;
+    const hasAlt = !!(post.numericPostId && post.postId && post.numericPostId !== post.postId);
+    const alternativeId = hasAlt ? (post.numericPostId === replyApiId ? post.postId : post.numericPostId) : "";
+
+    // 手動実行に合わせて、replies → conversation → 代替ID(replies) の順に試行
+    const buildRepliesUrl = (id: string) => {
+      const u = new URL(`https://graph.threads.net/v1.0/${encodeURIComponent(id)}/replies`);
+      u.searchParams.set("fields", "id,text,username,permalink,is_reply_owned_by_me,replied_to,root_post");
+      u.searchParams.set("access_token", acct.accessToken);
+      return u.toString();
+    };
+    const buildConversationUrl = (id: string) => {
+      const u = new URL(`https://graph.threads.net/v1.0/${encodeURIComponent(id)}/conversation`);
+      u.searchParams.set("fields", "id,text,username,permalink");
+      u.searchParams.set("access_token", acct.accessToken);
+      return u.toString();
+    };
+
+    let usedUrl = buildRepliesUrl(replyApiId);
+    let r = await fetch(usedUrl);
     if (!r.ok) {
-      url = new URL(`https://graph.threads.net/v1.0/${encodeURIComponent(replyApiId)}/conversation`);
-      url.searchParams.set("fields", "id,text,username,permalink");
-      url.searchParams.set("access_token", acct.accessToken);
-      r = await fetch(url.toString());
+      console.log(`[reply-fetch] replies failed ${r.status} for id=${replyApiId}, trying conversation`);
+      usedUrl = buildConversationUrl(replyApiId);
+      r = await fetch(usedUrl);
+      if (!r.ok && alternativeId) {
+        console.log(`[reply-fetch] conversation failed ${r.status}, trying alternative id=${alternativeId} with replies`);
+        usedUrl = buildRepliesUrl(alternativeId);
+        r = await fetch(usedUrl);
+      }
     }
-    
-    if (!r.ok) { 
-      await putLog({ 
-        userId, type: "reply-fetch", accountId: acct.accountId, 
-        status: "error", message: `Threads replies error: ${r.status} for ID ${replyApiId}` 
-      }); 
-      continue; 
+
+    if (!r.ok) {
+      const errTxt = await r.text().catch(() => "");
+      await putLog({
+        userId,
+        type: "reply-fetch",
+        accountId: acct.accountId,
+        status: "error",
+        message: `Threads replies error: ${r.status} for ID ${replyApiId}`,
+        detail: { url: usedUrl.replace(acct.accessToken, "***TOKEN***"), error: errTxt.slice(0, 200) }
+      });
+      continue;
     }
     const json = await r.json();
     for (const rep of (json?.data || [])) {
@@ -1310,6 +1344,7 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
 }
 
 async function fetchIncomingReplies(userId: any, acct: any) {
+  // 仕様: autoReply が OFF のアカウントはスキップ
   if (!acct.autoReply) return { fetched: 0 };
   try {
     const r = await fetchThreadsRepliesAndSave({ acct, userId });
@@ -1340,9 +1375,14 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
   // グループ取得
   const group = await getAutoPostGroup(userId, acct.autoPostGroupId);
   if (!group || !group.groupName) return { created: 0, skipped: true };
-
-  // デバッグ: time1/time2/time3 の実値をログ出力
-  console.log(`[debug] auto-post group loaded: ${group.groupName} time1=${group.time1}, time2=${group.time2}, time3=${group.time3}`);
+  // 新形式: スロットを取得（最大10）。無ければ旧3件形式をフォールバックとして使用
+  const slots = await getAutoPostGroupItems(userId, group.groupKey || acct.autoPostGroupId);
+  const useSlots = (slots && slots.length > 0) ? slots.slice(0, 10) : [
+    { order: 0, timeRange: group.time1 || '', theme: group.theme1 || '' },
+    { order: 1, timeRange: group.time2 || '', theme: group.theme2 || '' },
+    { order: 2, timeRange: group.time3 || '', theme: group.theme3 || '' },
+  ];
+  console.log(`[debug] auto-post group loaded: ${group.groupName} slots=${useSlots.length}`);
 
   const today = jstNow();
   const settings = await getUserSettings(userId);
@@ -1353,10 +1393,11 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
   const debug: any[] = [];
 
   // ★実績チェック（isPostedToday）は廃止：投稿がまだ無くても翌日分を作る
-  for (const type of [1, 2, 3]) {
-    const groupTypeStr = `${group.groupName}-自動投稿${type}`;
-    const timeRange =
-      (type === 1 ? group.time1 : type === 2 ? group.time2 : group.time3) || "";
+  let idx = 0;
+  for (const slot of useSlots) {
+    idx += 1;
+    const groupTypeStr = `${group.groupName}-自動投稿${idx}`;
+    const timeRange = String(slot.timeRange || "");
     // time window presence flag
     const timeWindowPresent = !!timeRange;
 
@@ -1440,7 +1481,10 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
 
     // 予約作成 → 本文生成
     const { id, themeStr } = await createScheduledPost(userId, {
-      acct, group, type, whenJst: when
+      acct, group, type: idx, whenJst: when,
+      // テーマ/時間帯：スロットに設定があればそれを優先
+      overrideTheme: String(slot.theme || ""),
+      overrideTimeRange: String(slot.timeRange || ""),
     });
     await generateAndAttachContent(userId, acct, id, themeStr, settings);
 
