@@ -14,10 +14,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const userId = user.sub;                                // [ADD]
 
     if (req.method === "GET") {
+      // グループ本体（SKが GROUP# で始まる）だけを返す。スロット（GROUPITEM#...）は除外
       const out = await ddb.send(new QueryCommand({
         TableName: TBL_GROUPS,
-        KeyConditionExpression: "PK = :pk",
-        ExpressionAttributeValues: { ":pk": { S: `USER#${userId}` } },
+        KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+        ExpressionAttributeValues: { ":pk": { S: `USER#${userId}` }, ":pfx": { S: "GROUP#" } },
         ScanIndexForward: false,
         Limit: 200,
       }));
