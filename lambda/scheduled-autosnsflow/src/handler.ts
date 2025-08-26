@@ -2076,7 +2076,9 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
 /// ========== ユーザー単位の実行ラッパー ==========
 async function runHourlyJobForUser(userId: any) {
   const settings = await getUserSettings(userId);
-  const masterInactive = settings.autoPost === "inactive";
+  if (settings.autoPost === "inactive") {
+    return { userId, createdCount: 0, replyDrafts: 0, fetchedReplies: 0, skippedAccounts: 0, skipped: "master_off" };
+  }
   const accounts = await getThreadsAccounts(userId);
 
   let createdCount = 0;
@@ -2085,14 +2087,9 @@ async function runHourlyJobForUser(userId: any) {
   let skippedAccounts = 0;
 
   for (const acct of accounts) {
-    // マスターOFF時は翌日分作成はスキップ、リプ取得は実行
-    if (!masterInactive) {
-      const c = await ensureNextDayAutoPosts(userId, acct);
-      createdCount += c.created || 0;
-      if (c.skipped) skippedAccounts++;
-    } else {
-      skippedAccounts++;
-    }
+    const c = await ensureNextDayAutoPosts(userId, acct);
+    createdCount += c.created || 0;
+    if (c.skipped) skippedAccounts++;
 
     try {
       const fr = await fetchIncomingReplies(userId, acct);
@@ -2107,9 +2104,9 @@ async function runHourlyJobForUser(userId: any) {
   const now = new Date().toISOString();
   await postDiscordLog({
     userId,
-    content: `**[定期実行レポート] ${now} (hourly)**\n予約投稿作成: ${createdCount} 件 / 返信取得: ${fetchedReplies} 件 / 返信下書き: ${replyDrafts} 件 / スキップ: ${skippedAccounts} / masterInactive: ${masterInactive}`
+    content: `**[定期実行レポート] ${now} (hourly)**\n予約投稿作成: ${createdCount} 件 / 返信取得: ${fetchedReplies} 件 / 返信下書き: ${replyDrafts} 件 / スキップ: ${skippedAccounts}`
   });
-  return { userId, createdCount, fetchedReplies, replyDrafts, skippedAccounts, masterInactive };
+  return { userId, createdCount, fetchedReplies, replyDrafts, skippedAccounts };
 }
 
 async function runFiveMinJobForUser(userId: any) {
