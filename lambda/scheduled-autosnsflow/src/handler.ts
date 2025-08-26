@@ -840,6 +840,7 @@ export const handler = async (event: any = {}) => {
         userSucceeded++;
       } catch (e) {
         console.log("hourly error for", uid, e);
+        await putLog({ userId: uid, type: "job", status: "error", message: "hourly job failed", detail: { error: String(e) } });
         await postDiscordLog({
           userId: uid,
           isError: true,
@@ -875,6 +876,7 @@ export const handler = async (event: any = {}) => {
       userSucceeded++;
     } catch (e) {
       console.log("5min error for", uid, e);
+      await putLog({ userId: uid, type: "job", status: "error", message: "every-5min job failed", detail: { error: String(e) } });
       await postDiscordLog({
         userId: uid,
         isError: true,
