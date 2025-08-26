@@ -1377,7 +1377,13 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
   const group = await getAutoPostGroup(userId, acct.autoPostGroupId);
   if (!group || !group.groupName) return { created: 0, skipped: true };
   // 新形式: スロットを取得（最大10）。無ければ旧3件形式をフォールバックとして使用
-  const slots = await getAutoPostGroupItems(userId, group.groupKey || acct.autoPostGroupId);
+  let slots: any[] = [];
+  try {
+    // group には groupKey フィールドは含まれないため、アカウント側に保持している groupId を使用
+    slots = await getAutoPostGroupItems(userId, acct.autoPostGroupId);
+  } catch (e) {
+    await putLog({ userId, type: "auto-post", accountId: acct.accountId, status: "error", message: "スロット取得に失敗", detail: { error: String(e), groupId: acct.autoPostGroupId } });
+  }
   const useSlots = (slots && slots.length > 0) ? slots.slice(0, 10) : [
     { order: 0, timeRange: group.time1 || '', theme: group.theme1 || '' },
     { order: 1, timeRange: group.time2 || '', theme: group.theme2 || '' },
@@ -1399,8 +1405,6 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
     idx += 1;
     const groupTypeStr = `${group.groupName}-自動投稿${idx}`;
     const timeRange = String(slot.timeRange || "");
-    // time window presence flag
-    const timeWindowPresent = !!timeRange;
 
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
@@ -1409,7 +1413,7 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
     const exists = await existsForDate(userId, acct, groupTypeStr, tomorrow);
 
     // 途中経過トレース
-    const trace: any = { type, groupTypeStr, timeRange, exists };
+    const trace: any = { type: idx, groupTypeStr, timeRange, exists };
     
     // timeRange 未設定
     if (!timeRange) {
