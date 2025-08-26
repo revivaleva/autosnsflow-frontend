@@ -1345,8 +1345,13 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
 }
 
 async function fetchIncomingReplies(userId: any, acct: any) {
-  // 仕様: autoReply が OFF のアカウントはスキップ
-  if (!acct.autoReply) return { fetched: 0 };
+  // 仕様: autoReply が OFF のアカウントはスキップ（可視化のためログを残す）
+  if (!acct.autoReply) {
+    try {
+      await putLog({ userId, type: "reply-fetch", accountId: acct.accountId, status: "skip", message: "autoReply OFF のため取得スキップ" });
+    } catch {}
+    return { fetched: 0 };
+  }
   try {
     const r = await fetchThreadsRepliesAndSave({ acct, userId });
     return { fetched: r.saved || 0 };
@@ -2082,6 +2087,10 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
 async function runHourlyJobForUser(userId: any) {
   const settings = await getUserSettings(userId);
   if (settings.autoPost === "inactive") {
+    try {
+      // マスターOFFで返信取得を含む全処理をスキップしたことを可視化
+      await putLog({ userId, type: "reply-fetch", status: "skip", message: "master autoPost inactive のため全処理スキップ" });
+    } catch {}
     return { userId, createdCount: 0, replyDrafts: 0, fetchedReplies: 0, skippedAccounts: 0, skipped: "master_off" };
   }
   const accounts = await getThreadsAccounts(userId);
