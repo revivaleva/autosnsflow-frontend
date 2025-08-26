@@ -27,8 +27,9 @@ export async function postToThreads({
     // リプライパラメータ（公式ドキュメント準拠）
     // https://developers.facebook.com/docs/threads/retrieve-and-manage-replies/create-replies
     if (inReplyTo) {
-      body.reply_to_id = inReplyTo;  // 🔧 公式準拠: replied_to_id → reply_to_id
-      console.log(`[DEBUG] リプライとして投稿: inReplyTo=${inReplyTo}`);
+      // まずは replied_to_id を優先（最近のAPI挙動に合わせる）
+      body.replied_to_id = inReplyTo;
+      console.log(`[DEBUG] リプライとして投稿(replied_to_id): inReplyTo=${inReplyTo}`);
     } else {
       console.log(`[DEBUG] 通常投稿: inReplyToなし`);
     }
@@ -54,10 +55,10 @@ export async function postToThreads({
       const errText = await r.text().catch(() => "");
       console.log(`[WARN] リプライ投稿失敗、代替パラメータでリトライ: ${r.status} ${errText}`);
       
-      // reply_to_id を replied_to_id に変更してリトライ（フォールバック）
+      // replied_to_id -> reply_to_id に変更してリトライ（フォールバック）
       const retryBody = { ...body };
-      delete retryBody.reply_to_id;
-      retryBody.replied_to_id = inReplyTo;
+      delete retryBody.replied_to_id;
+      retryBody.reply_to_id = inReplyTo;
       
       console.log(`[DEBUG] リトライペイロード: ${JSON.stringify({...retryBody, access_token: "***"}, null, 2)}`);
       

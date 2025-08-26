@@ -1484,8 +1484,8 @@ async function postToThreads({ accessToken, text, userIdOnPlatform, inReplyTo = 
     access_token: accessToken,
   };
   if (inReplyTo) {
-    // 公式ドキュメント準拠: reply_to_id を使用
-    createPayload.reply_to_id = inReplyTo;
+    // まずは replied_to_id を第一候補にする（最近の挙動変化対策）
+    createPayload.replied_to_id = inReplyTo;
   }
 
   // 🔧 公式ドキュメント準拠: Create は /me/threads を使用
@@ -1497,14 +1497,14 @@ async function postToThreads({ accessToken, text, userIdOnPlatform, inReplyTo = 
 
   // フォールバック（ドキュメント差異対策）
   if (!createRes.ok && inReplyTo) {
-    // reply_to_id で失敗した場合、replied_to_id で再試行
+    // replied_to_id で失敗した場合、reply_to_id で再試行
     const errText = await createRes.text().catch(() => "");
     console.log(`[WARN] リプライ作成失敗、代替パラメータでリトライ: ${errText}`);
     
-    // replied_to_id で再試行
+    // reply_to_id で再試行
     const altPayload1 = { ...createPayload };
-    delete altPayload1.reply_to_id;
-    altPayload1.replied_to_id = inReplyTo;
+    delete altPayload1.replied_to_id;
+    altPayload1.reply_to_id = inReplyTo;
 
     let retried = await fetch(`${base}/me/threads`, {
       method: "POST",
