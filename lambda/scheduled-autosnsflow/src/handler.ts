@@ -2103,10 +2103,13 @@ async function runHourlyJobForUser(userId: any) {
 
   const urls = await getDiscordWebhooks(userId);
   const now = new Date().toISOString();
-  await postDiscordLog({
-    userId,
-    content: `**[定期実行レポート] ${now} (hourly)**\n予約投稿作成: ${createdCount} 件 / 返信取得: ${fetchedReplies} 件 / 返信下書き: ${replyDrafts} 件 / スキップ: ${skippedAccounts}`
-  });
+  const metrics = formatNonZeroLine([
+    { label: "予約投稿作成", value: createdCount, suffix: " 件" },
+    { label: "返信取得", value: fetchedReplies, suffix: " 件" },
+    { label: "返信下書き", value: replyDrafts, suffix: " 件" },
+    { label: "スキップ", value: skippedAccounts },
+  ]);
+  await postDiscordLog({ userId, content: `**[定期実行レポート] ${now} (hourly)**\n${metrics}` });
   return { userId, createdCount, fetchedReplies, replyDrafts, skippedAccounts };
 }
 
@@ -2143,11 +2146,14 @@ async function runFiveMinJobForUser(userId: any) {
 
   const urls = await getDiscordWebhooks(userId);
   const now = new Date().toISOString();
-  const base = `**[定期実行レポート] ${now} (every-5min)**\n自動投稿: ${totalAuto} / リプ返信: ${totalReply} / 2段階投稿: ${totalTwo} / 失効(rate-limit): ${rateSkipped}`;
-  const extra = totalTwo === 0 && perAccount.length > 0
-    ? "\n詳細(先頭): " + perAccount.map(p => `${p.accountId}:{2nd=${p.t},reason=${p.reason}}`).join(", ")
-    : "";
-  await postDiscordLog({ userId, content: base + extra });
+  const metrics = formatNonZeroLine([
+    { label: "自動投稿", value: totalAuto },
+    { label: "リプ返信", value: totalReply },
+    { label: "2段階投稿", value: totalTwo },
+    { label: "失効(rate-limit)", value: rateSkipped },
+  ]);
+  const base = `**[定期実行レポート] ${now} (every-5min)**\n${metrics}`;
+  await postDiscordLog({ userId, content: base });
   return { userId, totalAuto, totalReply, totalTwo, rateSkipped };
 }
 
@@ -2169,22 +2175,42 @@ async function postDiscordMaster(content: any) {
   }
 }
 
+// ====== 通知: 非ゼロの項目だけを結合し、全てゼロなら「実行なし」
+function formatNonZeroLine(items: Array<{ label: string; value: number; suffix?: string }>) {
+  const parts = items
+    .filter(i => (Number(i.value) || 0) > 0)
+    .map(i => `${i.label}: ${i.value}${i.suffix || ''}`);
+  return parts.length > 0 ? parts.join(" / ") : "実行なし";
+}
+
 function formatMasterMessage({ job, startedAt, finishedAt, userTotal, userSucceeded, totals }: any) {
   const durMs = finishedAt - startedAt;
   const durSec = Math.max(1, Math.round(durMs / 1000));
   const iso = new Date(finishedAt).toISOString();
   if (job === "hourly") {
+    const line = formatNonZeroLine([
+      { label: "予約投稿作成 合計", value: totals.createdCount },
+      { label: "返信取得 合計", value: totals.fetchedReplies },
+      { label: "下書き生成", value: totals.replyDrafts },
+      { label: "スキップ件数", value: totals.skippedAccounts },
+    ]);
     return [
       `**[MASTER] 定期実行サマリ ${iso} (hourly)**`,
       `スキャンユーザー数: ${userTotal} / 実行成功: ${userSucceeded}`,
-      `予約投稿作成 合計: ${totals.createdCount} / 返信取得 合計: ${totals.fetchedReplies} / 下書き生成: ${totals.replyDrafts} / スキップ件数: ${totals.skippedAccounts}`,
+      line,
       `所要時間: ${durSec}s`
     ].join("\n");
   }
+  const line = formatNonZeroLine([
+    { label: "自動投稿 合計", value: totals.totalAuto },
+    { label: "リプ返信 合計", value: totals.totalReply },
+    { label: "2段階投稿 合計", value: totals.totalTwo },
+    { label: "失効(rate-limit) 合計", value: totals.rateSkipped },
+  ]);
   return [
     `**[MASTER] 定期実行サマリ ${iso} (every-5min)**`,
     `スキャンユーザー数: ${userTotal} / 実行成功: ${userSucceeded}`,
-    `自動投稿 合計: ${totals.totalAuto} / リプ返信 合計: ${totals.totalReply} / 2段階投稿 合計: ${totals.totalTwo} / 失効(rate-limit) 合計: ${totals.rateSkipped}`,
+    line,
     `所要時間: ${durSec}s`
   ].join("\n");
 }
