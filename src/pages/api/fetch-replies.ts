@@ -10,6 +10,7 @@ import { fetchThreadsAccountsFull } from "@autosnsflow/backend-core";
 const ddb = createDynamoClient();
 const TBL_SCHEDULED = process.env.TBL_SCHEDULED_POSTS || "ScheduledPosts";
 const TBL_REPLIES = process.env.TBL_REPLIES || "Replies";
+const TBL_LOGS = process.env.TBL_EXECUTION_LOGS || "ExecutionLogs";
 
 // 現在時刻（Unix秒）
 const nowSec = () => Math.floor(Date.now() / 1000);
@@ -89,6 +90,28 @@ async function upsertReplyItem(userId: string, acct: any, { externalReplyId, pos
     return true;
   } catch {
     return false;
+  }
+}
+
+// 簡易的なログ出力（Lambda の putLog と同等の最小実装）
+async function putLog({
+  userId = "", type, accountId = "", targetId = "", status = "info", message = "", detail = {}
+}: any) {
+  try {
+    const item = {
+      PK: { S: `USER#${userId || "unknown"}` },
+      SK: { S: `LOG#${Date.now()}#${Math.random().toString(36).slice(2,10)}` },
+      type: { S: type || "system" },
+      accountId: { S: accountId || "" },
+      targetId: { S: targetId || "" },
+      status: { S: status || "info" },
+      message: { S: String(message || "") },
+      detail: { S: JSON.stringify(detail || {}) },
+      createdAt: { N: String(nowSec()) },
+    };
+    await ddb.send(new PutItemCommand({ TableName: TBL_LOGS, Item: item }));
+  } catch (e) {
+    console.log("[warn] putLog skipped (fetch-replies):", String((e as Error)?.message || e));
   }
 }
 
@@ -179,14 +202,14 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
       continue;
     }
 
-    // Threads APIでリプライを取得 - GAS成功パターンを採用
+    // リプライの取得を試行（自動リプライの除外は後で追加）
     let attempt = 0;
     const maxRetries = 3;
-    
     while (attempt < maxRetries) {
       try {
         // 方法1: GAS同様の直接リプライ取得（replyApiId使用）
-        let url = `https://graph.threads.net/v1.0/${encodeURIComponent(replyApiId)}/replies?fields=id,text,username,permalink&access_token=${encodeURIComponent(acct.accessToken)}`;
+        // include is_reply_owned_by_me to enable reliable self-reply detection
+        let url = `https://graph.threads.net/v1.0/${encodeURIComponent(replyApiId)}/replies?fields=id,text,username,permalink,is_reply_owned_by_me&access_token=${encodeURIComponent(acct.accessToken)}`;
         
         console.log(`[INFO] リプライ取得開始: ${replyApiId} (試行${attempt + 1}/${maxRetries})`);
         console.log(`[DEBUG] 完全なURL: ${url.replace(acct.accessToken, "***TOKEN***")}`);
@@ -198,10 +221,9 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
         // 方法1が失敗した場合、conversation エンドポイントを試行
         if (!r.ok && attempt === 0) {
           console.log(`[INFO] repliesエンドポイント失敗 (${r.status}), conversationで再試行`);
-          url = `https://graph.threads.net/v1.0/${encodeURIComponent(replyApiId)}/conversation?fields=id,text,username,permalink&access_token=${encodeURIComponent(acct.accessToken)}`;
+          url = `https://graph.threads.net/v1.0/${encodeURIComponent(replyApiId)}/conversation?fields=id,text,username,permalink,is_reply_owned_by_me&access_token=${encodeURIComponent(acct.accessToken)}`;
           r = await fetch(url);
-          
-          // conversationも失敗し、異なるIDがある場合は、そちらも試行
+          // 代替IDがある場合は再試行
           if (!r.ok && post.numericPostId && post.postId && post.numericPostId !== post.postId) {
             const alternativeId = post.numericPostId === replyApiId ? post.postId : post.numericPostId;
             console.log(`[INFO] conversation失敗 (${r.status}), 代替ID "${alternativeId}" でreplies再試行`);
@@ -232,8 +254,6 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
         if (!r.ok) { 
           const errorText = await r.text();
           console.log(`[ERROR] API失敗 (試行${attempt + 1}): ${r.status} ${r.statusText} - ${errorText.substring(0, 100)}`);
-          
-          // Address unavailable エラーまたは一時的エラーの場合はリトライ
           if (errorText.includes("Address unavailable") || r.status >= 500) {
             attempt++;
             if (attempt < maxRetries) {
@@ -242,7 +262,6 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
               continue; // while ループを続行
             }
           }
-          
           apiLogEntry.error = `${r.status} - ${errorText.substring(0, 100)}`;
           postInfo.apiLog = `ERROR: 全手法失敗 ${r.status} ${errorText.substring(0, 50)}`;
           apiLogs.push(apiLogEntry);
@@ -252,21 +271,62 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
       
         // 成功時の処理 - GASと同じシンプルなアプローチ
         const json = await r.json();
-        
-        // GAS同様にdata配列から直接リプライを取得
         const repliesFound = json?.data || [];
         console.log(`[INFO] ${replyApiId}: ${repliesFound.length}件のリプライ取得成功`);
-        
         const repliesCount = repliesFound.length;
         apiLogEntry.repliesFound = repliesCount;
-        apiLogEntry.response = JSON.stringify(json).substring(0, 200);
-        
+        // store full response for debugging
+        apiLogEntry.response = JSON.stringify(json);
         postInfo.apiLog = `OK: ${repliesCount}件のリプライ発見`;
-        
         for (const rep of repliesFound) {
           const externalReplyId = String(rep.id || "");
           const text = rep.text || "";
           const username = rep.username || "";
+
+          // 優先: APIが返すis_reply_owned_by_meを使って除外
+          if (rep.is_reply_owned_by_me === true) {
+            console.log(`[DEBUG] 自分のリプライを除外 (is_reply_owned_by_me): ${externalReplyId}`);
+            try {
+              await putLog({
+                userId,
+                type: "reply-fetch-exclude",
+                accountId: acct.accountId,
+                status: "info",
+                message: "is_reply_owned_by_me=true のため除外",
+                detail: { replyId: rep.id, reason: 'is_reply_owned_by_me' }
+              });
+            } catch (e) { console.log('[warn] putLog failed for is_reply flag exclude:', e); }
+            continue;
+          }
+
+          // フラグが付いていない場合は除外しないが、フィールド名や値の差異を調査するためログを出力する
+          try {
+            const authorCandidates = [
+              rep.from?.id,
+              rep.from?.username,
+              rep.username,
+              rep.user?.id,
+              rep.user?.username,
+              rep.author?.id,
+              rep.author?.username,
+            ].map(x => (x == null ? "" : String(x)));
+
+            const s2 = (acct.secondStageContent || "").trim();
+            const rt = (rep.text || "").trim();
+
+            // putLogでデバッグ情報を残す（除外はしない）
+            const debugDetail: any = { replyId: rep.id, authorCandidates, providerUserId: acct.providerUserId };
+            if (s2 && rt) debugDetail.secondStageSample = { s2: s2.replace(/\s+/g,' ').toLowerCase(), rt: rt.replace(/\s+/g,' ').toLowerCase() };
+
+            // only log when there's a potential match to investigate
+            const potentialMatch = authorCandidates.some(a => a && acct.providerUserId && a === acct.providerUserId) || (s2 && rt && (s2.replace(/\s+/g,' ').toLowerCase() === rt.replace(/\s+/g,' ').toLowerCase()));
+            if (potentialMatch) {
+              await putLog({ userId, type: "reply-fetch-flag-mismatch", accountId: acct.accountId, status: "info", message: "flag missing but candidate fields matched", detail: debugDetail });
+            }
+          } catch (e) {
+            console.log('[warn] flag-mismatch logging failed:', e);
+          }
+
           const createdAt = nowSec();
           
           if (externalReplyId && text) {
@@ -419,3 +479,4 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     });
   }
 }
+

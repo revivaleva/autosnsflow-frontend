@@ -91,7 +91,7 @@ export default function SettingsForm() {
             value={values.discordWebhook}
             onChange={(e) => setValues({ ...values, discordWebhook: e.target.value })}
           />
-          <p className="mt-1 text-xs text-gray-500">複数指定はカンマ区切り</p>
+          {/* 単一Webhookのみサポート（複数は廃止） */}
         </div>
 
         <div>

@@ -445,7 +445,7 @@ export default function ScheduledPostsTable() {
                     {post.status === "posted" && post.doublePostStatus ? (
                       post.doublePostStatus === "done" ? (
                         <div className="text-xs">
-                          <div className="text-green-600 font-medium">完了</div>
+                          <div className="text-green-600 font-medium">投稿済</div>
                           {post.secondStageAt && (
                             <div className="text-gray-500">
                               {typeof post.secondStageAt === "number"

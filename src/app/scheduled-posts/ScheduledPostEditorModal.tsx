@@ -190,6 +190,9 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
   const [scheduledAtLocal, setScheduledAtLocal] = useState(
     mode === "edit" ? toLocalDatetimeValueAny(initial?.scheduledAt) : "" // [FIX] Any対応
   );
+  // 投稿時間範囲（HH:MM）
+  const [timeStart, setTimeStart] = useState<string>("00:00");
+  const [timeEnd, setTimeEnd] = useState<string>("23:59");
 
   const selectedAccount = useMemo(
     () => accounts.find((a) => a.accountId === accountId) || null,
@@ -275,6 +278,22 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
         )}`
       );
     }
+
+    // 初期 timeRange（編集時）
+    if (mode === "edit") {
+      const tr = initial?.timeRange || "";
+      const m = String(tr).match(/^(\d{2}:\d{2})\s*[-～~]\s*(\d{2}:\d{2})$/);
+      if (m) {
+        setTimeStart(m[1]);
+        setTimeEnd(m[2]);
+      } else {
+        setTimeStart("00:00");
+        setTimeEnd("23:59");
+      }
+    } else {
+      setTimeStart("00:00");
+      setTimeEnd("23:59");
+    }
   }, [open]); // eslint-disable-line
 
   // [MOD] 編集モードでは initial.autoPostGroupId を優先して初期選択
@@ -305,6 +324,17 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
     const ty = autoType;
     const autoTheme = ty === 1 ? selectedGroup.theme1 : ty === 2 ? selectedGroup.theme2 : selectedGroup.theme3;
     if (autoTheme) setTheme(autoTheme);
+
+    // グループ既定の timeRange を反映
+    const tr = ty === 1 ? selectedGroup.time1 : ty === 2 ? selectedGroup.time2 : selectedGroup.time3;
+    if (tr && /\d{2}:\d{2}.*\d{2}:\d{2}/.test(tr)) {
+      const [s, e] = tr.split(/-|～|~/).map((x) => x.trim());
+      setTimeStart((s || "00:00").slice(0, 5));
+      setTimeEnd((e || "23:59").slice(0, 5));
+    } else {
+      setTimeStart("00:00");
+      setTimeEnd("23:59");
+    }
 
     // [DEL] 種別選択時に予約時刻を自動設定していた処理を削除
   }, [autoType, selectedGroup]); // eslint-disable-line
@@ -343,6 +373,7 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
       content,
       theme,
       autoPostGroupId,
+      timeRange: `${timeStart}-${timeEnd}`,
     };
 
     await onSave(payload);
@@ -504,6 +535,27 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
               AIで生成
             </button>
           </div>
+        </div>
+
+        {/* 投稿時間範囲 */}
+        <div className="mt-4">
+          <label className="block text-sm font-medium">投稿時間範囲</label>
+          <div className="flex items-center gap-2 mt-1">
+            <input
+              type="time"
+              value={timeStart}
+              onChange={(e) => setTimeStart(e.target.value)}
+              className="border rounded-md px-3 py-2"
+            />
+            <span className="text-gray-500">～</span>
+            <input
+              type="time"
+              value={timeEnd}
+              onChange={(e) => setTimeEnd(e.target.value)}
+              className="border rounded-md px-3 py-2"
+            />
+          </div>
+          <p className="text-xs text-gray-500 mt-1">グループ未選択時は 00:00～23:59 が既定になります</p>
         </div>
 
         <div className="mt-4">
