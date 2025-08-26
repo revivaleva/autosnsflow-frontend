@@ -1484,8 +1484,9 @@ async function postToThreads({ accessToken, text, userIdOnPlatform, inReplyTo = 
     access_token: accessToken,
   };
   if (inReplyTo) {
-    // まずは replied_to_id を第一候補にする（最近の挙動変化対策）
-    createPayload.replied_to_id = inReplyTo;
+    // ドキュメント準拠: reply_to_id を使用
+    // https://developers.facebook.com/docs/threads/retrieve-and-manage-replies/create-replies
+    createPayload.reply_to_id = inReplyTo;
   }
 
   // 🔧 公式ドキュメント準拠: Create は /me/threads を使用
@@ -1495,44 +1496,7 @@ async function postToThreads({ accessToken, text, userIdOnPlatform, inReplyTo = 
     body: JSON.stringify(createPayload),
   });
 
-  // フォールバック（ドキュメント差異対策）
-  if (!createRes.ok && inReplyTo) {
-    // replied_to_id で失敗した場合、reply_to_id で再試行
-    const errText = await createRes.text().catch(() => "");
-    console.log(`[WARN] リプライ作成失敗、代替パラメータでリトライ: ${errText}`);
-    
-    // reply_to_id で再試行
-    const altPayload1 = { ...createPayload };
-    delete altPayload1.replied_to_id;
-    altPayload1.reply_to_id = inReplyTo;
-
-    let retried = await fetch(`${base}/me/threads`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(altPayload1),
-    });
-
-    if (!retried.ok) {
-      // parent_id でさらに再試行
-      const altPayload2 = { ...createPayload };
-      delete altPayload2.reply_to_id;
-      altPayload2.parent_id = inReplyTo;
-
-      retried = await fetch(`${base}/me/threads`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(altPayload2),
-      });
-
-      if (!retried.ok) {
-        const err2 = await retried.text().catch(() => "");
-        throw new Error(
-          `Threads create error: first=${createRes.status} ${errText} / retry=${retried.status} ${err2}`
-        );
-      }
-    }
-    createRes = retried;
-  }
+  // フォールバックは行わない
 
   if (!createRes.ok) {
     const t = await createRes.text().catch(() => "");
@@ -1557,6 +1521,28 @@ async function postToThreads({ accessToken, text, userIdOnPlatform, inReplyTo = 
   const pubJson = await pubRes.json().catch(() => ({}));
   const initialPostId = pubJson?.id || creation_id;
   
+  // リプライ妥当性を検証（reply_to_id による返信になっているか）
+  if (inReplyTo) {
+    try {
+      const verifyUrl = `${base}/${encodeURIComponent(initialPostId)}?fields=id,reply_to_id,parent_id&access_token=${encodeURIComponent(accessToken)}`;
+      const vRes = await fetch(verifyUrl);
+      const vText = await vRes.text().catch(() => "");
+      let vJson: any = {};
+      try { vJson = JSON.parse(vText); } catch {}
+      const ok = !!(vJson?.reply_to_id === inReplyTo || vJson?.parent_id === inReplyTo);
+      if (!ok) {
+        // 間違って通常投稿になっていた場合は削除し、上位にエラーを返す
+        try {
+          await fetch(`${base}/${encodeURIComponent(initialPostId)}?access_token=${encodeURIComponent(accessToken)}`, { method: "DELETE" });
+        } catch {}
+        throw new Error(`not_reply_posted: expected reply to ${inReplyTo} but created normal post`);
+      }
+    } catch (e) {
+      // 検証APIが使えない場合は続行（以後のpermalink取得で補助）
+      console.log(`[warn] reply verification failed: ${String(e).slice(0,200)}`);
+    }
+  }
+
   // Threads APIで投稿詳細を取得してリンク用IDを取得
   try {
     const postDetailUrl = `https://graph.threads.net/v1.0/${encodeURIComponent(initialPostId)}?fields=id,permalink&access_token=${accessToken}`;
