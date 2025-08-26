@@ -1381,7 +1381,7 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
   // グループ取得
   const group = await getAutoPostGroup(userId, acct.autoPostGroupId);
   if (!group || !group.groupName) return { created: 0, skipped: true };
-  // 新形式: スロットを取得（最大10）。無ければ旧3件形式をフォールバックとして使用
+  // 新形式: スロットを取得（最大10）。フォールバックは行わず、スロット未設定ならスキップ
   let slots: any[] = [];
   try {
     // group には groupKey フィールドは含まれないため、アカウント側に保持している groupId を使用
@@ -1389,11 +1389,11 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
   } catch (e) {
     await putLog({ userId, type: "auto-post", accountId: acct.accountId, status: "error", message: "スロット取得に失敗", detail: { error: String(e), groupId: acct.autoPostGroupId } });
   }
-  const useSlots = (slots && slots.length > 0) ? slots.slice(0, 10) : [
-    { order: 0, timeRange: group.time1 || '', theme: group.theme1 || '' },
-    { order: 1, timeRange: group.time2 || '', theme: group.theme2 || '' },
-    { order: 2, timeRange: group.time3 || '', theme: group.theme3 || '' },
-  ];
+  if (!slots || slots.length === 0) {
+    await putLog({ userId, type: "auto-post", accountId: acct.accountId, status: "skip", message: `スロット未設定のためスキップ (${group.groupName})` });
+    return { created: 0, deleted: 0, skipped: true, debug: [{ reason: "no_slots", group: group.groupName }] } as any;
+  }
+  const useSlots = slots.slice(0, 10);
   console.log(`[debug] auto-post group loaded: ${group.groupName} slots=${useSlots.length}`);
 
   const today = jstNow();
