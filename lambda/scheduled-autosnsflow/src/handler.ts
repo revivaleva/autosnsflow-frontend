@@ -1958,7 +1958,7 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
     const full = await ddb.send(new GetItemCommand({
       TableName: TBL_SCHEDULED,
       Key: { PK: { S: kpk }, SK: { S: ksk } },
-      ProjectionExpression: "postId, postedAt, doublePostStatus, autoPostGroupId, #st",
+      ProjectionExpression: "postId, numericPostId, postedAt, doublePostStatus, autoPostGroupId, #st",
       ExpressionAttributeNames: { "#st": "status" }
     }));
     const f = full.Item || {};
@@ -1966,10 +1966,11 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
     const dp = f.doublePostStatus?.S || "";
     const apg = f.autoPostGroupId?.S || "";
     const pid = f.postId?.S || "";
+    const nid = f.numericPostId?.S || "";
     const pat = f.postedAt?.N || "";
     const ok = st === "posted" && pid && (!dp || dp !== "done") && apg.includes("自動投稿") && Number(pat || 0) <= threshold;
-    if (debugMode && debugTried.length < 5) debugTried.push({ ksk, st, dp, apg, pid, pat, ok });
-    if (ok) { found = { kpk, ksk, pid, pat }; break; }
+    if (debugMode && debugTried.length < 5) debugTried.push({ ksk, st, dp, apg, pid, nid, pat, ok });
+    if (ok) { found = { kpk, ksk, pid, nid, pat }; break; }
   }
 
   if (!found) {
@@ -1977,7 +1978,7 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
     return { posted2: 0 };
   }
 
-  pk = found.kpk; sk = found.ksk; firstPostId = found.pid; firstPostedAt = found.pat;
+  pk = found.kpk; sk = found.ksk; firstPostId = found.nid || found.pid; firstPostedAt = found.pat;
 
   await putLog({
     userId,
