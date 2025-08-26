@@ -170,11 +170,11 @@ async function getDiscordWebhooks(userId = USER_ID) {
     new GetItemCommand({
       TableName: TBL_SETTINGS,
       Key: { PK: { S: `USER#${userId}` }, SK: { S: "SETTINGS" } },
+      ProjectionExpression: "discordWebhook"
     })
   );
   const single = out.Item?.discordWebhook?.S;
-  const list = (out.Item?.discordWebhooks?.L || []).map((x: any) => x.S).filter(Boolean);
-  const urls = single ? [single] : list;
+  const urls = single ? [single] : [];
   return urls;
 }
 
@@ -190,15 +190,13 @@ async function getDiscordWebhookSets(userId = USER_ID) {
     new GetItemCommand({
       TableName: TBL_SETTINGS,
       Key: { PK: { S: `USER#${userId}` }, SK: { S: "SETTINGS" } },
-      ProjectionExpression: "discordWebhook, discordWebhooks, errorDiscordWebhook, errorDiscordWebhooks",
+      ProjectionExpression: "discordWebhook, errorDiscordWebhook",
     })
   );
   const nSingle = out.Item?.discordWebhook?.S;
-  const nList = (out.Item?.discordWebhooks?.L || []).map((x: any) => x.S).filter(Boolean);
   const eSingle = out.Item?.errorDiscordWebhook?.S;
-  const eList = (out.Item?.errorDiscordWebhooks?.L || []).map((x: any) => x.S).filter(Boolean);
-  const normal = nSingle ? [nSingle, ...nList] : nList;
-  const error = eSingle ? [eSingle, ...eList] : eList;
+  const normal = nSingle ? [nSingle] : [];
+  const error = eSingle ? [eSingle] : [];
   return { normal, error };
 }
 
