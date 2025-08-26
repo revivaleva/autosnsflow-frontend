@@ -45,12 +45,13 @@ type AccountItem = {
 type AutoPostGroup = {
   groupId: string; // [KEEP] 取得時に groupKey→groupId へ正規化
   groupName: string;
-  time1?: string;
-  time2?: string;
-  time3?: string;
-  theme1?: string;
-  theme2?: string;
-  theme3?: string;
+};
+
+type AutoPostGroupItem = {
+  order: number;
+  timeRange: string;
+  theme: string;
+  enabled?: boolean;
 };
 
 type Props = {
@@ -110,10 +111,10 @@ function randomTimeInRange(range?: string | null): string | null {
 }
 
 // [ADD] 予約投稿の autoPostGroupId ("グループ名-自動投稿2") を分解
-function parseAutoPostGroupId(v?: string): { groupName: string; type: 1 | 2 | 3 | null } {
-  const m = String(v || "").match(/^(.*?)-自動投稿([123])$/);
+function parseAutoPostGroupId(v?: string): { groupName: string; type: number | null } {
+  const m = String(v || "").match(/^(.*?)-自動投稿(\d+)$/);
   if (!m) return { groupName: "", type: null };
-  return { groupName: m[1], type: Number(m[2]) as 1 | 2 | 3 };
+  return { groupName: m[1], type: Number(m[2]) };
 }
 
 function resolveGroupForAccount(account: AccountItem | null, groups: AutoPostGroup[]): AutoPostGroup | null {
@@ -184,7 +185,8 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
   const [accountId, setAccountId] = useState(initial?.accountId || "");
   const [accountName, setAccountName] = useState(initial?.accountName || "");
   const [groupId, setGroupId] = useState("");
-  const [autoType, setAutoType] = useState<1 | 2 | 3 | null>(null);
+  const [autoType, setAutoType] = useState<number | null>(null);
+  const [groupItems, setGroupItems] = useState<AutoPostGroupItem[]>([]);
   const [theme, setTheme] = useState(initial?.theme || "");
   const [content, setContent] = useState(initial?.content || "");
   const [scheduledAtLocal, setScheduledAtLocal] = useState(
@@ -239,12 +241,6 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
         const normalized: AutoPostGroup[] = (j?.groups || j?.items || []).map((g: any) => ({
           groupId: g.groupKey ?? g.groupId ?? "",
           groupName: g.groupName ?? "",
-          time1: g.time1 ?? "",
-          time2: g.time2 ?? "",
-          time3: g.time3 ?? "",
-          theme1: g.theme1 ?? "",
-          theme2: g.theme2 ?? "",
-          theme3: g.theme3 ?? "",
         }));
         setGroups(normalized);
       } catch (e) {
@@ -317,16 +313,49 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
     setAccountName(selectedAccount?.displayName || "");
   }, [selectedAccount, groups, mode, initial?.autoPostGroupId]); // [MOD] 依存に mode/initial を追加
 
-  // [MOD] 種別変更時：テーマのみ自動反映。予約日時は「AIで生成」時にセットする仕様へ変更
+  // [ADD] グループのスロットを読み込み（可変件数）
   useEffect(() => {
-    if (!selectedGroup || !autoType) return;
+    (async () => {
+      if (!selectedGroup?.groupId) {
+        setGroupItems([]);
+        return;
+      }
+      try {
+        const r = await fetch(`/api/auto-post-group-items?groupKey=${encodeURIComponent(selectedGroup.groupId)}`, {
+          credentials: "include",
+        });
+        if (!r.ok) {
+          setGroupItems([]);
+          return;
+        }
+        const j = await r.json();
+        const items: AutoPostGroupItem[] = (j?.items || []).map((it: any) => ({
+          order: Number(it.order ?? 0),
+          timeRange: String(it.timeRange || ""),
+          theme: String(it.theme || ""),
+          enabled: it.enabled !== false,
+        }));
+        const enabledSorted = items
+          .filter((x) => x.enabled)
+          .sort((a, b) => a.order - b.order);
+        setGroupItems(enabledSorted);
+        if (enabledSorted.length > 0 && (autoType === null || autoType < 1 || autoType > enabledSorted.length)) {
+          setAutoType(1);
+        }
+      } catch {
+        setGroupItems([]);
+      }
+    })();
+  }, [selectedGroup?.groupId]);
 
-    const ty = autoType;
-    const autoTheme = ty === 1 ? selectedGroup.theme1 : ty === 2 ? selectedGroup.theme2 : selectedGroup.theme3;
-    if (autoTheme) setTheme(autoTheme);
-
-    // グループ既定の timeRange を反映
-    const tr = ty === 1 ? selectedGroup.time1 : ty === 2 ? selectedGroup.time2 : selectedGroup.time3;
+  // [MOD] 種別変更時：テーマ・時間帯をスロットから反映
+  useEffect(() => {
+    if (!autoType || groupItems.length === 0) return;
+    const idx = autoType - 1;
+    const slot = groupItems[idx];
+    if (!slot) return;
+    if (slot.theme) setTheme(slot.theme);
+    const tr = slot.timeRange;
     if (tr && /\d{2}:\d{2}.*\d{2}:\d{2}/.test(tr)) {
       const [s, e] = tr.split(/-|～|~/).map((x) => x.trim());
       setTimeStart((s || "00:00").slice(0, 5));
@@ -337,7 +366,7 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
     }
 
     // [DEL] 種別選択時に予約時刻を自動設定していた処理を削除
-  }, [autoType, selectedGroup]); // eslint-disable-line
+  }, [autoType, groupItems]); // eslint-disable-line
 
   // [FIX] 追加：open/mode/initial の変化時にフォームへ同期（編集時）
   useEffect(() => {
@@ -393,9 +422,9 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
 
     // [ADD] 予約日時のセットは「AIで生成」押下時に実施
     if (selectedGroup && autoType) {
-      const timeRange =
-        autoType === 1 ? selectedGroup.time1 : autoType === 2 ? selectedGroup.time2 : selectedGroup.time3;
-      const hhmm = randomTimeInRange(timeRange || "");
+      const idx = autoType - 1;
+      const slot = groupItems[idx];
+      const hhmm = randomTimeInRange(slot?.timeRange || "");
       if (hhmm) {
         const base = scheduledAtLocal || toLocalDatetimeValue(Math.floor(Date.now() / 1000));
         const datePart = base.split("T")[0] || "";
@@ -506,14 +535,14 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
           <div>
             <label className="block text-sm font-medium">種別</label>
             <select
-              value={autoType ?? ""} // [MOD] 制御化で選択状態を反映
-              onChange={(e) => setAutoType(e.target.value ? (Number(e.target.value) as 1 | 2 | 3) : null)}
+              value={autoType ?? ""}
+              onChange={(e) => setAutoType(e.target.value ? Number(e.target.value) : null)}
               className="mt-1 w-full border rounded-md px-3 py-2"
             >
               <option value="">-</option>
-              <option value="1">自動投稿1</option>
-              <option value="2">自動投稿2</option>
-              <option value="3">自動投稿3</option>
+              {groupItems.map((it, idx) => (
+                <option key={idx} value={idx + 1}>{`自動投稿${idx + 1}`}</option>
+              ))}
             </select>
           </div>
         </div>
@@ -559,7 +588,7 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
         </div>
 
         <div className="mt-4">
-          <label className="block text-sm font厚-medium">予約日時</label>
+          <label className="block text-sm font-medium">予約日時</label>
           <input
             type="datetime-local"
             className="mt-1 w-full border rounded-md px-3 py-2"
