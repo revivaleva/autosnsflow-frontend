@@ -37,8 +37,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       // [MOD] BOOL 前提で読み出し。旧キーは参照のみ（自己修復は行わない）
       const list = (it.discordWebhooks?.L || []).map((x: any) => x.S).filter(Boolean);
+      const errList = (it.errorDiscordWebhooks?.L || []).map((x: any) => x.S).filter(Boolean);
       const discordWebhook = it.discordWebhook?.S || list[0] || "";
-      const errorDiscordWebhook = it.errorDiscordWebhook?.S || list[1] || "";
+      const errorDiscordWebhook = it.errorDiscordWebhook?.S || errList[0] || "";
       const openaiApiKey = it.openaiApiKey?.S || it.openAiApiKey?.S || "";
       const selectedModel =
         it.selectedModel?.S || it.modelDefault?.S || DEFAULTS.selectedModel;
