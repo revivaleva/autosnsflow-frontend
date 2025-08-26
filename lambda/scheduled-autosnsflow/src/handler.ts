@@ -180,7 +180,8 @@ async function getDiscordWebhooks(userId = USER_ID) {
 
 async function postDiscordLog({ userId = USER_ID, content, isError = false }: any) {
   const { normal, error } = await getDiscordWebhookSets(userId);
-  const urls = isError ? (error.length ? error : normal) : normal;
+  // 厳密ルーティング: 通常は normal のみ、エラーは error のみ（相互フォールバックしない）
+  const urls = isError ? error : normal;
   await postDiscord(urls, content);
 }
 
