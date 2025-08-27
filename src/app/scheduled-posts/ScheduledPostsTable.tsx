@@ -334,8 +334,8 @@ export default function ScheduledPostsTable() {
       </div>
 
       <div className="overflow-x-auto">
-        <table className="min-w-full bg-white border">
-          <thead>
+        <table className="min-w-full bg-white dark:bg-gray-900 border">
+          <thead className="dark:bg-gray-800">
             <tr>
               <th className="border p-1">アカウント名</th>
               <th className="border p-1">アカウントID</th>

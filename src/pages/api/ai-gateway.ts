@@ -59,7 +59,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     res.status(400).json({ error: "userid and purpose required", detail: { hasUserId: !!userId, hasPurpose: !!purpose } }); return;  // [MOD] Next API は void を返す
   }
 
-  let openaiApiKey = "", selectedModel = "gpt-3.5-turbo", masterPrompt = "";
+  let openaiApiKey = "", selectedModel = "gpt-5-mini", masterPrompt = "";
   try {
     const result = await client.send(new GetItemCommand({
       TableName: 'UserSettings',
@@ -73,7 +73,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     }));
     openaiApiKey = result.Item?.openaiApiKey?.S || "";
-    selectedModel = result.Item?.modelDefault?.S || result.Item?.selectedModel?.S || "gpt-3.5-turbo";
+    const rawModel = result.Item?.modelDefault?.S || result.Item?.selectedModel?.S || "gpt-5-mini";
+    const allow = new Set(["gpt-5", "gpt-5-mini", "gpt-5-nano"]);
+    selectedModel = allow.has(rawModel) ? rawModel : "gpt-5-mini";
     masterPrompt = result.Item?.masterPrompt?.S || "";
     if (!openaiApiKey) throw new Error("APIキー未設定です");
   } catch (e: unknown) {

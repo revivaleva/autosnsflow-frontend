@@ -168,8 +168,8 @@ export default function SNSAccountsTable() {
           </button>
         </div>
       </div>
-      <table className="w-full border shadow bg-white rounded overflow-hidden">
-        <thead className="bg-gray-100">
+      <table className="w-full border shadow bg-white dark:bg-gray-900 rounded overflow-hidden">
+        <thead className="bg-gray-100 dark:bg-gray-800">
           <tr>
             {/* [MOD] アカウント名列を広く */}
             <th className="py-2 px-3 min-w-[16rem] w-64 text-left">アカウント名</th>
