@@ -147,7 +147,7 @@ export default function SNSAccountsTable() {
   const handleOpenInApp = (acc: ThreadsAccount) => {
     const username = String(acc.accountId || "").replace(/^@/, "");
     const threadsUrl = `https://www.threads.net/@${encodeURIComponent(username)}`;
-    const containerName = encodeURIComponent(String(acc.accountId || ""));
+    const containerName = encodeURIComponent(username);
     const deepLink = `mycontainers://open?name=${containerName}&url=${encodeURIComponent(threadsUrl)}`;
     try {
       window.location.href = deepLink;
