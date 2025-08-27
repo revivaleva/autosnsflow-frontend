@@ -66,7 +66,7 @@ const GSI_POS_BY_ACC_TIME = "GSI2"; // ScheduledPosts: accountId, postedAt
 const GSI_REPLIES_BY_ACC  = "GSI1"; // Replies: accountId, createdAt
 
 /// ========== OpenAI 既定値 & プロンプト生成 ==========
-const DEFAULT_OPENAI_MODEL = "gpt-3.5-turbo";
+const DEFAULT_OPENAI_MODEL = "gpt-5-mini";
 const DEFAULT_OPENAI_TEMP = 0.7;
 const DEFAULT_OPENAI_MAXTOKENS = 300;
 
@@ -104,9 +104,15 @@ function buildReplyPrompt(incomingReply: string, originalPost: string, settings:
   return prompt;
 }
 
+function sanitizeModelName(model: any): string {
+  const allow = ["gpt-5", "gpt-5-mini", "gpt-5-nano"];
+  const m = String(model || "");
+  return allow.includes(m) ? m : "gpt-5-mini";
+}
+
 async function callOpenAIText({ apiKey, model, temperature, max_tokens, prompt }: any) {
   const body = {
-    model,
+    model: sanitizeModelName(model),
     messages: [{ role: "user", content: prompt }],
     temperature,
     max_tokens,
@@ -261,7 +267,8 @@ async function getUserSettings(userId = USER_ID) {
   const defaultOpenAiCost = Number(out.Item?.defaultOpenAiCost?.N || "1");
 
   const openaiApiKey = out.Item?.openaiApiKey?.S || "";
-  const model = out.Item?.selectedModel?.S || DEFAULT_OPENAI_MODEL;
+  const rawModel = out.Item?.selectedModel?.S || DEFAULT_OPENAI_MODEL;
+  const model = sanitizeModelName(rawModel);
   const masterPrompt = out.Item?.masterPrompt?.S || "";
   const openAiTemperature = Number(out.Item?.openAiTemperature?.N || DEFAULT_OPENAI_TEMP);
   const openAiMaxTokens = Number(out.Item?.openAiMaxTokens?.N || DEFAULT_OPENAI_MAXTOKENS);

@@ -243,7 +243,7 @@ export default function AutoPostGroupsEditor() {
         </button>
       </div>
       <div className="overflow-x-auto">
-        <table className="min-w-full bg-white border">
+        <table className="min-w-full bg-white dark:bg-gray-900 border">
           <thead>
             <tr>
               <th className="border p-1">自動投稿グループ名</th>
@@ -392,8 +392,8 @@ function SlotEditor({ groupKey, items, loading, onReload }: { groupKey: string; 
       ) : rows.length === 0 ? (
         <div className="text-gray-500">スロットがありません</div>
       ) : (
-        <table className="w-full bg-white border">
-          <thead>
+        <table className="w-full bg-white dark:bg-gray-900 border">
+          <thead className="dark:bg-gray-800">
             <tr>
               <th className="border p-1 w-20">順序</th>
               <th className="border p-1 w-56">時間帯</th>
