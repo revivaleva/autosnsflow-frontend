@@ -351,8 +351,6 @@ export default function SNSAccountModal({
   
 
   if (!open) { return null; }
-  if (!open) { return null; }
-  if (!open) { return null; }
 
   return (
     <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-40 z-50">
@@ -626,5 +624,6 @@ export default function SNSAccountModal({
         </div>
       </form>
     </div>
+  </div>
   );
 }
