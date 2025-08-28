@@ -563,7 +563,7 @@ export default function SNSAccountModal({
                 className="w-full border rounded p-2 mb-2 min-h-[120px]"
                 value={bulkPersonaText}
                 onChange={(e) => setBulkPersonaText(e.target.value)}
-                placeholder={`例:\n名前\tゆうか\n年齢\t27\n...`}
+                placeholder={"例:\n名前\tゆうか\n年齢\t27\n..."}
               />
               <div className="flex gap-2">
                 <button
