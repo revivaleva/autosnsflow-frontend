@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import AIGeneratedPersonaModal from "./AIGeneratedPersonaModal";
+import AccountCopyModal from "./AccountCopyModal";
 
 // 型定義（省略せずそのまま記載）
 type AIGeneratedPersonaModalProps = {
