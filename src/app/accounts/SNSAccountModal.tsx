@@ -592,6 +592,22 @@ export default function SNSAccountModal({
                   <textarea className="border rounded p-2 w-full dark:bg-gray-800 dark:text-gray-100" name="emotion" value={persona.emotion} onChange={handlePersonaChange} />
                 </div>
                 <div>
+                  <label className="text-sm text-gray-600">エロ表現</label>
+                  <textarea className="border rounded p-2 w-full dark:bg-gray-800 dark:text-gray-100" name="erotic" value={persona.erotic} onChange={handlePersonaChange} />
+                </div>
+                <div>
+                  <label className="text-sm text-gray-600">ターゲット層</label>
+                  <textarea className="border rounded p-2 w-full dark:bg-gray-800 dark:text-gray-100" name="target" value={persona.target} onChange={handlePersonaChange} />
+                </div>
+                <div>
+                  <label className="text-sm text-gray-600">投稿目的</label>
+                  <textarea className="border rounded p-2 w-full dark:bg-gray-800 dark:text-gray-100" name="purpose" value={persona.purpose} onChange={handlePersonaChange} />
+                </div>
+                <div>
+                  <label className="text-sm text-gray-600">絡みの距離感</label>
+                  <textarea className="border rounded p-2 w-full dark:bg-gray-800 dark:text-gray-100" name="distance" value={persona.distance} onChange={handlePersonaChange} />
+                </div>
+                <div>
                   <label className="text-sm text-gray-600">NG要素</label>
                   <textarea className="border rounded p-2 w-full dark:bg-gray-800 dark:text-gray-100" name="ng" value={persona.ng} onChange={handlePersonaChange} />
                 </div>
