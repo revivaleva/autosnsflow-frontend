@@ -458,7 +458,12 @@ export default function SNSAccountModal({
         className="bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 p-8 rounded shadow-lg min-w-[600px] max-h-[90vh] overflow-y-auto relative"
         onSubmit={handleSubmit}
       >
-        <button type="button" className="absolute top-2 right-2 text-gray-400" onClick={onClose}>
+        <button
+          type="button"
+          className="absolute top-2 right-2 text-gray-400 text-2xl p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+          onClick={onClose}
+          aria-label="閉じる"
+        >
           ×
         </button>
         <h2 className="text-xl font-bold mb-4">
@@ -559,9 +564,9 @@ export default function SNSAccountModal({
                 <label className="text-sm text-gray-600">性別</label>
                 <input className="border px-2 py-1 rounded w-full dark:bg-gray-800 dark:text-gray-100" name="gender" value={persona.gender} onChange={handlePersonaChange} placeholder="性別" />
               </div>
-              <div>
+              <div className="col-span-2">
                 <label className="text-sm text-gray-600">職業</label>
-                <input className="border px-2 py-1 rounded w-full dark:bg-gray-800 dark:text-gray-100" name="job" value={persona.job} onChange={handlePersonaChange} placeholder="職業" />
+                <textarea className="border rounded p-2 w-full dark:bg-gray-800 dark:text-gray-100" name="job" value={persona.job} onChange={handlePersonaChange} />
               </div>
 
               {/* 職業以下は大きめtextarea群（タイトル付き） */}
@@ -638,13 +643,7 @@ export default function SNSAccountModal({
             >
               {mode === "edit" ? "保存" : "登録"}
             </button>
-            <button
-              type="button"
-              className="bg-gray-300 text-gray-800 rounded px-4 py-2"
-              onClick={onClose}
-            >
-              キャンセル
-            </button>
+            {/* Cancel removed - use top-right × to close */}
           </div>
         </div>
       </form>
