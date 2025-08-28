@@ -519,7 +519,7 @@ export default function SNSAccountModal({
         <div className="my-3 flex gap-2">
           <button
             type="button"
-            className="border px-2 py-1 rounded bg-gray-100"
+            className="border px-2 py-1 rounded bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-100 border-gray-300 dark:border-gray-700"
             onClick={() => setCopyModalOpen(true)}
           >
             既存アカウント複製

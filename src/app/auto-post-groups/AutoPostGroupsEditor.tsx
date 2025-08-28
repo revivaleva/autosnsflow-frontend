@@ -379,7 +379,7 @@ function SlotEditor({ groupKey, items, loading, onReload }: { groupKey: string; 
   };
 
   return (
-    <div className="p-3 bg-gray-50">
+    <div className="p-3 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100">
       <div className="flex justify-between items-center mb-2">
         <div className="font-semibold">スロット（最大10件）</div>
         <div className="space-x-2">
@@ -408,8 +408,8 @@ function SlotEditor({ groupKey, items, loading, onReload }: { groupKey: string; 
               return (
                 <tr key={it.slotId}>
                   <td className="border p-1 text-center space-x-1">
-                    <button className="px-2 py-0.5 bg-gray-200 rounded" onClick={() => updateOrder(i, -1)}>↑</button>
-                    <button className="px-2 py-0.5 bg-gray-200 rounded" onClick={() => updateOrder(i, +1)}>↓</button>
+                    <button className="px-2 py-0.5 bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-100 rounded" onClick={() => updateOrder(i, -1)}>↑</button>
+                    <button className="px-2 py-0.5 bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-100 rounded" onClick={() => updateOrder(i, +1)}>↓</button>
                   </td>
                   <td className="border p-1">
                     <div className="flex items-center gap-1">
