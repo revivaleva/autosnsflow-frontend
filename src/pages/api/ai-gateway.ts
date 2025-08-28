@@ -254,10 +254,19 @@ ${incomingReply}
       })()),
     });
 
-    const data = await openaiRes.json();
+    // Read raw text first for debug
+    const raw = await openaiRes.text();
+    let data: any = {};
+    try {
+      data = raw ? JSON.parse(raw) : {};
+    } catch (e) {
+      // Not JSON — capture raw
+      data = { raw }
+    }
     if (!openaiRes.ok) {
-      const msg = data?.error?.message || JSON.stringify(data);
-      res.status(502).json({ error: `OpenAI API error: ${msg}` }); return;  // [MOD] Next API は void を返す
+      const msg = data?.error?.message || (data?.raw ? data.raw : JSON.stringify(data));
+      // Return OpenAI raw body in error for easier debugging
+      res.status(502).json({ error: `OpenAI API error: ${msg}`, raw: data }); return;  // [MOD] Next API は void を返す
     }
 
     if (purpose === "persona-generate") {
@@ -267,7 +276,8 @@ ${incomingReply}
     }
 
     const text = data.choices?.[0]?.message?.content || "";
-    res.status(200).json({ text }); return;  // [MOD] Next API は void を返す
+    // Also include raw response for debugging
+    res.status(200).json({ text, raw: data }); return;  // [MOD] Next API は void を返す
 
   } catch (e: unknown) {
     res.status(500).json({ error: "OpenAI API呼び出し失敗: " + String(e) }); return;  // [MOD] Next API は void を返す
