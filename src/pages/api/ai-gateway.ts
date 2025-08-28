@@ -275,7 +275,50 @@ ${incomingReply}
       res.status(200).json({ text }); return;  // [MOD] Next API は void を返す
     }
 
-    const text = data.choices?.[0]?.message?.content || "";
+    let text = data.choices?.[0]?.message?.content || "";
+    // If empty, retry once with smaller max tokens to avoid length truncation returning empty content
+    if (!text) {
+      try {
+        const retryBody = JSON.stringify((() => {
+          const base: any = {
+            model: selectedModel,
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: userPrompt },
+            ],
+            temperature: String(selectedModel).startsWith("gpt-5") ? 1 : 0.7,
+          };
+          if (String(selectedModel).startsWith("gpt-5")) {
+            base.max_completion_tokens = 150;
+          } else {
+            base.max_tokens = 150;
+          }
+          return base;
+        })());
+
+        const retryRes = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${openaiApiKey}`,
+          },
+          body: retryBody,
+        });
+        const retryRaw = await retryRes.text();
+        let retryData: any = {};
+        try { retryData = retryRaw ? JSON.parse(retryRaw) : {}; } catch { retryData = { raw: retryRaw }; }
+        const retryText = retryData.choices?.[0]?.message?.content || "";
+        if (retryText) {
+          text = retryText;
+          // include both attempts in raw for debugging
+          data._retry = retryData;
+        }
+      } catch (e) {
+        // ignore retry errors, continue to return what we have
+        console.log("retry openai failed:", e);
+      }
+    }
+
     // Also include raw response for debugging
     res.status(200).json({ text, raw: data }); return;  // [MOD] Next API は void を返す
 
