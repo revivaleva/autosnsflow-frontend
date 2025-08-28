@@ -123,6 +123,7 @@ export default function SettingsForm() {
             <option value="gpt-4o-mini">gpt-4o-mini</option>
             <option value="gpt-4o-nano">gpt-4o-nano</option>
             <option value="gpt-5-mini">gpt-5-mini</option>
+            <option value="gpt-5-nano">gpt-5-nano</option>
           </select>
         </div>
 
