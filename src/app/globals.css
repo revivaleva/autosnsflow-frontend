@@ -25,6 +25,45 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
+/* --- Form controls: make inputs/selects/textareas respect theme variables --- */
+:root {
+  --input-background: #ffffff;
+  --input-foreground: #171717;
+  --input-border: #d1d5db;
+  --placeholder-color: #9ca3af;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --input-background: #0f1720;
+    --input-foreground: var(--foreground);
+    --input-border: #2b2b2b;
+    --placeholder-color: rgba(237,237,237,0.45);
+  }
+}
+
+input[type="text"], input[type="password"], input[type="time"], input[type="datetime-local"], input[type="number"], textarea, select, .form-select {
+  background: var(--input-background) !important;
+  color: var(--input-foreground) !important;
+  border-color: var(--input-border) !important;
+}
+
+input::placeholder, textarea::placeholder {
+  color: var(--placeholder-color) !important;
+}
+
+/* Make native select dropdowns visually consistent */
+select {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+}
+
+/* Buttons on dark overlays: ensure contrast where needed */
+.modal-button, button {
+  color: inherit;
+}
+
 /* --- Toggle Switch用のCSS --- */
 .switch {
   position: relative; display: inline-block; width: 40px; height: 22px;
