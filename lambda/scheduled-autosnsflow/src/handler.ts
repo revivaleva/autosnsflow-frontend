@@ -112,10 +112,12 @@ function sanitizeModelName(model: any): string {
 
 async function callOpenAIText({ apiKey, model, temperature, max_tokens, prompt }: any) {
   const m = sanitizeModelName(model);
+  // 一部モデルでは temperature の非デフォルト値を受け付けないため、gpt-5 系は 1 を使用
+  const effectiveTemp = String(m).startsWith("gpt-5") ? 1 : (typeof temperature === 'number' ? temperature : DEFAULT_OPENAI_TEMP);
   const body: any = {
     model: m,
     messages: [{ role: "user", content: prompt }],
-    temperature,
+    temperature: effectiveTemp,
   };
   if (m.startsWith("gpt-5")) {
     body.max_completion_tokens = max_tokens;
