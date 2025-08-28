@@ -490,7 +490,8 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-      <form onSubmit={handleSubmit} className="bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 w-[640px] max-w-[96vw] rounded-xl p-5 shadow-xl">
+      <form onSubmit={handleSubmit} className="bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 w-[640px] max-w-[96vw] rounded-xl p-5 shadow-xl relative">
+        <button type="button" className="absolute top-2 right-2 text-gray-400 text-2xl p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800" onClick={onClose} aria-label="閉じる">×</button>
         <h3 className="text-lg font-semibold mb-4">{mode === "add" ? "予約投稿の追加" : "予約投稿の編集"}</h3>
 
         <label className="block text-sm font-medium">アカウント</label>
@@ -608,9 +609,6 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
         </div>
 
         <div className="flex justify-end gap-2 mt-5">
-          <button type="button" className="bg-gray-300 text-gray-800 rounded px-4 py-2" onClick={onClose}>
-            キャンセル
-          </button>
           <button type="submit" className="bg-green-600 text-white rounded px-5 py-2 hover:bg-green-700">
             保存
           </button>
