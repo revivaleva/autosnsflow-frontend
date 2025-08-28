@@ -25,7 +25,15 @@ export default function AIGeneratedPersonaModal({
   if (!open) { return null; }
   return (
     <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-40 z-50">
-      <div className="bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 rounded shadow-lg w-full max-w-xl p-6">
+      <div className="bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 rounded shadow-lg w-full max-w-xl p-6 relative">
+        <button
+          type="button"
+          className="absolute top-2 right-2 text-gray-400 text-2xl p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+          onClick={onClose}
+          aria-label="閉じる"
+        >
+          ×
+        </button>
         <h3 className="font-bold text-lg mb-3">AI生成ペルソナ内容を確認</h3>
         <div className="border rounded bg-gray-50 p-3 my-2">
           <div className="text-sm text-gray-700 mb-1">簡易ペルソナ</div>
@@ -40,7 +48,10 @@ export default function AIGeneratedPersonaModal({
         <div className="flex justify-end mt-3 gap-2">
           <button
             className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
-            onClick={() => onApply({ personaDetail, personaSimple })}
+            onClick={() => {
+              onApply({ personaDetail, personaSimple });
+              onClose();
+            }}
             disabled={!personaSimple && !personaDetail}
           >
             この内容でセット
