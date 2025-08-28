@@ -231,6 +231,8 @@ export default function SNSAccountModal({
   const [aiPreviewModalOpen, setAiPreviewModalOpen] = useState(false);
   const [aiPersonaDetail, setAiPersonaDetail] = useState("");
   const [aiPersonaSimple, setAiPersonaSimple] = useState("");
+  const [bulkPersonaOpen, setBulkPersonaOpen] = useState(false);
+  const [bulkPersonaText, setBulkPersonaText] = useState("");
 
   // グループ一覧の取得
   useEffect(() => {
@@ -542,6 +544,68 @@ export default function SNSAccountModal({
               <span>簡易ペルソナ入力に切替</span>
             </label>
           </div>
+
+          <div className="flex items-center gap-2 mb-2">
+            <div className="flex-1" />
+            <button
+              type="button"
+              className="text-sm px-2 py-1 border rounded bg-gray-50 hover:bg-gray-100"
+              onClick={() => setBulkPersonaOpen((s) => !s)}
+            >
+              ペルソナ一括貼付
+            </button>
+          </div>
+
+          {bulkPersonaOpen && (
+            <div className="mb-3">
+              <label className="block text-sm text-gray-600">貼付用テキスト</label>
+              <textarea
+                className="w-full border rounded p-2 mb-2 min-h-[120px]"
+                value={bulkPersonaText}
+                onChange={(e) => setBulkPersonaText(e.target.value)}
+                placeholder={`例:\n名前\tゆうか\n年齢\t27\n...`}
+              />
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  className="bg-blue-500 text-white px-3 py-1 rounded"
+                  onClick={() => {
+                    // parse
+                    const mapping: Record<string, keyof PersonaType> = {
+                      名前: "name",
+                      年齢: "age",
+                      性別: "gender",
+                      職業: "job",
+                      生活スタイル: "lifestyle",
+                      投稿キャラ: "character",
+                      "口調・内面": "tone",
+                      語彙傾向: "vocab",
+                      "感情パターン": "emotion",
+                      エロ表現: "erotic",
+                      ターゲット層: "target",
+                      投稿目的: "purpose",
+                      "絡みの距離感": "distance",
+                      NG要素: "ng",
+                    };
+                    const lines = String(bulkPersonaText || "").split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+                    const newPersona = { ...persona } as any;
+                    for (const line of lines) {
+                      const parts = line.split(/\t|\s*:\s*|\s+/, 2).map(p => p.trim());
+                      if (parts.length < 2) continue;
+                      const key = parts[0];
+                      const val = parts[1];
+                      const field = mapping[key];
+                      if (field) newPersona[field] = val;
+                    }
+                    setPersona(newPersona);
+                    setBulkPersonaOpen(false);
+                    setBulkPersonaText("");
+                  }}
+                >貼付して反映</button>
+                <button type="button" className="px-3 py-1 border rounded" onClick={() => { setBulkPersonaText(""); setBulkPersonaOpen(false); }}>キャンセル</button>
+              </div>
+            </div>
+          )}
 
           {personaMode === "simple" ? (
             <textarea
