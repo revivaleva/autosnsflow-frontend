@@ -12,6 +12,7 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [signupOpen, setSignupOpen] = useState(false); // [ADD]
   const router = useRouter();
+  const [loggingIn, setLoggingIn] = useState(false);
 
   // 環境変数の表示（不足があれば画面に出す）
   const { missing, preview } = getClientEnvStatus();
@@ -21,6 +22,8 @@ export default function LoginPage() {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    if (loggingIn) return;
+    setLoggingIn(true);
 
     const res = await fetch("/api/auth/login", {
       method: "POST",
@@ -30,14 +33,30 @@ export default function LoginPage() {
     });
 
     if (res.ok) {
-      // ?next=/xxx があればそこに遷移、なければ "/"
-      const params = new URLSearchParams(window.location.search);
-      const next = params.get("next");
-      router.push(next && next.startsWith("/") ? next : "/");
+      // ?next=... があればそこに遷移（同一オリジンなら許容）、なければ "/"
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const nextRaw = params.get("next");
+        let target = "/";
+        if (nextRaw) {
+          try {
+            const u = new URL(nextRaw, window.location.origin);
+            if (u.origin === window.location.origin) {
+              target = u.pathname + u.search + u.hash;
+            }
+          } catch (_) {
+            // invalid URL -> ignore
+          }
+        }
+        router.push(target);
+      } catch (err) {
+        router.push("/");
+      }
     } else {
       const data = await res.json().catch(() => ({}));
       setError(data?.error ?? "ログイン失敗");
     }
+    setLoggingIn(false);
   };
 
   return (
