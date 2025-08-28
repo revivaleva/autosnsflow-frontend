@@ -64,96 +64,7 @@ type PersonaType = {
 
 // AIGeneratedPersonaModal is extracted to its own file to avoid large TSX parsing issues
 
-function AccountCopyModal({
-  open,
-  onClose,
-  onSelect,
-}: AccountCopyModalProps) {
-  const [accounts, setAccounts] = useState<AccountType[]>([]);
-  const [selected, setSelected] = useState<AccountType | null>(null);
-
-  useEffect(() => {
-    if (open) {
-      fetch(`/api/threads-accounts`, { credentials: "include" })
-        .then((res) => res.json())
-        .then((data) => setAccounts((data.accounts ?? data.items ?? []) as AccountType[])); // [FIX] {items} 形式も許容
-      setSelected(null);
-    }
-  }, [open]);
-
-  if (!open) { return null; }
-
-  return (
-    <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-40 z-50">
-      <div className="bg-white rounded shadow-lg w-full max-w-xl p-6">
-        <h3 className="font-bold text-lg mb-3">複製するアカウントを選択</h3>
-        <div className="max-h-60 overflow-y-auto mb-2 border rounded">
-          {accounts.map((acc: AccountType) => (
-            <div
-              key={acc.accountId}
-              className={`p-2 cursor-pointer border-b last:border-b-0 hover:bg-blue-50 ${
-                selected?.accountId === acc.accountId ? "bg-blue-100" : ""
-              }`}
-              onClick={() => setSelected(acc)}
-            >
-              <div className="font-semibold">{acc.displayName}</div>
-              <div className="text-xs text-gray-600">{acc.accountId}</div>
-            </div>
-          ))}
-          {accounts.length === 0 && (
-            <div className="text-center p-4 text-gray-400">アカウントがありません</div>
-          )}
-        </div>
-        {selected && (
-          <div className="border rounded bg-gray-50 p-3 my-2">
-            <div className="text-sm text-gray-700 mb-1">簡易ペルソナ</div>
-            <div className="text-xs whitespace-pre-wrap break-all bg-white p-2 rounded mb-2">
-              {selected.personaSimple || <span className="text-gray-400">（未入力）</span>}
-            </div>
-            <div className="text-sm text-gray-700 mb-1">詳細ペルソナ</div>
-            <pre className="text-xs whitespace-pre-wrap break-all bg-white p-2 rounded">
-              {
-                (() => {
-                  let detail = selected.personaDetail;
-                  if (!detail) return "（簡易ペルソナ入力のみ）";
-                  try {
-                    if (typeof detail === "string") {
-                      if (detail.trim() === "" || detail.trim() === "{}") return "（簡易ペルソナ入力のみ）";
-                      detail = JSON.parse(detail);
-                    }
-                    if (typeof detail === "object" && Object.keys(detail).length === 0) {
-                      return "（簡易ペルソナ入力のみ）";
-                    }
-                    return JSON.stringify(detail, null, 2);
-                  } catch {
-                    return detail || "（簡易ペルソナ入力のみ）";
-                  }
-                })()
-              }
-            </pre>
-          </div>
-        )}
-        <div className="flex justify-end mt-3 gap-2">
-          <button
-            className="bg-gray-300 text-gray-800 px-4 py-2 rounded"
-            onClick={onClose}
-          >
-            キャンセル
-          </button>
-          <button
-            className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
-            onClick={() => {
-              if (selected) onSelect(selected);
-            }}
-            disabled={!selected}
-          >
-            この内容で複製
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
+// AccountCopyModal implementation moved to `src/app/accounts/AccountCopyModal.tsx` (local duplicate removed)
 
 export default function SNSAccountModal({
   open,
@@ -319,6 +230,39 @@ export default function SNSAccountModal({
     }
     setPersonaSimple(personaSimple || "");
     setAiPreviewModalOpen(false);
+  };
+
+  // ペルソナ一括貼付の処理を外だしして JSX 内の複雑な表現を避ける
+  const applyBulkPersona = () => {
+    const mapping: Record<string, keyof PersonaType> = {
+      名前: "name",
+      年齢: "age",
+      性別: "gender",
+      職業: "job",
+      生活スタイル: "lifestyle",
+      投稿キャラ: "character",
+      "口調・内面": "tone",
+      語彙傾向: "vocab",
+      "感情パターン": "emotion",
+      エロ表現: "erotic",
+      ターゲット層: "target",
+      投稿目的: "purpose",
+      "絡みの距離感": "distance",
+      NG要素: "ng",
+    };
+    const lines = String(bulkPersonaText || "").split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const newPersona = { ...persona } as any;
+    for (const line of lines) {
+      const parts = line.split(/\t|\s*:\s*|\s+/, 2).map(p => p.trim());
+      if (parts.length < 2) continue;
+      const key = parts[0];
+      const val = parts[1];
+      const field = mapping[key];
+      if (field) newPersona[field] = val;
+    }
+    setPersona(newPersona);
+    setBulkPersonaOpen(false);
+    setBulkPersonaText("");
   };
 
   const originalAccountId = account?.accountId;
@@ -537,38 +481,7 @@ export default function SNSAccountModal({
                 <button
                   type="button"
                   className="bg-blue-500 text-white px-3 py-1 rounded"
-                  onClick={() => {
-                    // parse
-                    const mapping = {
-                      名前: "name",
-                      年齢: "age",
-                      性別: "gender",
-                      職業: "job",
-                      生活スタイル: "lifestyle",
-                      投稿キャラ: "character",
-                      "口調・内面": "tone",
-                      語彙傾向: "vocab",
-                      "感情パターン": "emotion",
-                      エロ表現: "erotic",
-                      ターゲット層: "target",
-                      投稿目的: "purpose",
-                      "絡みの距離感": "distance",
-                      NG要素: "ng",
-                    } as Record<string, keyof PersonaType>;
-                    const lines = String(bulkPersonaText || "").split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-                    const newPersona = { ...persona } as any;
-                    for (const line of lines) {
-                      const parts = line.split(/\t|\s*:\s*|\s+/, 2).map(p => p.trim());
-                      if (parts.length < 2) continue;
-                      const key = parts[0];
-                      const val = parts[1];
-                      const field = mapping[key];
-                      if (field) newPersona[field] = val;
-                    }
-                    setPersona(newPersona);
-                    setBulkPersonaOpen(false);
-                    setBulkPersonaText("");
-                  }}
+                  onClick={applyBulkPersona}
                 >貼付して反映</button>
                 <button type="button" className="px-3 py-1 border rounded" onClick={() => { setBulkPersonaText(""); setBulkPersonaOpen(false); }}>キャンセル</button>
               </div>
