@@ -454,18 +454,19 @@ export default function SNSAccountModal({
         personaSimple={aiPersonaSimple}
         onApply={handleApplyAIPersona}
       />
-      <form
-        className="bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 p-8 rounded shadow-lg min-w-[600px] max-h-[90vh] overflow-y-auto relative"
-        onSubmit={handleSubmit}
-      >
+      <div className="relative min-w-[600px] max-h-[90vh] w-full max-w-[96vw]">
         <button
           type="button"
-          className="absolute top-2 right-2 text-gray-400 text-2xl p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+          className="absolute top-2 right-2 text-gray-400 text-2xl p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 z-20"
           onClick={onClose}
           aria-label="閉じる"
         >
           ×
         </button>
+        <form
+          className="bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 p-8 rounded shadow-lg min-w-[600px] max-h-[90vh] overflow-y-auto"
+          onSubmit={handleSubmit}
+        >
         <h2 className="text-xl font-bold mb-4">
           {mode === "edit" ? "アカウント編集" : "新規アカウント追加"}
         </h2>
