@@ -86,12 +86,6 @@ function AIGeneratedPersonaModal({
         </div>
         <div className="flex justify-end mt-3 gap-2">
           <button
-            className="bg-gray-300 text-gray-800 px-4 py-2 rounded"
-            onClick={onClose}
-          >
-            キャンセル
-          </button>
-          <button
             className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
             onClick={() => onApply({ personaDetail, personaSimple })}
             disabled={!personaSimple && !personaDetail}
@@ -516,138 +510,90 @@ export default function SNSAccountModal({
           </button>
         </div>
 
+        {/* 既存アカウント複製ボタン：ラベルを明示、キャンセルは右上×のみで統一 */}
         <div className="my-3 flex gap-2">
           <button
             type="button"
             className="border px-2 py-1 rounded bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-100 border-gray-300 dark:border-gray-700"
             onClick={() => setCopyModalOpen(true)}
+            aria-label="既存アカウント複製"
           >
             既存アカウント複製
           </button>
         </div>
 
-        <div className="mb-2 flex items-center gap-4">
-          <span className="font-semibold">ペルソナ入力</span>
-          <label className="flex items-center gap-1 cursor-pointer">
-            <input
-              type="checkbox"
-              className="form-checkbox"
-              checked={personaMode === "simple"}
-              onChange={() => setPersonaMode(personaMode === "simple" ? "detail" : "simple")}
-            />
-            <span className="text-sm">簡易ペルソナ入力に切替</span>
-          </label>
-        </div>
-
-        {personaMode === "simple" ? (
-          <textarea
-            className="border rounded p-2 w-full mb-3 min-h-[80px] resize-y"
-            placeholder="簡易ペルソナ（例：このアカウントは〇〇な性格で、〇〇が好きな女性...）"
-            value={personaSimple}
-            onChange={(e) => setPersonaSimple(e.target.value)}
-          />
-        ) : (
-          <div className="grid grid-cols-2 gap-x-3 gap-y-2 mb-3">
-            <input
-              className="border px-2 py-1 rounded"
-              name="name"
-              value={persona.name}
-              onChange={handlePersonaChange}
-              placeholder="名前"
-            />
-            <input
-              className="border px-2 py-1 rounded"
-              name="age"
-              value={persona.age}
-              onChange={handlePersonaChange}
-              placeholder="年齢"
-            />
-            <input
-              className="border px-2 py-1 rounded"
-              name="gender"
-              value={persona.gender}
-              onChange={handlePersonaChange}
-              placeholder="性別"
-            />
-            <input
-              className="border px-2 py-1 rounded"
-              name="job"
-              value={persona.job}
-              onChange={handlePersonaChange}
-              placeholder="職業"
-            />
-            <input
-              className="border px-2 py-1 rounded"
-              name="lifestyle"
-              value={persona.lifestyle}
-              onChange={handlePersonaChange}
-              placeholder="生活スタイル"
-            />
-            <input
-              className="border px-2 py-1 rounded"
-              name="character"
-              value={persona.character}
-              onChange={handlePersonaChange}
-              placeholder="投稿キャラ"
-            />
-            <input
-              className="border px-2 py-1 rounded"
-              name="tone"
-              value={persona.tone}
-              onChange={handlePersonaChange}
-              placeholder="口調・内面"
-            />
-            <input
-              className="border px-2 py-1 rounded"
-              name="vocab"
-              value={persona.vocab}
-              onChange={handlePersonaChange}
-              placeholder="語彙傾向"
-            />
-            <input
-              className="border px-2 py-1 rounded"
-              name="emotion"
-              value={persona.emotion}
-              onChange={handlePersonaChange}
-              placeholder="感情パターン"
-            />
-            <input
-              className="border px-2 py-1 rounded"
-              name="erotic"
-              value={persona.erotic}
-              onChange={handlePersonaChange}
-              placeholder="エロ表現"
-            />
-            <input
-              className="border px-2 py-1 rounded"
-              name="target"
-              value={persona.target}
-              onChange={handlePersonaChange}
-              placeholder="ターゲット層"
-            />
-            <input
-              className="border px-2 py-1 rounded"
-              name="purpose"
-              value={persona.purpose}
-              onChange={handlePersonaChange}
-              placeholder="投稿目的"
-            />
-            <input
-              className="border px-2 py-1 rounded"
-              name="distance"
-              value={persona.distance}
-              onChange={handlePersonaChange}
-              placeholder="絡みの距離感"
-            />
-            <input
-              className="border px-2 py-1 rounded"
-              name="ng"
-              value={persona.ng}
-              onChange={handlePersonaChange}
-              placeholder="NG要素"
-            />
+        {/* ペルソナ入力（詳細モードをベースに、職業以下は大きめtextareaでタイトル付与） */}
+        <div className="mb-2">
+          <div className="flex items-center justify-between mb-2">
+            <span className="font-semibold">ペルソナ入力</span>
+            <label className="flex items-center gap-1 cursor-pointer text-sm">
+              <input
+                type="checkbox"
+                className="form-checkbox"
+                checked={personaMode === "simple"}
+                onChange={() => setPersonaMode(personaMode === "simple" ? "detail" : "simple")}
+              />
+              <span>簡易ペルソナ入力に切替</span>
+            </label>
           </div>
-        )}
+
+          {personaMode === "simple" ? (
+            <textarea
+              className="border rounded p-2 w-full mb-3 min-h-[80px] resize-y dark:bg-gray-800 dark:text-gray-100"
+              placeholder="簡易ペルソナ（例：このアカウントは〇〇な性格で、〇〇が好きな女性...）"
+              value={personaSimple}
+              onChange={(e) => setPersonaSimple(e.target.value)}
+            />
+          ) : (
+            <div className="grid grid-cols-2 gap-x-3 gap-y-4 mb-3">
+              <div>
+                <label className="text-sm text-gray-600">名前</label>
+                <input className="border px-2 py-1 rounded w-full dark:bg-gray-800 dark:text-gray-100" name="name" value={persona.name} onChange={handlePersonaChange} placeholder="名前" />
+              </div>
+              <div>
+                <label className="text-sm text-gray-600">年齢</label>
+                <input className="border px-2 py-1 rounded w-full dark:bg-gray-800 dark:text-gray-100" name="age" value={persona.age} onChange={handlePersonaChange} placeholder="年齢" />
+              </div>
+
+              <div>
+                <label className="text-sm text-gray-600">性別</label>
+                <input className="border px-2 py-1 rounded w-full dark:bg-gray-800 dark:text-gray-100" name="gender" value={persona.gender} onChange={handlePersonaChange} placeholder="性別" />
+              </div>
+              <div>
+                <label className="text-sm text-gray-600">職業</label>
+                <input className="border px-2 py-1 rounded w-full dark:bg-gray-800 dark:text-gray-100" name="job" value={persona.job} onChange={handlePersonaChange} placeholder="職業" />
+              </div>
+
+              {/* 職業以下は大きめtextarea群（タイトル付き） */}
+              <div className="col-span-2 grid grid-cols-1 gap-3">
+                <div>
+                  <label className="text-sm text-gray-600">生活スタイル</label>
+                  <textarea className="border rounded p-2 w-full dark:bg-gray-800 dark:text-gray-100" name="lifestyle" value={persona.lifestyle} onChange={handlePersonaChange} />
+                </div>
+                <div>
+                  <label className="text-sm text-gray-600">投稿キャラ</label>
+                  <textarea className="border rounded p-2 w-full dark:bg-gray-800 dark:text-gray-100" name="character" value={persona.character} onChange={handlePersonaChange} />
+                </div>
+                <div>
+                  <label className="text-sm text-gray-600">口調・内面</label>
+                  <textarea className="border rounded p-2 w-full dark:bg-gray-800 dark:text-gray-100" name="tone" value={persona.tone} onChange={handlePersonaChange} />
+                </div>
+                <div>
+                  <label className="text-sm text-gray-600">語彙傾向</label>
+                  <textarea className="border rounded p-2 w-full dark:bg-gray-800 dark:text-gray-100" name="vocab" value={persona.vocab} onChange={handlePersonaChange} />
+                </div>
+                <div>
+                  <label className="text-sm text-gray-600">感情パターン</label>
+                  <textarea className="border rounded p-2 w-full dark:bg-gray-800 dark:text-gray-100" name="emotion" value={persona.emotion} onChange={handlePersonaChange} />
+                </div>
+                <div>
+                  <label className="text-sm text-gray-600">NG要素</label>
+                  <textarea className="border rounded p-2 w-full dark:bg-gray-800 dark:text-gray-100" name="ng" value={persona.ng} onChange={handlePersonaChange} />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
 
         <label className="block">投稿グループ</label>
         <select
