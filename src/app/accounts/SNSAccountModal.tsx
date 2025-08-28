@@ -270,7 +270,7 @@ export default function SNSAccountModal({
     setError("");
   }, [account, mode]);
 
-  const handlePersonaChange = (e: React.ChangeEvent<HTMLInputElement>) =>
+  const handlePersonaChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setPersona({ ...persona, [e.target.name]: e.target.value });
 
   const handleCopyAccountData = (acc: any) => {
