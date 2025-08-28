@@ -88,7 +88,7 @@ function EditModal({ open, onClose, onSave, value, replyData }: EditModalProps) 
   if (!open) return null;
   return (
     <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
-      <div className="bg-white p-6 rounded-xl shadow w-96">
+      <div className="bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 p-6 rounded-xl shadow w-96">
         <div className="font-bold mb-2">返信内容編集</div>
         <textarea
           className="border rounded w-full p-2 mb-4"
@@ -478,8 +478,8 @@ export default function RepliesList() {
       </div>
 
       <div className="overflow-x-auto">
-        <table className="min-w-full bg-white border">
-          <thead>
+        <table className="min-w-full bg-white dark:bg-gray-900 border">
+          <thead className="dark:bg-gray-800">
             <tr>
               <th className="border p-1">アカウントID</th>
               <th className="border p-1">

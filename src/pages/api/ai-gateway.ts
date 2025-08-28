@@ -231,15 +231,22 @@ ${incomingReply}
         "Content-Type": "application/json",
         "Authorization": `Bearer ${openaiApiKey}`,
       },
-      body: JSON.stringify({
-        model: selectedModel,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-        max_tokens,
-        temperature: 0.7,
-      }),
+      body: JSON.stringify((() => {
+        const base: any = {
+          model: selectedModel,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+          temperature: 0.7,
+        };
+        if (String(selectedModel).startsWith("gpt-5")) {
+          base.max_completion_tokens = max_tokens;
+        } else {
+          base.max_tokens = max_tokens;
+        }
+        return base;
+      })()),
     });
 
     const data = await openaiRes.json();

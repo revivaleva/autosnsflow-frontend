@@ -111,12 +111,17 @@ function sanitizeModelName(model: any): string {
 }
 
 async function callOpenAIText({ apiKey, model, temperature, max_tokens, prompt }: any) {
-  const body = {
-    model: sanitizeModelName(model),
+  const m = sanitizeModelName(model);
+  const body: any = {
+    model: m,
     messages: [{ role: "user", content: prompt }],
     temperature,
-    max_tokens,
   };
+  if (m.startsWith("gpt-5")) {
+    body.max_completion_tokens = max_tokens;
+  } else {
+    body.max_tokens = max_tokens;
+  }
   const resp = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
