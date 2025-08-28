@@ -571,7 +571,7 @@ export default function SNSAccountModal({
                   className="bg-blue-500 text-white px-3 py-1 rounded"
                   onClick={() => {
                     // parse
-                    const mapping: Record<string, keyof PersonaType> = {
+                    const mapping = {
                       名前: "name",
                       年齢: "age",
                       性別: "gender",
@@ -586,7 +586,7 @@ export default function SNSAccountModal({
                       投稿目的: "purpose",
                       "絡みの距離感": "distance",
                       NG要素: "ng",
-                    };
+                    } as Record<string, keyof PersonaType>;
                     const lines = String(bulkPersonaText || "").split(/\r?\n/).map(l => l.trim()).filter(Boolean);
                     const newPersona = { ...persona } as any;
                     for (const line of lines) {
