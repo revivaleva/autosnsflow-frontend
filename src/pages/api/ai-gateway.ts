@@ -232,13 +232,15 @@ ${incomingReply}
         "Authorization": `Bearer ${openaiApiKey}`,
       },
       body: JSON.stringify((() => {
+        // 一部モデルでは temperature の非デフォルト値を受け付けないため、モデル毎に適切な値を選ぶ
+        const temp = String(selectedModel).startsWith("gpt-5") ? 1 : 0.7;
         const base: any = {
           model: selectedModel,
           messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: userPrompt },
           ],
-          temperature: 0.7,
+          temperature: temp,
         };
         if (String(selectedModel).startsWith("gpt-5")) {
           base.max_completion_tokens = max_tokens;
