@@ -67,7 +67,7 @@ function AIGeneratedPersonaModal({
   personaSimple,
   onApply,
 }: AIGeneratedPersonaModalProps) {
-  if (!open) return null;
+  if (!open) { return null; }
   return (
     <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-40 z-50">
       <div className="bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 rounded shadow-lg w-full max-w-xl p-6">
