@@ -366,7 +366,7 @@ export default function SNSAccountModal({
         personaSimple={aiPersonaSimple}
         onApply={handleApplyAIPersona}
       />
-      <div className="relative min-w-[600px] max-h-[90vh] w-full max-w-[96vw]">
+      <div className="relative min-w-[520px] max-h-[90vh] w-full max-w-[80vw]">
         <button
           type="button"
           className="absolute top-2 right-2 text-gray-400 text-2xl p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 z-20"
@@ -376,7 +376,7 @@ export default function SNSAccountModal({
           ×
         </button>
         <form
-          className="bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 p-8 rounded shadow-lg min-w-[600px] max-h-[90vh] overflow-y-auto"
+          className="bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 p-8 rounded shadow-lg min-w-[520px] max-h-[90vh] overflow-y-auto"
           onSubmit={handleSubmit}
         >
         <h2 className="text-xl font-bold mb-4">
@@ -550,6 +550,10 @@ export default function SNSAccountModal({
                 <div>
                   <label className="text-sm text-gray-600">絡みの距離感</label>
                   <textarea className="border rounded p-2 w-full dark:bg-gray-800 dark:text-gray-100" name="distance" value={persona.distance} onChange={handlePersonaChange} />
+                </div>
+                <div>
+                  <label className="text-sm text-gray-600">NG要素</label>
+                  <textarea className="border rounded p-2 w-full dark:bg-gray-800 dark:text-gray-100" name="ng" value={persona.ng} onChange={handlePersonaChange} />
                 </div>
               </div>
             </div>
