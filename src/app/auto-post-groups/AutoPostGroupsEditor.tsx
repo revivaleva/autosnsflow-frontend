@@ -86,7 +86,7 @@ function GroupModal({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
-      <div className="bg-white rounded-xl shadow-xl p-8 w-full max-w-xl">
+      <div className="bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 rounded-xl shadow-xl p-8 w-full max-w-xl">
         <div className="flex justify-between items-center mb-4">
           <div className="text-lg font-bold">{isEdit ? "グループ編集" : "グループ追加"}</div>
           <button className="text-gray-400 hover:text-gray-700 text-2xl font-bold" onClick={onClose}>×</button>

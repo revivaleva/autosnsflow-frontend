@@ -94,8 +94,8 @@ export default function DashboardPage() {
         </section>
 
         {/* 【追加】最近のエラー（タブ＋リスト） */}
-        <section className="rounded-xl border border-gray-200 bg-white">
-          <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
+        <section className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
+          <div className="flex items-center justify-between border-b border-gray-200 dark:border-gray-700 px-4 py-3">
             <h2 className="text-base font-semibold">最近のエラー（直近7日・最大20件）</h2>
             <Tabs active={activeTab} onChange={setActiveTab} />
           </div>
@@ -103,9 +103,9 @@ export default function DashboardPage() {
           {filteredErrors.length === 0 ? (
             <div className="px-4 py-8 text-sm text-gray-500">表示するエラーはありません。</div>
           ) : (
-            <ul className="divide-y divide-gray-100">
+            <ul className="divide-y divide-gray-100 dark:divide-gray-800">
               {filteredErrors.map((e) => (
-                <li key={`${e.type}-${e.id}-${e.at}`} className="px-4 py-3 hover:bg-gray-50">
+                <li key={`${e.type}-${e.id}-${e.at}`} className="px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-800">
                   <button
                     className="w-full text-left"
                     onClick={() => setDetail({ id: e.id, message: e.message })}
@@ -124,7 +124,7 @@ export default function DashboardPage() {
             </ul>
           )}
         </section>
-
+      
         {/* 【追加】詳細モーダル */}
         {detail && (
           <Modal onClose={() => setDetail(null)} title="エラー詳細">
@@ -155,10 +155,12 @@ export default function DashboardPage() {
 
 // 【追加】要約カード（Tailwindのみ）
 function SummaryCard({ title, value, tone = 'default' }: { title: string; value: React.ReactNode; tone?: 'default' | 'danger' }) {
-  const toneCls = tone === 'danger' ? 'border-red-200 bg-red-50' : 'border-gray-200 bg-white';
+  const toneCls = tone === 'danger'
+    ? 'border-red-200 bg-red-50 dark:border-red-500/40 dark:bg-red-900/20'
+    : 'border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900';
   return (
     <div className={`rounded-xl border ${toneCls} p-4`}>
-      <div className="text-xs text-gray-500">{title}</div>
+      <div className="text-xs text-gray-500 dark:text-gray-400">{title}</div>
       <div className="mt-1 text-2xl font-semibold">{value}</div>
     </div>
   );
@@ -173,11 +175,11 @@ function Tabs({ active, onChange }: { active: 'all' | 'post' | 'reply' | 'accoun
     { key: 'account', label: 'アカウント' },
   ];
   return (
-    <div className="flex items-center gap-1 rounded-lg bg-gray-100 p-1">
+    <div className="flex items-center gap-1 rounded-lg bg-gray-100 dark:bg-gray-800 p-1">
       {tabs.map(t => (
         <button
           key={t.key}
-          className={`px-3 py-1.5 text-sm rounded-md ${active === t.key ? 'bg-white shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+          className={`px-3 py-1.5 text-sm rounded-md ${active === t.key ? 'bg-white dark:bg-gray-900 shadow-sm' : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'}`}
           onClick={() => onChange(t.key)}
         >
           {t.label}
@@ -205,10 +207,10 @@ function Modal({ title, children, onClose }: { title: string; children: React.Re
   return (
     <div className="fixed inset-0 z-50">
       <div className="absolute inset-0 bg-black/30" onClick={onClose} />
-      <div className="absolute left-1/2 top-1/2 w-[95vw] max-w-2xl -translate-x-1/2 -translate-y-1/2 rounded-xl bg-white p-4 shadow-xl">
+      <div className="absolute left-1/2 top-1/2 w-[95vw] max-w-2xl -translate-x-1/2 -translate-y-1/2 rounded-xl bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 p-4 shadow-xl">
         <div className="flex items-center justify-between">
           <h3 className="text-base font-semibold">{title}</h3>
-          <button className="rounded-md p-1 hover:bg-gray-100" onClick={onClose} aria-label="close">✕</button>
+          <button className="rounded-md p-1 hover:bg-gray-100 dark:hover:bg-gray-800" onClick={onClose} aria-label="close">✕</button>
         </div>
         <div className="mt-3">{children}</div>
       </div>

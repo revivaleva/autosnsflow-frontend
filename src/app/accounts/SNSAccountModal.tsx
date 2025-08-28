@@ -70,7 +70,7 @@ function AIGeneratedPersonaModal({
   if (!open) return null;
   return (
     <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-40 z-50">
-      <div className="bg-white rounded shadow-lg w-full max-w-xl p-6">
+      <div className="bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 rounded shadow-lg w-full max-w-xl p-6">
         <h3 className="font-bold text-lg mb-3">AI生成ペルソナ内容を確認</h3>
         <div className="border rounded bg-gray-50 p-3 my-2">
           <div className="text-sm text-gray-700 mb-1">簡易ペルソナ</div>
@@ -461,7 +461,7 @@ export default function SNSAccountModal({
         onApply={handleApplyAIPersona}
       />
       <form
-        className="bg-white p-8 rounded shadow-lg min-w-[600px] max-h-[90vh] overflow-y-auto relative"
+        className="bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 p-8 rounded shadow-lg min-w-[600px] max-h-[90vh] overflow-y-auto relative"
         onSubmit={handleSubmit}
       >
         <button type="button" className="absolute top-2 right-2 text-gray-400" onClick={onClose}>
