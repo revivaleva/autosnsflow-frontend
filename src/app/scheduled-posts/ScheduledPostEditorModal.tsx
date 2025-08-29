@@ -187,6 +187,7 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
   const [groupId, setGroupId] = useState("");
   const [autoType, setAutoType] = useState<number | null>(null);
   const [groupItems, setGroupItems] = useState<AutoPostGroupItem[]>([]);
+  const [isGenerating, setIsGenerating] = useState(false);
   const [theme, setTheme] = useState(initial?.theme || "");
   const [content, setContent] = useState(initial?.content || "");
   const [scheduledAtLocal, setScheduledAtLocal] = useState(
@@ -411,6 +412,7 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
 
   // ====== ここを変更 ======
   const handleClickGenerate = async () => {
+    if (isGenerating) return; // prevent double-click
     if (!theme) {
       alert("テーマを入力/選択してください");
       return;
@@ -461,6 +463,7 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
       .join("\n\n");
 
     try {
+      setIsGenerating(true);
       const res = await fetch("/api/ai-gateway", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -482,6 +485,9 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
       setContent(text);
     } catch (e: any) {
       alert(e?.message || "AI生成に失敗しました");
+    }
+    finally {
+      setIsGenerating(false);
     }
   };
   // ====== 変更ここまで ======
@@ -560,9 +566,10 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
             <button
               type="button"
               onClick={handleClickGenerate}
-              className="px-3 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700"
+              className={`px-3 py-2 rounded-md text-white ${isGenerating ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
+              disabled={isGenerating}
             >
-              AIで生成
+              {isGenerating ? '生成中...' : 'AIで生成'}
             </button>
           </div>
         </div>
