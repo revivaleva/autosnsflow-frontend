@@ -75,7 +75,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     openaiApiKey = result.Item?.openaiApiKey?.S || "";
     // Prefer explicit selectedModel (user choice) over modelDefault
     const rawModel = result.Item?.selectedModel?.S || result.Item?.modelDefault?.S || "gpt-5-mini";
-    const allow = new Set(["gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4o", "gpt-4o-mini"]);
+    const allow = new Set([
+      "gpt-5",
+      "gpt-5-mini",
+      "gpt-5-nano",
+      "gpt-4o",
+      "gpt-4o-mini",
+      "gpt-4o-nano",
+      "o4",
+      "o4-mini",
+      "gpt-4.1",
+      "gpt-4.1-mini",
+    ]);
     selectedModel = allow.has(rawModel) ? rawModel : "gpt-5-mini";
     masterPrompt = result.Item?.masterPrompt?.S || "";
     if (!openaiApiKey) throw new Error("APIキー未設定です");
@@ -247,7 +258,19 @@ ${incomingReply}
 
   try {
     // Build request body with inference vs non-inference differences
-    const isInferenceModel = String(selectedModel).startsWith("gpt-5");
+    const isInferenceModel = (m: string) => String(m).startsWith("gpt-5");
+    const supportsReasoning = (m: string) => {
+      // Based on the compatibility table: enable reasoning only for models that support it
+      const ok = new Set([
+        "gpt-5",
+        "gpt-5-mini",
+        "gpt-5-nano",
+        "o4",
+        "o4-mini",
+      ]);
+      return ok.has(String(m));
+    };
+
     const openaiBodyFactory = (model: string, opts: { maxOut?: number } = {}) => {
       const base: any = {
         model,
@@ -255,12 +278,15 @@ ${incomingReply}
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
         ],
-        temperature: isInferenceModel ? 1 : 0.7,
+        temperature: isInferenceModel(model) ? 1 : 0.7,
       };
-      if (isInferenceModel) {
+      if (isInferenceModel(model)) {
         // For inference models prefer max_completion_tokens
         base.max_completion_tokens = opts.maxOut ?? Math.max(max_tokens, 1024);
-        // Do not include 'reasoning' parameter here to avoid unknown parameter errors
+        // include reasoning only for supported models
+        if (supportsReasoning(model)) {
+          base.reasoning = { effort: "low" };
+        }
       } else {
         base.max_tokens = opts.maxOut ?? max_tokens;
       }
