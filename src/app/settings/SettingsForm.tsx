@@ -120,10 +120,12 @@ export default function SettingsForm() {
             value={values.selectedModel}
             onChange={(e) => setValues({ ...values, selectedModel: e.target.value })}
           >
-            <option value="gpt-4o-mini">gpt-4o-mini</option>
-            <option value="gpt-4o-nano">gpt-4o-nano</option>
             <option value="gpt-5-mini">gpt-5-mini</option>
             <option value="gpt-5-nano">gpt-5-nano</option>
+            <option value="gpt-4o-mini">gpt-4o-mini</option>
+            <option value="o4-mini">o4-mini</option>
+            <option value="gpt-4.1">gpt-4.1</option>
+            <option value="gpt-4.1-mini">gpt-4.1-mini</option>
           </select>
         </div>
 

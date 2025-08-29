@@ -144,6 +144,19 @@ export default function SNSAccountsTable() {
   // [DEL] 一覧上の削除ボタンは廃止。モーダル側に移設しました。
   // const handleDelete = async (acc: ThreadsAccount) => { ... }
 
+  const handleOpenInApp = (acc: ThreadsAccount) => {
+    const username = String(acc.accountId || "").replace(/^@/, "");
+    const threadsUrl = `https://www.threads.net/@${encodeURIComponent(username)}`;
+    const containerName = encodeURIComponent(username);
+    const deepLink = `mycontainers://open?name=${containerName}&url=${encodeURIComponent(threadsUrl)}`;
+    try {
+      window.location.href = deepLink;
+    } catch (e) {
+      console.error("failed to open mycontainers link", e);
+      alert("アプリ起動用のURLを開けませんでした。");
+    }
+  };
+
   if (loading) return <div className="text-center py-8">読み込み中...</div>;
 
   return (
@@ -181,6 +194,7 @@ export default function SNSAccountsTable() {
             <th className="py-2 px-3 w-36">状態</th>
             {/* ▼追加カラム：2段階投稿の有無／冒頭プレビュー */}
             <th className="py-2 px-3 w-52 text-left">2段階投稿</th>
+            <th className="py-2 px-3 w-40">アプリ</th>
             {/* [DEL] 操作列（編集/削除）は廃止 */}
           </tr>
         </thead>
@@ -231,6 +245,15 @@ export default function SNSAccountsTable() {
                 {acc.secondStageContent && acc.secondStageContent.trim().length > 0
                   ? truncate(acc.secondStageContent, 30)
                   : "—"}
+              </td>
+              <td className="py-2 px-3">
+                <button
+                  className="bg-indigo-500 text-white rounded px-3 py-1 hover:bg-indigo-600"
+                  onClick={() => handleOpenInApp(acc)}
+                  title="アプリで開く"
+                >
+                  アプリで開く
+                </button>
               </td>
               {/* [DEL] 一覧の編集/削除ボタンは廃止 */}
             </tr>
