@@ -478,10 +478,14 @@ export default function SNSAccountModal({
               <div className="flex gap-2">
                 <button
                   type="button"
-                  className="bg-blue-500 text-white px-3 py-1 rounded"
+                  className="bg-blue-500 text-white px-3 py-1 rounded dark:bg-blue-600 dark:hover:bg-blue-700"
                   onClick={applyBulkPersona}
                 >貼付して反映</button>
-                <button type="button" className="px-3 py-1 border rounded" onClick={() => { setBulkPersonaText(""); setBulkPersonaOpen(false); }}>キャンセル</button>
+                <button
+                  type="button"
+                  className="px-3 py-1 border rounded dark:bg-gray-800 dark:text-gray-100"
+                  onClick={() => { setBulkPersonaText(""); setBulkPersonaOpen(false); }}
+                >キャンセル</button>
               </div>
             </div>
           )}
