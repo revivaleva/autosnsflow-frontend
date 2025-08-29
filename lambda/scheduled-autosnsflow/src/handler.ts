@@ -685,13 +685,33 @@ ${themeStr}
       prompt = buildMasterPrompt(themeStr, acct.displayName);
     }
 
-    const { text } = await callOpenAIText({
-      apiKey: settings.openaiApiKey,
-      model: settings.model || DEFAULT_OPENAI_MODEL,
+    // OpenAI Chat Completions を直接呼び出して生成（ai-gateway の post-generate と整合）
+    const model = settings.model || DEFAULT_OPENAI_MODEL;
+    const openaiBody = {
+      model,
+      messages: [
+        { role: "system", content: "あなたはSNS運用代行のプロです。" + (settings.masterPrompt ? `\n【運用方針（masterPrompt）】\n${settings.masterPrompt}` : "") },
+        { role: "user", content: prompt },
+      ],
       temperature: settings.openAiTemperature ?? DEFAULT_OPENAI_TEMP,
       max_tokens: settings.openAiMaxTokens ?? DEFAULT_OPENAI_MAXTOKENS,
-      prompt,
+    };
+
+    const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${settings.openaiApiKey}`,
+      },
+      body: JSON.stringify(openaiBody),
     });
+
+    const raw = await openaiRes.text();
+    let data: any = {};
+    try { data = raw ? JSON.parse(raw) : {}; } catch { data = { raw }; }
+    if (!openaiRes.ok) throw new Error(`OpenAI API error: ${raw}`);
+
+    const text = data.choices?.[0]?.message?.content || "";
 
     if (text) {
       // 編集モーダルと同様の処理：プロンプトの指示部分を除去

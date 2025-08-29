@@ -33,6 +33,36 @@ export default function ScheduledPostsTable() {
   const [repliesModalOpen, setRepliesModalOpen] = useState(false);
   const [repliesModalTarget, setRepliesModalTarget] = useState<string>("");
   const [repliesModalItems, setRepliesModalItems] = useState<ReplyType[]>([]);
+  // [ADD] bulk selection
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
+  const selectAllVisible = () => {
+    const visibleIds = sortedPosts.map(p => p.scheduledPostId);
+    setSelectedIds(visibleIds);
+  };
+
+  const clearSelection = () => setSelectedIds([]);
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.length === 0) return alert("選択がありません");
+    if (!confirm(`選択した ${selectedIds.length} 件を削除しますか？`)) return;
+    try {
+      await fetch(`/api/scheduled-posts/bulk-delete`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ scheduledPostIds: selectedIds }),
+      });
+      setPosts(prev => prev.map(p => selectedIds.includes(p.scheduledPostId) ? { ...p, isDeleted: true } : p));
+      clearSelection();
+    } catch (e: any) {
+      alert(`削除に失敗しました: ${e.message || String(e)}`);
+    }
+  };
 
   // [ADD] 即時投稿の実行中フラグ（多重押し防止）
   const [postingId, setPostingId] = useState<string>("");
@@ -296,6 +326,24 @@ export default function ScheduledPostsTable() {
           >
             ＋予約投稿追加
           </button>
+          <button
+            onClick={selectAllVisible}
+            className="border rounded px-3 py-1"
+          >
+            全選択
+          </button>
+          <button
+            onClick={clearSelection}
+            className="border rounded px-3 py-1"
+          >
+            選択解除
+          </button>
+          <button
+            onClick={handleBulkDelete}
+            className="bg-red-500 text-white rounded px-3 py-1 hover:bg-red-600"
+          >
+            選択削除
+          </button>
         </div>
       </div>
 
@@ -337,6 +385,7 @@ export default function ScheduledPostsTable() {
         <table className="min-w-full bg-white dark:bg-gray-900 border">
           <thead className="dark:bg-gray-800">
             <tr>
+              <th className="border p-1"><input type="checkbox" checked={selectedIds.length === sortedPosts.length && sortedPosts.length > 0} onChange={(e) => e.target.checked ? selectAllVisible() : clearSelection()} /></th>
               <th className="border p-1">アカウント名</th>
               <th className="border p-1">アカウントID</th>
               <th className="border p-1">予約投稿日時</th>
@@ -367,6 +416,7 @@ export default function ScheduledPostsTable() {
 
               return (
                 <tr key={post.scheduledPostId}>
+                  <td className="border p-1"><input type="checkbox" checked={selectedIds.includes(post.scheduledPostId)} onChange={() => toggleSelect(post.scheduledPostId)} /></td>
                   <td className="border p-1">{post.accountName}</td>
                   <td className="border p-1">{post.accountId}</td>
                   <td className="border p-1">

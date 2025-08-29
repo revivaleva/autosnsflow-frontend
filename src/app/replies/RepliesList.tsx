@@ -127,6 +127,32 @@ export default function RepliesList() {
   const [sortAsc, setSortAsc] = useState<boolean>(true);
   const [editModalOpen, setEditModalOpen] = useState<boolean>(false);
   const [editTarget, setEditTarget] = useState<ReplyType | null>(null);
+  // bulk selection
+  const [selectedReplyIds, setSelectedReplyIds] = useState<string[]>([]);
+
+  const toggleSelectReply = (id: string) => {
+    setSelectedReplyIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
+  const selectAllReplies = () => setSelectedReplyIds(sortedReplies.map(r => r.id));
+  const clearSelectedReplies = () => setSelectedReplyIds([]);
+
+  const handleBulkDeleteReplies = async () => {
+    if (selectedReplyIds.length === 0) return alert("選択がありません");
+    if (!confirm(`選択した ${selectedReplyIds.length} 件を削除しますか？`)) return;
+    try {
+      await fetch(`/api/replies/bulk-delete`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ replyIds: selectedReplyIds }),
+      });
+      setReplies(prev => prev.map(r => selectedReplyIds.includes(r.id) ? { ...r, status: 'deleted' as any } : r));
+      clearSelectedReplies();
+    } catch (e: any) {
+      alert(`削除に失敗しました: ${e.message || String(e)}`);
+    }
+  };
 
   
   // [ADD] リプライ取得の状態管理
@@ -418,6 +444,9 @@ export default function RepliesList() {
           >
             {fetchingReplies ? "取得中..." : "⇓ リプライ取得"}
           </button>
+          <button className="border rounded px-3 py-1" onClick={selectAllReplies}>全選択</button>
+          <button className="border rounded px-3 py-1" onClick={clearSelectedReplies}>選択解除</button>
+          <button className="bg-red-500 text-white rounded px-3 py-1 hover:bg-red-600" onClick={handleBulkDeleteReplies}>選択削除</button>
         </div>
       </div>
 
@@ -481,6 +510,7 @@ export default function RepliesList() {
         <table className="min-w-full bg-white dark:bg-gray-900 border">
           <thead className="dark:bg-gray-800">
             <tr>
+              <th className="border p-1"><input type="checkbox" checked={selectedReplyIds.length === sortedReplies.length && sortedReplies.length > 0} onChange={(e) => e.target.checked ? selectAllReplies() : clearSelectedReplies()} /></th>
               <th className="border p-1">アカウントID</th>
               <th className="border p-1">
                 <button
@@ -519,6 +549,7 @@ export default function RepliesList() {
           <tbody>
             {sortedReplies.map(r => (
               <tr key={r.id}>
+                <td className="border p-1"><input type="checkbox" checked={selectedReplyIds.includes(r.id)} onChange={() => toggleSelectReply(r.id)} /></td>
                 <td className="border p-1">{r.accountId}</td>
                 <td className="border p-1">{r.threadsPostedAt}</td>
                 <td className="border p-1">
