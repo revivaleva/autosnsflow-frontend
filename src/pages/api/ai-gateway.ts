@@ -129,8 +129,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       personaText = "";
     }
 
-    systemPrompt = "あなたはSNS運用代行のプロです。";
-    const policy = masterPrompt ? `\n【運用方針（masterPrompt）】\n${masterPrompt}\n` : "";
+    // Always include masterPrompt in system prompt so frontend-provided prompt doesn't omit it
+    systemPrompt = "あなたはSNS運用代行のプロです。" + (masterPrompt ? `\n【運用方針（masterPrompt）】\n${masterPrompt}` : "");
+    const policy = ""; // policy will be merged into systemPrompt above
 
     // Theme handling: if theme is a comma/、/; separated list, pick one at random server-side
     const incomingPrompt = (input?.prompt ?? "").toString().trim();
@@ -253,9 +254,10 @@ ${incomingReply}
         temperature: isInferenceModel ? 1 : 0.7,
       };
       if (isInferenceModel) {
-        // For inference models prefer max_completion_tokens and include low reasoning effort
+        // For inference models prefer max_completion_tokens
         base.max_completion_tokens = opts.maxOut ?? Math.max(max_tokens, 1024);
-        base.reasoning = { effort: "low" };
+        // Attempt to include reasoning effort only when model supports it (guarded below)
+        try { base.reasoning = { effort: "low" }; } catch {}
       } else {
         base.max_tokens = opts.maxOut ?? max_tokens;
       }
