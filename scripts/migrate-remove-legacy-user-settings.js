@@ -19,8 +19,8 @@ const { DynamoDBClient, ScanCommand, UpdateItemCommand } = require('@aws-sdk/cli
       lastKey = res.LastEvaluatedKey;
     } while(lastKey);
 
-    // Filter items that contain legacy attributes
-    const legacyItems = items.filter(i => i.openAiApiKey || i.modelDefault || i.openAiApiKey);
+    // Filter items that contain legacy attributes (check both spellings)
+    const legacyItems = items.filter(i => i.openAiApiKey || i.openaiApiKey || i.modelDefault);
 
     console.log(`Found ${legacyItems.length} items with legacy attributes`);
     const backupFile = path.resolve(process.cwd(), `migration-backup-UserSettings-${Date.now()}.json`);
@@ -29,10 +29,12 @@ const { DynamoDBClient, ScanCommand, UpdateItemCommand } = require('@aws-sdk/cli
 
     for (const it of legacyItems) {
       const pk = it.PK.S; const sk = it.SK.S;
-      const removes = [];
-      if (it.openAiApiKey) removes.push('openAiApiKey');
-      if (it.modelDefault) removes.push('modelDefault');
-      if (it.openAiApiKey) removes.push('openAiApiKey');
+      // collect unique attribute names to remove
+      const removesSet = new Set();
+      if (it.openAiApiKey) removesSet.add('openAiApiKey');
+      if (it.openaiApiKey) removesSet.add('openaiApiKey');
+      if (it.modelDefault) removesSet.add('modelDefault');
+      const removes = Array.from(removesSet);
       if (removes.length === 0) continue;
 
       const updateParams = {
