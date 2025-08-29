@@ -76,13 +76,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Prefer explicit selectedModel (user choice) over modelDefault
     const rawModel = result.Item?.selectedModel?.S || result.Item?.modelDefault?.S || "gpt-5-mini";
     const allow = new Set([
-      "gpt-5",
       "gpt-5-mini",
       "gpt-5-nano",
-      "gpt-4o",
       "gpt-4o-mini",
-      "gpt-4o-nano",
-      "o4",
       "o4-mini",
       "gpt-4.1",
       "gpt-4.1-mini",
@@ -272,8 +268,8 @@ ${incomingReply}
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
         ],
-        // For gpt-5 series APIs require temperature=1; keep others at 0.7
-        temperature: String(model).startsWith("gpt-5") ? 1 : 0.7,
+        // For inference-style models prefer temperature=1; keep others at 0.7
+        temperature: isInferenceModel(model) ? 1 : 0.7,
       };
       if (isInferenceModel(model)) {
         // For inference-style models prefer max_completion_tokens
