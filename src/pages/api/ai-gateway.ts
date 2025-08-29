@@ -73,7 +73,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     }));
     openaiApiKey = result.Item?.openaiApiKey?.S || "";
-    const rawModel = result.Item?.modelDefault?.S || result.Item?.selectedModel?.S || "gpt-5-mini";
+    // Prefer explicit selectedModel (user choice) over modelDefault
+    const rawModel = result.Item?.selectedModel?.S || result.Item?.modelDefault?.S || "gpt-5-mini";
     const allow = new Set(["gpt-5", "gpt-5-mini", "gpt-5-nano"]);
     selectedModel = allow.has(rawModel) ? rawModel : "gpt-5-mini";
     masterPrompt = result.Item?.masterPrompt?.S || "";
@@ -278,6 +279,9 @@ ${incomingReply}
       // Not JSON — capture raw
       data = { raw }
     }
+    // Attach which model was selected for debugging
+    try { data._selectedModel = selectedModel; } catch {}
+
     if (!openaiRes.ok) {
       const msg = data?.error?.message || (data?.raw ? data.raw : JSON.stringify(data));
       // Return OpenAI raw body in error for easier debugging
