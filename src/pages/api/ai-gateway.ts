@@ -136,7 +136,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     let themeRaw = (input?.theme ?? "").toString();
     let themeUsed = themeRaw;
     if (!incomingPrompt && themeRaw) {
-      const parts = themeRaw.split(/[,、;]+/).map(s => s.trim()).filter(Boolean);
+      // Split only on ASCII comma according to request
+      const parts = themeRaw.split(",").map(s => s.trim()).filter(Boolean);
       if (parts.length > 0) {
         themeUsed = parts[Math.floor(Math.random() * parts.length)];
       }
