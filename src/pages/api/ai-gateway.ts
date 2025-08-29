@@ -258,17 +258,11 @@ ${incomingReply}
 
   try {
     // Build request body with inference vs non-inference differences
-    const isInferenceModel = (m: string) => String(m).startsWith("gpt-5");
-    const supportsReasoning = (m: string) => {
-      // Based on the compatibility table: enable reasoning only for models that support it
-      const ok = new Set([
-        "gpt-5",
-        "gpt-5-mini",
-        "gpt-5-nano",
-        "o4",
-        "o4-mini",
-      ]);
-      return ok.has(String(m));
+    // Determine which models should use inference-style parameters (max_completion_tokens)
+    // According to the compatibility table, these include gpt-5 series, gpt-4o series, o4 series, and gpt-4.1 series.
+    const isInferenceModel = (m: string) => {
+      const s = String(m).toLowerCase();
+      return s.startsWith("gpt-5") || s.startsWith("gpt-4o") || s.startsWith("o4") || s.startsWith("gpt-4.1");
     };
 
     const openaiBodyFactory = (model: string, opts: { maxOut?: number } = {}) => {
@@ -278,15 +272,13 @@ ${incomingReply}
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
         ],
-        temperature: isInferenceModel(model) ? 1 : 0.7,
+        // For gpt-5 series APIs require temperature=1; keep others at 0.7
+        temperature: String(model).startsWith("gpt-5") ? 1 : 0.7,
       };
       if (isInferenceModel(model)) {
-        // For inference models prefer max_completion_tokens
+        // For inference-style models prefer max_completion_tokens
         base.max_completion_tokens = opts.maxOut ?? Math.max(max_tokens, 1024);
-        // include reasoning only for supported models
-        if (supportsReasoning(model)) {
-          base.reasoning = { effort: "low" };
-        }
+        // NOTE: Do NOT send 'reasoning' here — the Chat Completions endpoint rejects it for many configs.
       } else {
         base.max_tokens = opts.maxOut ?? max_tokens;
       }
