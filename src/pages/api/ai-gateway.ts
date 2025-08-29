@@ -133,12 +133,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     systemPrompt = "あなたはSNS運用代行のプロです。" + (masterPrompt ? `\n【運用方針（masterPrompt）】\n${masterPrompt}` : "");
     const policy = ""; // policy will be merged into systemPrompt above
 
-    // Theme handling: if theme is a comma/、/; separated list, pick one at random server-side
+    // Theme handling: if theme is comma-separated list, pick one at random server-side.
     const incomingPrompt = (input?.prompt ?? "").toString().trim();
     let themeRaw = (input?.theme ?? "").toString();
     let themeUsed = themeRaw;
-    if (!incomingPrompt && themeRaw) {
-      // Split only on ASCII comma according to request
+    if (themeRaw) {
       const parts = themeRaw.split(",").map((s: string) => s.trim()).filter(Boolean);
       if (parts.length > 0) {
         themeUsed = parts[Math.floor(Math.random() * parts.length)];
@@ -146,8 +145,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     if (incomingPrompt) {
-      // If frontend provided a full prompt, prefer it (it may already include masterPrompt/persona/theme)
-      userPrompt = incomingPrompt;
+      // If frontend provided a full prompt, prefer it but replace the # テーマ section if present
+      if (/#\s*テーマ/.test(incomingPrompt)) {
+        // Replace the theme block (the line(s) after '# テーマ' until a double newline or end)
+        userPrompt = incomingPrompt.replace(/(#\s*テーマ\s*\n)([\s\S]*?)(\n\n|$)/m, `$1${themeUsed}$3`);
+      } else {
+        userPrompt = incomingPrompt;
+      }
     } else {
       userPrompt = [
         policy,
@@ -160,7 +164,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     // expose chosen theme in debug raw
-    (input as any)._themeUsed = themeUsed;
+    try { (input as any)._themeUsed = themeUsed; } catch {}
 
     max_tokens = 300;
     // ====== 刷新ここまで ======
