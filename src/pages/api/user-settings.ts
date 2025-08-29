@@ -43,13 +43,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const openaiApiKey = it.openaiApiKey?.S || it.openAiApiKey?.S || "";
       const rawModel = it.selectedModel?.S || it.modelDefault?.S || DEFAULTS.selectedModel;
       const allow = new Set([
-        "gpt-5",
         "gpt-5-mini",
         "gpt-5-nano",
-        "gpt-4o",
         "gpt-4o-mini",
-        "gpt-4o-nano",
-        "o4",
         "o4-mini",
         "gpt-4.1",
         "gpt-4.1-mini",
