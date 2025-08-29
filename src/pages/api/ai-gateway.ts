@@ -75,7 +75,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     openaiApiKey = result.Item?.openaiApiKey?.S || "";
     // Prefer explicit selectedModel (user choice) over modelDefault
     const rawModel = result.Item?.selectedModel?.S || result.Item?.modelDefault?.S || "gpt-5-mini";
-    const allow = new Set(["gpt-5", "gpt-5-mini", "gpt-5-nano"]);
+    const allow = new Set(["gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4o", "gpt-4o-mini"]);
     selectedModel = allow.has(rawModel) ? rawModel : "gpt-5-mini";
     masterPrompt = result.Item?.masterPrompt?.S || "";
     if (!openaiApiKey) throw new Error("APIキー未設定です");
@@ -241,33 +241,34 @@ ${incomingReply}
   }
 
   try {
+    // Build request body with inference vs non-inference differences
+    const isInferenceModel = String(selectedModel).startsWith("gpt-5");
+    const openaiBodyFactory = (model: string, opts: { maxOut?: number } = {}) => {
+      const base: any = {
+        model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        temperature: isInferenceModel ? 1 : 0.7,
+      };
+      if (isInferenceModel) {
+        // For inference models prefer max_completion_tokens and include low reasoning effort
+        base.max_completion_tokens = opts.maxOut ?? Math.max(max_tokens, 1024);
+        base.reasoning = { effort: "low" };
+      } else {
+        base.max_tokens = opts.maxOut ?? max_tokens;
+      }
+      return JSON.stringify(base);
+    };
+
     const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${openaiApiKey}`,
       },
-      body: JSON.stringify((() => {
-        const base: any = {
-          model: selectedModel,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt },
-          ],
-          // デフォルト temperature
-          temperature: 0.7,
-        };
-        // gpt-5 系モデルは現状 temperature=1 のみサポートの想定なので強制
-        if (String(selectedModel).startsWith("gpt-5")) {
-          base.temperature = 1;
-        }
-        if (String(selectedModel).startsWith("gpt-5")) {
-          base.max_completion_tokens = max_tokens;
-        } else {
-          base.max_tokens = max_tokens;
-        }
-        return base;
-      })()),
+      body: openaiBodyFactory(selectedModel),
     });
 
     // Read raw text first for debug
@@ -298,23 +299,7 @@ ${incomingReply}
     // If empty, retry once with smaller max tokens to avoid length truncation returning empty content
     if (!text) {
       try {
-        const retryBody = JSON.stringify((() => {
-          const base: any = {
-            model: selectedModel,
-            messages: [
-              { role: "system", content: systemPrompt },
-              { role: "user", content: userPrompt },
-            ],
-            temperature: String(selectedModel).startsWith("gpt-5") ? 1 : 0.7,
-          };
-          if (String(selectedModel).startsWith("gpt-5")) {
-            base.max_completion_tokens = 150;
-          } else {
-            base.max_tokens = 150;
-          }
-          return base;
-        })());
-
+        const retryBody = openaiBodyFactory(selectedModel, { maxOut: 150 });
         const retryRes = await fetch("https://api.openai.com/v1/chat/completions", {
           method: "POST",
           headers: {
@@ -335,6 +320,33 @@ ${incomingReply}
       } catch (e) {
         // ignore retry errors, continue to return what we have
         console.log("retry openai failed:", e);
+      }
+    }
+
+    // If still empty and this was an inference model, fallback to a non-inference model (gpt-4o-mini)
+    if (!text && isInferenceModel) {
+      try {
+        const fbModel = "gpt-4o-mini";
+        const fbRes = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${openaiApiKey}`,
+          },
+          body: openaiBodyFactory(fbModel, { maxOut: 300 }),
+        });
+        const fbRaw = await fbRes.text();
+        let fbData: any = {};
+        try { fbData = fbRaw ? JSON.parse(fbRaw) : {}; } catch { fbData = { raw: fbRaw }; }
+        const fbText = fbData.choices?.[0]?.message?.content || "";
+        if (fbText) {
+          text = fbText;
+          data._fallback = { model: fbModel, raw: fbData };
+        } else {
+          data._fallback = { model: fbModel, raw: fbData };
+        }
+      } catch (e) {
+        console.log("fallback openai failed:", e);
       }
     }
 
