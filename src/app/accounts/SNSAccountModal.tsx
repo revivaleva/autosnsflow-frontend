@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import AIGeneratedPersonaModal from "./AIGeneratedPersonaModal";
+import AccountCopyModal from "./AccountCopyModal";
 
 // 型定義（省略せずそのまま記載）
 type AIGeneratedPersonaModalProps = {
@@ -60,140 +62,9 @@ type PersonaType = {
   ng: string;
 };
 
-function AIGeneratedPersonaModal({
-  open,
-  onClose,
-  personaDetail,
-  personaSimple,
-  onApply,
-}: AIGeneratedPersonaModalProps) {
-  if (!open) return null;
-  return (
-    <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-40 z-50">
-      <div className="bg-white rounded shadow-lg w-full max-w-xl p-6">
-        <h3 className="font-bold text-lg mb-3">AI生成ペルソナ内容を確認</h3>
-        <div className="border rounded bg-gray-50 p-3 my-2">
-          <div className="text-sm text-gray-700 mb-1">簡易ペルソナ</div>
-          <div className="text-xs whitespace-pre-wrap break-all bg-white p-2 rounded mb-2">
-            {personaSimple || <span className="text-gray-400">（未生成）</span>}
-          </div>
-          <div className="text-sm text-gray-700 mb-1">詳細ペルソナ</div>
-          <pre className="text-xs whitespace-pre-wrap break-all bg-white p-2 rounded">
-            {typeof personaDetail === "string"
-              ? personaDetail
-              : JSON.stringify(personaDetail, null, 2)}
-          </pre>
-        </div>
-        <div className="flex justify-end mt-3 gap-2">
-          <button
-            className="bg-gray-300 text-gray-800 px-4 py-2 rounded"
-            onClick={onClose}
-          >
-            キャンセル
-          </button>
-          <button
-            className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
-            onClick={() => onApply({ personaDetail, personaSimple })}
-            disabled={!personaSimple && !personaDetail}
-          >
-            この内容でセット
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
+// AIGeneratedPersonaModal is extracted to its own file to avoid large TSX parsing issues
 
-function AccountCopyModal({
-  open,
-  onClose,
-  onSelect,
-}: AccountCopyModalProps) {
-  const [accounts, setAccounts] = useState<AccountType[]>([]);
-  const [selected, setSelected] = useState<AccountType | null>(null);
-
-  useEffect(() => {
-    if (open) {
-      fetch(`/api/threads-accounts`, { credentials: "include" })
-        .then((res) => res.json())
-        .then((data) => setAccounts((data.accounts ?? data.items ?? []) as AccountType[])); // [FIX] {items} 形式も許容
-      setSelected(null);
-    }
-  }, [open]);
-
-  if (!open) return null;
-
-  return (
-    <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-40 z-50">
-      <div className="bg-white rounded shadow-lg w-full max-w-xl p-6">
-        <h3 className="font-bold text-lg mb-3">複製するアカウントを選択</h3>
-        <div className="max-h-60 overflow-y-auto mb-2 border rounded">
-          {accounts.map((acc: AccountType) => (
-            <div
-              key={acc.accountId}
-              className={`p-2 cursor-pointer border-b last:border-b-0 hover:bg-blue-50 ${
-                selected?.accountId === acc.accountId ? "bg-blue-100" : ""
-              }`}
-              onClick={() => setSelected(acc)}
-            >
-              <div className="font-semibold">{acc.displayName}</div>
-              <div className="text-xs text-gray-600">{acc.accountId}</div>
-            </div>
-          ))}
-          {accounts.length === 0 && (
-            <div className="text-center p-4 text-gray-400">アカウントがありません</div>
-          )}
-        </div>
-        {selected && (
-          <div className="border rounded bg-gray-50 p-3 my-2">
-            <div className="text-sm text-gray-700 mb-1">簡易ペルソナ</div>
-            <div className="text-xs whitespace-pre-wrap break-all bg-white p-2 rounded mb-2">
-              {selected.personaSimple || <span className="text-gray-400">（未入力）</span>}
-            </div>
-            <div className="text-sm text-gray-700 mb-1">詳細ペルソナ</div>
-            <pre className="text-xs whitespace-pre-wrap break-all bg-white p-2 rounded">
-              {
-                (() => {
-                  let detail = selected.personaDetail;
-                  if (!detail) return "（簡易ペルソナ入力のみ）";
-                  try {
-                    if (typeof detail === "string") {
-                      if (detail.trim() === "" || detail.trim() === "{}") return "（簡易ペルソナ入力のみ）";
-                      detail = JSON.parse(detail);
-                    }
-                    if (typeof detail === "object" && Object.keys(detail).length === 0) {
-                      return "（簡易ペルソナ入力のみ）";
-                    }
-                    return JSON.stringify(detail, null, 2);
-                  } catch {
-                    return detail || "（簡易ペルソナ入力のみ）";
-                  }
-                })()
-              }
-            </pre>
-          </div>
-        )}
-        <div className="flex justify-end mt-3 gap-2">
-          <button
-            className="bg-gray-300 text-gray-800 px-4 py-2 rounded"
-            onClick={onClose}
-          >
-            キャンセル
-          </button>
-          <button
-            className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
-            onClick={() => {
-              if (selected) onSelect(selected);
-            }}
-            disabled={!selected}
-          >
-            この内容で複製
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
+// AccountCopyModal implementation moved to `src/app/accounts/AccountCopyModal.tsx` (local duplicate removed)
 
 export default function SNSAccountModal({
   open,
@@ -237,6 +108,8 @@ export default function SNSAccountModal({
   const [aiPreviewModalOpen, setAiPreviewModalOpen] = useState(false);
   const [aiPersonaDetail, setAiPersonaDetail] = useState("");
   const [aiPersonaSimple, setAiPersonaSimple] = useState("");
+  const [bulkPersonaOpen, setBulkPersonaOpen] = useState(false);
+  const [bulkPersonaText, setBulkPersonaText] = useState("");
 
   // グループ一覧の取得
   useEffect(() => {
@@ -276,7 +149,7 @@ export default function SNSAccountModal({
     setError("");
   }, [account, mode]);
 
-  const handlePersonaChange = (e: React.ChangeEvent<HTMLInputElement>) =>
+  const handlePersonaChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setPersona({ ...persona, [e.target.name]: e.target.value });
 
   const handleCopyAccountData = (acc: any) => {
@@ -357,6 +230,39 @@ export default function SNSAccountModal({
     }
     setPersonaSimple(personaSimple || "");
     setAiPreviewModalOpen(false);
+  };
+
+  // ペルソナ一括貼付の処理を外だしして JSX 内の複雑な表現を避ける
+  const applyBulkPersona = () => {
+    const mapping: Record<string, keyof PersonaType> = {
+      名前: "name",
+      年齢: "age",
+      性別: "gender",
+      職業: "job",
+      生活スタイル: "lifestyle",
+      投稿キャラ: "character",
+      "口調・内面": "tone",
+      語彙傾向: "vocab",
+      "感情パターン": "emotion",
+      エロ表現: "erotic",
+      ターゲット層: "target",
+      投稿目的: "purpose",
+      "絡みの距離感": "distance",
+      NG要素: "ng",
+    };
+    const lines = String(bulkPersonaText || "").split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const newPersona = { ...persona } as any;
+    for (const line of lines) {
+      const parts = line.split(/\t|\s*:\s*|\s+/, 2).map(p => p.trim());
+      if (parts.length < 2) continue;
+      const key = parts[0];
+      const val = parts[1];
+      const field = mapping[key];
+      if (field) newPersona[field] = val;
+    }
+    setPersona(newPersona);
+    setBulkPersonaOpen(false);
+    setBulkPersonaText("");
   };
 
   const originalAccountId = account?.accountId;
@@ -444,7 +350,7 @@ export default function SNSAccountModal({
 
   
 
-  if (!open) return null;
+  if (!open) { return null; }
 
   return (
     <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-40 z-50">
@@ -460,13 +366,19 @@ export default function SNSAccountModal({
         personaSimple={aiPersonaSimple}
         onApply={handleApplyAIPersona}
       />
-      <form
-        className="bg-white p-8 rounded shadow-lg min-w-[600px] max-h-[90vh] overflow-y-auto relative"
-        onSubmit={handleSubmit}
-      >
-        <button type="button" className="absolute top-2 right-2 text-gray-400" onClick={onClose}>
+      <div className="relative min-w-[520px] max-h-[90vh] w-full max-w-[80vw]">
+        <button
+          type="button"
+          className="absolute top-2 right-2 text-gray-400 text-2xl p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 z-20"
+          onClick={onClose}
+          aria-label="閉じる"
+        >
           ×
         </button>
+        <form
+          className="bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 p-8 rounded shadow-lg min-w-[520px] max-h-[90vh] overflow-y-auto"
+          onSubmit={handleSubmit}
+        >
         <h2 className="text-xl font-bold mb-4">
           {mode === "edit" ? "アカウント編集" : "新規アカウント追加"}
         </h2>
@@ -516,138 +428,137 @@ export default function SNSAccountModal({
           </button>
         </div>
 
+        {/* 既存アカウント複製ボタン：ラベルを明示、キャンセルは右上×のみで統一 */}
         <div className="my-3 flex gap-2">
           <button
             type="button"
-            className="border px-2 py-1 rounded bg-gray-100"
+            className="border px-2 py-1 rounded bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-100 border-gray-300 dark:border-gray-700"
             onClick={() => setCopyModalOpen(true)}
+            aria-label="既存アカウント複製"
           >
             既存アカウント複製
           </button>
         </div>
 
-        <div className="mb-2 flex items-center gap-4">
-          <span className="font-semibold">ペルソナ入力</span>
-          <label className="flex items-center gap-1 cursor-pointer">
-            <input
-              type="checkbox"
-              className="form-checkbox"
-              checked={personaMode === "simple"}
-              onChange={() => setPersonaMode(personaMode === "simple" ? "detail" : "simple")}
-            />
-            <span className="text-sm">簡易ペルソナ入力に切替</span>
-          </label>
-        </div>
-
-        {personaMode === "simple" ? (
-          <textarea
-            className="border rounded p-2 w-full mb-3 min-h-[80px] resize-y"
-            placeholder="簡易ペルソナ（例：このアカウントは〇〇な性格で、〇〇が好きな女性...）"
-            value={personaSimple}
-            onChange={(e) => setPersonaSimple(e.target.value)}
-          />
-        ) : (
-          <div className="grid grid-cols-2 gap-x-3 gap-y-2 mb-3">
-            <input
-              className="border px-2 py-1 rounded"
-              name="name"
-              value={persona.name}
-              onChange={handlePersonaChange}
-              placeholder="名前"
-            />
-            <input
-              className="border px-2 py-1 rounded"
-              name="age"
-              value={persona.age}
-              onChange={handlePersonaChange}
-              placeholder="年齢"
-            />
-            <input
-              className="border px-2 py-1 rounded"
-              name="gender"
-              value={persona.gender}
-              onChange={handlePersonaChange}
-              placeholder="性別"
-            />
-            <input
-              className="border px-2 py-1 rounded"
-              name="job"
-              value={persona.job}
-              onChange={handlePersonaChange}
-              placeholder="職業"
-            />
-            <input
-              className="border px-2 py-1 rounded"
-              name="lifestyle"
-              value={persona.lifestyle}
-              onChange={handlePersonaChange}
-              placeholder="生活スタイル"
-            />
-            <input
-              className="border px-2 py-1 rounded"
-              name="character"
-              value={persona.character}
-              onChange={handlePersonaChange}
-              placeholder="投稿キャラ"
-            />
-            <input
-              className="border px-2 py-1 rounded"
-              name="tone"
-              value={persona.tone}
-              onChange={handlePersonaChange}
-              placeholder="口調・内面"
-            />
-            <input
-              className="border px-2 py-1 rounded"
-              name="vocab"
-              value={persona.vocab}
-              onChange={handlePersonaChange}
-              placeholder="語彙傾向"
-            />
-            <input
-              className="border px-2 py-1 rounded"
-              name="emotion"
-              value={persona.emotion}
-              onChange={handlePersonaChange}
-              placeholder="感情パターン"
-            />
-            <input
-              className="border px-2 py-1 rounded"
-              name="erotic"
-              value={persona.erotic}
-              onChange={handlePersonaChange}
-              placeholder="エロ表現"
-            />
-            <input
-              className="border px-2 py-1 rounded"
-              name="target"
-              value={persona.target}
-              onChange={handlePersonaChange}
-              placeholder="ターゲット層"
-            />
-            <input
-              className="border px-2 py-1 rounded"
-              name="purpose"
-              value={persona.purpose}
-              onChange={handlePersonaChange}
-              placeholder="投稿目的"
-            />
-            <input
-              className="border px-2 py-1 rounded"
-              name="distance"
-              value={persona.distance}
-              onChange={handlePersonaChange}
-              placeholder="絡みの距離感"
-            />
-            <input
-              className="border px-2 py-1 rounded"
-              name="ng"
-              value={persona.ng}
-              onChange={handlePersonaChange}
-              placeholder="NG要素"
-            />
+        {/* ペルソナ入力（詳細モードをベースに、職業以下は大きめtextareaでタイトル付与） */}
+        <div className="mb-2">
+          <div className="flex items-center justify-between mb-2">
+            <span className="font-semibold">ペルソナ入力</span>
+            <label className="flex items-center gap-1 cursor-pointer text-sm">
+              <input
+                type="checkbox"
+                className="form-checkbox"
+                checked={personaMode === "simple"}
+                onChange={() => setPersonaMode(personaMode === "simple" ? "detail" : "simple")}
+              />
+              <span>簡易ペルソナ入力に切替</span>
+            </label>
           </div>
-        )}
+
+          <div className="flex items-center gap-2 mb-2">
+            <div className="flex-1" />
+            <button
+              type="button"
+              className="text-sm px-2 py-1 border rounded bg-gray-50 hover:bg-gray-100"
+              onClick={() => setBulkPersonaOpen((s) => !s)}
+            >
+              ペルソナ一括貼付
+            </button>
+          </div>
+
+          {bulkPersonaOpen && (
+            <div className="mb-3">
+              <label className="block text-sm text-gray-600">貼付用テキスト</label>
+              <textarea
+                className="w-full border rounded p-2 mb-2 min-h-[120px]"
+                value={bulkPersonaText}
+                onChange={(e) => setBulkPersonaText(e.target.value)}
+                placeholder={"例:\n名前\tゆうか\n年齢\t27\n..."}
+              />
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  className="bg-blue-500 text-white px-3 py-1 rounded"
+                  onClick={applyBulkPersona}
+                >貼付して反映</button>
+                <button type="button" className="px-3 py-1 border rounded" onClick={() => { setBulkPersonaText(""); setBulkPersonaOpen(false); }}>キャンセル</button>
+              </div>
+            </div>
+          )}
+
+          {personaMode === "simple" ? (
+            <textarea
+              className="border rounded p-2 w-full mb-3 min-h-[80px] resize-y dark:bg-gray-800 dark:text-gray-100"
+              placeholder="簡易ペルソナ（例：このアカウントは〇〇な性格で、〇〇が好きな女性...）"
+              value={personaSimple}
+              onChange={(e) => setPersonaSimple(e.target.value)}
+            />
+          ) : (
+            <div className="grid grid-cols-2 gap-x-3 gap-y-4 mb-3">
+              <div>
+                <label className="text-sm text-gray-600">名前</label>
+                <input className="border px-2 py-1 rounded w-full dark:bg-gray-800 dark:text-gray-100" name="name" value={persona.name} onChange={handlePersonaChange} placeholder="名前" />
+              </div>
+              <div>
+                <label className="text-sm text-gray-600">年齢</label>
+                <input className="border px-2 py-1 rounded w-full dark:bg-gray-800 dark:text-gray-100" name="age" value={persona.age} onChange={handlePersonaChange} placeholder="年齢" />
+              </div>
+
+              <div>
+                <label className="text-sm text-gray-600">性別</label>
+                <input className="border px-2 py-1 rounded w-full dark:bg-gray-800 dark:text-gray-100" name="gender" value={persona.gender} onChange={handlePersonaChange} placeholder="性別" />
+              </div>
+              <div className="col-span-2">
+                <label className="text-sm text-gray-600">職業</label>
+                <textarea className="border rounded p-2 w-full dark:bg-gray-800 dark:text-gray-100" name="job" value={persona.job} onChange={handlePersonaChange} />
+              </div>
+
+              {/* 職業以下は大きめtextarea群（タイトル付き） */}
+              <div className="col-span-2 grid grid-cols-1 gap-3">
+                <div>
+                  <label className="text-sm text-gray-600">生活スタイル</label>
+                  <textarea className="border rounded p-2 w-full dark:bg-gray-800 dark:text-gray-100" name="lifestyle" value={persona.lifestyle} onChange={handlePersonaChange} />
+                </div>
+                <div>
+                  <label className="text-sm text-gray-600">投稿キャラ</label>
+                  <textarea className="border rounded p-2 w-full dark:bg-gray-800 dark:text-gray-100" name="character" value={persona.character} onChange={handlePersonaChange} />
+                </div>
+                <div>
+                  <label className="text-sm text-gray-600">口調・内面</label>
+                  <textarea className="border rounded p-2 w-full dark:bg-gray-800 dark:text-gray-100" name="tone" value={persona.tone} onChange={handlePersonaChange} />
+                </div>
+                <div>
+                  <label className="text-sm text-gray-600">語彙傾向</label>
+                  <textarea className="border rounded p-2 w-full dark:bg-gray-800 dark:text-gray-100" name="vocab" value={persona.vocab} onChange={handlePersonaChange} />
+                </div>
+                <div>
+                  <label className="text-sm text-gray-600">感情パターン</label>
+                  <textarea className="border rounded p-2 w-full dark:bg-gray-800 dark:text-gray-100" name="emotion" value={persona.emotion} onChange={handlePersonaChange} />
+                </div>
+                <div>
+                  <label className="text-sm text-gray-600">エロ表現</label>
+                  <textarea className="border rounded p-2 w-full dark:bg-gray-800 dark:text-gray-100" name="erotic" value={persona.erotic} onChange={handlePersonaChange} />
+                </div>
+                <div>
+                  <label className="text-sm text-gray-600">ターゲット層</label>
+                  <textarea className="border rounded p-2 w-full dark:bg-gray-800 dark:text-gray-100" name="target" value={persona.target} onChange={handlePersonaChange} />
+                </div>
+                <div>
+                  <label className="text-sm text-gray-600">投稿目的</label>
+                  <textarea className="border rounded p-2 w-full dark:bg-gray-800 dark:text-gray-100" name="purpose" value={persona.purpose} onChange={handlePersonaChange} />
+                </div>
+                <div>
+                  <label className="text-sm text-gray-600">絡みの距離感</label>
+                  <textarea className="border rounded p-2 w-full dark:bg-gray-800 dark:text-gray-100" name="distance" value={persona.distance} onChange={handlePersonaChange} />
+                </div>
+                <div>
+                  <label className="text-sm text-gray-600">NG要素</label>
+                  <textarea className="border rounded p-2 w-full dark:bg-gray-800 dark:text-gray-100" name="ng" value={persona.ng} onChange={handlePersonaChange} />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
 
         <label className="block">投稿グループ</label>
         <select
@@ -692,16 +603,11 @@ export default function SNSAccountModal({
             >
               {mode === "edit" ? "保存" : "登録"}
             </button>
-            <button
-              type="button"
-              className="bg-gray-300 text-gray-800 rounded px-4 py-2"
-              onClick={onClose}
-            >
-              キャンセル
-            </button>
+            {/* Cancel removed - use top-right × to close */}
           </div>
         </div>
       </form>
     </div>
+  </div>
   );
 }

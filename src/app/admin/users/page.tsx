@@ -153,9 +153,9 @@ export default function AdminUsersPage() {
 
           {error && <div className="mb-3 text-red-600 text-sm break-all">{error}</div>}
 
-          <div className="overflow-x-auto bg-white border rounded">
+          <div className="overflow-x-auto bg-white dark:bg-gray-900 border rounded">
             <table className="min-w-full text-sm">
-              <thead className="bg-gray-100">
+              <thead className="bg-gray-100 dark:bg-gray-800">
                 <tr>
                   <th className="px-3 py-2 text-left">Email</th>
                   <th className="px-3 py-2 text-left">UserId</th>

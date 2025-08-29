@@ -59,7 +59,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     res.status(400).json({ error: "userid and purpose required", detail: { hasUserId: !!userId, hasPurpose: !!purpose } }); return;  // [MOD] Next API は void を返す
   }
 
-  let openaiApiKey = "", selectedModel = "gpt-3.5-turbo", masterPrompt = "";
+  let openaiApiKey = "", selectedModel = "gpt-5-mini", masterPrompt = "";
   try {
     const result = await client.send(new GetItemCommand({
       TableName: 'UserSettings',
@@ -73,7 +73,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     }));
     openaiApiKey = result.Item?.openaiApiKey?.S || "";
-    selectedModel = result.Item?.modelDefault?.S || result.Item?.selectedModel?.S || "gpt-3.5-turbo";
+    // Prefer explicit selectedModel (user choice) over modelDefault
+    const rawModel = result.Item?.selectedModel?.S || result.Item?.modelDefault?.S || "gpt-5-mini";
+    const allow = new Set(["gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4o", "gpt-4o-mini"]);
+    selectedModel = allow.has(rawModel) ? rawModel : "gpt-5-mini";
     masterPrompt = result.Item?.masterPrompt?.S || "";
     if (!openaiApiKey) throw new Error("APIキー未設定です");
   } catch (e: unknown) {
@@ -126,22 +129,42 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       personaText = "";
     }
 
-    systemPrompt = "あなたはSNS運用代行のプロです。";
-    const policy = masterPrompt ? `\n【運用方針（masterPrompt）】\n${masterPrompt}\n` : "";
+    // Always include masterPrompt in system prompt so frontend-provided prompt doesn't omit it
+    systemPrompt = "あなたはSNS運用代行のプロです。" + (masterPrompt ? `\n【運用方針（masterPrompt）】\n${masterPrompt}` : "");
+    const policy = ""; // policy will be merged into systemPrompt above
 
-    userPrompt = `
-${policy}
-${personaText ? `【アカウントのペルソナ】\n${personaText}\n` : "【アカウントのペルソナ】\n(未設定)\n"}
-【投稿テーマ】
-${input?.theme ?? ""}
+    // Theme handling: if theme is comma-separated list, pick one at random server-side.
+    const incomingPrompt = (input?.prompt ?? "").toString().trim();
+    let themeRaw = (input?.theme ?? "").toString();
+    let themeUsed = themeRaw;
+    if (themeRaw) {
+      const parts = themeRaw.split(",").map((s: string) => s.trim()).filter(Boolean);
+      if (parts.length > 0) {
+        themeUsed = parts[Math.floor(Math.random() * parts.length)];
+      }
+    }
 
-【指示】
-上記の方針とペルソナ・テーマに従い、SNS投稿本文を日本語で1つだけ生成してください。
-- 文末表現や語感はペルソナに合わせる
-- 長すぎない（140〜220文字目安）
-- 絵文字は多用しすぎない（0〜3個程度）
-- ハッシュタグは不要
-    `.trim();
+    if (incomingPrompt) {
+      // If frontend provided a full prompt, prefer it but replace the # テーマ section if present
+      if (/#\s*テーマ/.test(incomingPrompt)) {
+        // Replace the theme block (the line(s) after '# テーマ' until a double newline or end)
+        userPrompt = incomingPrompt.replace(/(#\s*テーマ\s*\n)([\s\S]*?)(\n\n|$)/m, `$1${themeUsed}$3`);
+      } else {
+        userPrompt = incomingPrompt;
+      }
+    } else {
+      userPrompt = [
+        policy,
+        personaText ? `# ペルソナ\n${personaText}` : "",
+        `# テーマ\n${themeUsed}`,
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+      userPrompt = String(userPrompt || "").trim();
+    }
+
+    // expose chosen theme in debug raw
+    try { (input as any)._themeUsed = themeUsed; } catch {}
 
     max_tokens = 300;
     // ====== 刷新ここまで ======
@@ -223,27 +246,52 @@ ${incomingReply}
   }
 
   try {
+    // Build request body with inference vs non-inference differences
+    const isInferenceModel = String(selectedModel).startsWith("gpt-5");
+    const openaiBodyFactory = (model: string, opts: { maxOut?: number } = {}) => {
+      const base: any = {
+        model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        temperature: isInferenceModel ? 1 : 0.7,
+      };
+      if (isInferenceModel) {
+        // For inference models prefer max_completion_tokens
+        base.max_completion_tokens = opts.maxOut ?? Math.max(max_tokens, 1024);
+        // Do not include 'reasoning' parameter here to avoid unknown parameter errors
+      } else {
+        base.max_tokens = opts.maxOut ?? max_tokens;
+      }
+      return JSON.stringify(base);
+    };
+
     const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${openaiApiKey}`,
       },
-      body: JSON.stringify({
-        model: selectedModel,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-        max_tokens,
-        temperature: 0.7,
-      }),
+      body: openaiBodyFactory(selectedModel),
     });
 
-    const data = await openaiRes.json();
+    // Read raw text first for debug
+    const raw = await openaiRes.text();
+    let data: any = {};
+    try {
+      data = raw ? JSON.parse(raw) : {};
+    } catch (e) {
+      // Not JSON — capture raw
+      data = { raw }
+    }
+    // Attach which model was selected for debugging
+    try { data._selectedModel = selectedModel; } catch {}
+
     if (!openaiRes.ok) {
-      const msg = data?.error?.message || JSON.stringify(data);
-      res.status(502).json({ error: `OpenAI API error: ${msg}` }); return;  // [MOD] Next API は void を返す
+      const msg = data?.error?.message || (data?.raw ? data.raw : JSON.stringify(data));
+      // Return OpenAI raw body in error for easier debugging
+      res.status(502).json({ error: `OpenAI API error: ${msg}`, raw: data }); return;  // [MOD] Next API は void を返す
     }
 
     if (purpose === "persona-generate") {
@@ -252,8 +300,63 @@ ${incomingReply}
       res.status(200).json({ text }); return;  // [MOD] Next API は void を返す
     }
 
-    const text = data.choices?.[0]?.message?.content || "";
-    res.status(200).json({ text }); return;  // [MOD] Next API は void を返す
+    let text = data.choices?.[0]?.message?.content || "";
+    // If empty, retry once with smaller max tokens to avoid length truncation returning empty content
+    if (!text) {
+      try {
+        const retryBody = openaiBodyFactory(selectedModel, { maxOut: 150 });
+        const retryRes = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${openaiApiKey}`,
+          },
+          body: retryBody,
+        });
+        const retryRaw = await retryRes.text();
+        let retryData: any = {};
+        try { retryData = retryRaw ? JSON.parse(retryRaw) : {}; } catch { retryData = { raw: retryRaw }; }
+        const retryText = retryData.choices?.[0]?.message?.content || "";
+        if (retryText) {
+          text = retryText;
+          // include both attempts in raw for debugging
+          data._retry = retryData;
+        }
+      } catch (e) {
+        // ignore retry errors, continue to return what we have
+        console.log("retry openai failed:", e);
+      }
+    }
+
+    // If still empty and this was an inference model, fallback to a non-inference model (gpt-4o-mini)
+    if (!text && isInferenceModel) {
+      try {
+        const fbModel = "gpt-4o-mini";
+        const fbRes = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${openaiApiKey}`,
+          },
+          body: openaiBodyFactory(fbModel, { maxOut: 300 }),
+        });
+        const fbRaw = await fbRes.text();
+        let fbData: any = {};
+        try { fbData = fbRaw ? JSON.parse(fbRaw) : {}; } catch { fbData = { raw: fbRaw }; }
+        const fbText = fbData.choices?.[0]?.message?.content || "";
+        if (fbText) {
+          text = fbText;
+          data._fallback = { model: fbModel, raw: fbData };
+        } else {
+          data._fallback = { model: fbModel, raw: fbData };
+        }
+      } catch (e) {
+        console.log("fallback openai failed:", e);
+      }
+    }
+
+    // Also include raw response for debugging
+    res.status(200).json({ text, raw: data }); return;  // [MOD] Next API は void を返す
 
   } catch (e: unknown) {
     res.status(500).json({ error: "OpenAI API呼び出し失敗: " + String(e) }); return;  // [MOD] Next API は void を返す

@@ -13,7 +13,7 @@ const DEFAULTS = {
   discordWebhook: "",
   errorDiscordWebhook: "",
   openaiApiKey: "",
-  selectedModel: "gpt-3.5-turbo",
+  selectedModel: "gpt-5-mini",
   masterPrompt: "",
   replyPrompt: "",
   autoPost: false as boolean,            // [MOD] "active"|"inactive" → boolean
@@ -41,8 +41,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const discordWebhook = it.discordWebhook?.S || list[0] || "";
       const errorDiscordWebhook = it.errorDiscordWebhook?.S || errList[0] || "";
       const openaiApiKey = it.openaiApiKey?.S || it.openAiApiKey?.S || "";
-      const selectedModel =
-        it.selectedModel?.S || it.modelDefault?.S || DEFAULTS.selectedModel;
+      const rawModel = it.selectedModel?.S || it.modelDefault?.S || DEFAULTS.selectedModel;
+      const allow = new Set(["gpt-5", "gpt-5-mini", "gpt-5-nano"]);
+      const selectedModel = allow.has(rawModel) ? rawModel : DEFAULTS.selectedModel;
 
       // [MOD] autoPost は BOOL のみ採用（S/N は無視＝false扱い）。自己修復はしない。
       const autoPost = it.autoPost?.BOOL === true;
