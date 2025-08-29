@@ -105,36 +105,92 @@ function buildReplyPrompt(incomingReply: string, originalPost: string, settings:
 }
 
 function sanitizeModelName(model: any): string {
-  const allow = ["gpt-5", "gpt-5-mini", "gpt-5-nano"];
+  // Allow both inference (gpt-5 series) and non-inference (gpt-4o) families
+  const allow = ["gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4o", "gpt-4o-mini"];
   const m = String(model || "");
   return allow.includes(m) ? m : "gpt-5-mini";
 }
 
 async function callOpenAIText({ apiKey, model, temperature, max_tokens, prompt }: any) {
   const m = sanitizeModelName(model);
-  const body: any = {
-    model: m,
-    messages: [{ role: "user", content: prompt }],
-    // デフォルト temperature をそのまま使用するが、gpt-5 系は temperature=1 を強制
-    temperature: m.startsWith("gpt-5") ? 1 : (typeof temperature === "number" ? temperature : DEFAULT_OPENAI_TEMP),
+  const isInference = String(m).startsWith("gpt-5");
+
+  const buildBody = (mdl: string, opts: any = {}) => {
+    const base: any = {
+      model: mdl,
+      messages: [{ role: "user", content: prompt }],
+      temperature: isInference ? 1 : (typeof temperature === "number" ? temperature : DEFAULT_OPENAI_TEMP),
+    };
+    if (isInference) {
+      base.max_completion_tokens = opts.maxOut ?? Math.max(max_tokens || DEFAULT_OPENAI_MAXTOKENS, 1024);
+      // Do not add unsupported fields like reasoning unguarded here
+    } else {
+      base.max_tokens = opts.maxOut ?? (max_tokens || DEFAULT_OPENAI_MAXTOKENS);
+    }
+    return JSON.stringify(base);
   };
-  if (m.startsWith("gpt-5")) {
-    body.max_completion_tokens = max_tokens;
-  } else {
-    body.max_tokens = max_tokens;
-  }
+
+  // primary call
   const resp = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
+    headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: buildBody(m),
   });
-  if (!resp.ok) throw new Error(`OpenAI API error: ${resp.status} ${await resp.text()}`);
-  const json = await resp.json();
-  const text = json?.choices?.[0]?.message?.content?.trim() || "";
-  return { text, usage: json?.usage || {} };
+
+  const raw = await resp.text();
+  let data: any = {};
+  try { data = raw ? JSON.parse(raw) : {}; } catch { data = { raw }; }
+
+  if (!resp.ok) throw new Error(`OpenAI API error: ${resp.status} ${raw}`);
+
+  let text = data?.choices?.[0]?.message?.content?.trim() || "";
+
+  // retry once with smaller output budget if inference model returned empty
+  if (!text && isInference) {
+    try {
+      const retryResp = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: buildBody(m, { maxOut: 150 }),
+      });
+      const retryRaw = await retryResp.text();
+      let retryData: any = {};
+      try { retryData = retryRaw ? JSON.parse(retryRaw) : {}; } catch { retryData = { raw: retryRaw }; }
+      const retryText = retryData?.choices?.[0]?.message?.content?.trim() || "";
+      if (retryText) {
+        text = retryText;
+        try { data._retry = retryData; } catch {}
+      }
+    } catch (e) {
+      console.log("retry openai failed:", e);
+    }
+  }
+
+  // fallback to non-inference small model if still empty
+  if (!text && isInference) {
+    try {
+      const fb = "gpt-4o-mini";
+      const fbResp = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: buildBody(fb, { maxOut: 300 }),
+      });
+      const fbRaw = await fbResp.text();
+      let fbData: any = {};
+      try { fbData = fbRaw ? JSON.parse(fbRaw) : {}; } catch { fbData = { raw: fbRaw }; }
+      const fbText = fbData?.choices?.[0]?.message?.content?.trim() || "";
+      if (fbText) {
+        text = fbText;
+        try { data._fallback = { model: fb, raw: fbData }; } catch {}
+      } else {
+        try { data._fallback = { model: fb, raw: fbData }; } catch {}
+      }
+    } catch (e) {
+      console.log("fallback openai failed:", e);
+    }
+  }
+
+  return { text, usage: data?.usage || {} };
 }
 
 /// ========== Discord ==========
