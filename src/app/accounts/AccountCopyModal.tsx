@@ -5,6 +5,7 @@ import React, { useEffect, useState } from "react";
 type AccountType = {
   accountId: string;
   displayName: string;
+  createdAt?: number;
   personaSimple?: string;
   personaDetail?: string;
   personaMode?: string;
