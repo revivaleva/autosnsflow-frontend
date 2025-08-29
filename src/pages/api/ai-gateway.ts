@@ -355,7 +355,7 @@ ${incomingReply}
     }
 
     // If still empty and this was an inference model, fallback to a non-inference model (gpt-4o-mini)
-    if (!text && isInferenceModel) {
+    if (!text && isInferenceModel(selectedModel)) {
       try {
         const fbModel = "gpt-4o-mini";
         const fbRes = await fetch("https://api.openai.com/v1/chat/completions", {
