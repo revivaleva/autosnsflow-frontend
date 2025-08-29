@@ -308,6 +308,40 @@ ${incomingReply}
 
     if (!openaiRes.ok) {
       const msg = data?.error?.message || (data?.raw ? data.raw : JSON.stringify(data));
+      // If the error indicates the model does not exist or access is denied, try fallbacks
+      const errLower = String(msg || "").toLowerCase();
+      const modelAccessIssues = ["does not exist", "do not have access", "not exist", "not found", "not allowed", "permission"].some(k => errLower.includes(k));
+      if (modelAccessIssues) {
+        const fallbacks = ["gpt-4o-mini", "gpt-5-mini"];
+        for (const fbModel of fallbacks) {
+          try {
+            const fbRes = await fetch("https://api.openai.com/v1/chat/completions", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${openaiApiKey}`,
+              },
+              body: openaiBodyFactory(fbModel, { maxOut: Math.max(max_tokens, 300) }),
+            });
+            const fbRaw = await fbRes.text();
+            let fbData: any = {};
+            try { fbData = fbRaw ? JSON.parse(fbRaw) : {}; } catch { fbData = { raw: fbRaw }; }
+            if (fbRes.ok) {
+              const fbText = fbData.choices?.[0]?.message?.content || "";
+              data._fallback = { model: fbModel, raw: fbData };
+              if (fbText) {
+                // Return successful fallback result
+                return res.status(200).json({ text: fbText, raw: data });
+              }
+            } else {
+              // record attempted fallback raw for debug
+              (data._fallbacks = data._fallbacks || []).push({ model: fbModel, raw: fbData });
+            }
+          } catch (ee) {
+            console.log("fallback attempt failed:", ee);
+          }
+        }
+      }
       // Return OpenAI raw body in error for easier debugging
       res.status(502).json({ error: `OpenAI API error: ${msg}`, raw: data }); return;  // [MOD] Next API は void を返す
     }
