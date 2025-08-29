@@ -131,19 +131,33 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     systemPrompt = "あなたはSNS運用代行のプロです。";
     const policy = masterPrompt ? `\n【運用方針（masterPrompt）】\n${masterPrompt}\n` : "";
 
-    userPrompt = `
-${policy}
-${personaText ? `【アカウントのペルソナ】\n${personaText}\n` : "【アカウントのペルソナ】\n(未設定)\n"}
-【投稿テーマ】
-${input?.theme ?? ""}
+    // Theme handling: if theme is a comma/、/; separated list, pick one at random server-side
+    const incomingPrompt = (input?.prompt ?? "").toString().trim();
+    let themeRaw = (input?.theme ?? "").toString();
+    let themeUsed = themeRaw;
+    if (!incomingPrompt && themeRaw) {
+      const parts = themeRaw.split(/[,、;]+/).map(s => s.trim()).filter(Boolean);
+      if (parts.length > 0) {
+        themeUsed = parts[Math.floor(Math.random() * parts.length)];
+      }
+    }
 
-【指示】
-上記の方針とペルソナ・テーマに従い、SNS投稿本文を日本語で1つだけ生成してください。
-- 文末表現や語感はペルソナに合わせる
-- 長すぎない（140〜220文字目安）
-- 絵文字は多用しすぎない（0〜3個程度）
-- ハッシュタグは不要
-    `.trim();
+    if (incomingPrompt) {
+      // If frontend provided a full prompt, prefer it (it may already include masterPrompt/persona/theme)
+      userPrompt = incomingPrompt;
+    } else {
+      userPrompt = [
+        policy,
+        personaText ? `# ペルソナ\n${personaText}` : "",
+        `# テーマ\n${themeUsed}`,
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+      userPrompt = String(userPrompt || "").trim();
+    }
+
+    // expose chosen theme in debug raw
+    (input as any)._themeUsed = themeUsed;
 
     max_tokens = 300;
     // ====== 刷新ここまで ======
