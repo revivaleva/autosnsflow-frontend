@@ -131,10 +131,13 @@ export default function RepliesList() {
   const [selectedReplyIds, setSelectedReplyIds] = useState<string[]>([]);
 
   const toggleSelectReply = (id: string) => {
+    const reply = replies.find(r => r.id === id);
+    if (!reply) return;
+    if (reply.status === "replied") return; // 返信済は選択不可
     setSelectedReplyIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
 
-  const selectAllReplies = () => setSelectedReplyIds(sortedReplies.map(r => r.id));
+  const selectAllReplies = () => setSelectedReplyIds(sortedReplies.filter(r => r.status !== "replied").map(r => r.id));
   const clearSelectedReplies = () => setSelectedReplyIds([]);
 
   const handleBulkDeleteReplies = async () => {
