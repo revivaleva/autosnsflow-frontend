@@ -372,6 +372,19 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
   // [FIX] 追加：open/mode/initial の変化時にフォームへ同期（編集時）
   useEffect(() => {
     if (!open) return;
+    // 初回表示や mode/initial が変わったときに前回のフォーム値が残らないように初期化
+    if (mode === "add") {
+      setAccountId("");
+      setAccountName("");
+      setTheme("");
+      setContent("");
+      setScheduledAtLocal("");
+      setAutoType(null);
+      setGroupId("");
+      setTimeStart("00:00");
+      setTimeEnd("23:59");
+    }
+
     if (mode === "edit" && initial) {
       setAccountId(initial.accountId || "");
       setAccountName(initial.accountName || "");
