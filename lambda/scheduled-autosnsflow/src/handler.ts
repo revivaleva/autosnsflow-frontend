@@ -123,7 +123,7 @@ async function callOpenAIText({ apiKey, model, temperature, max_tokens, prompt }
     };
     if (isInference) {
       base.max_completion_tokens = opts.maxOut ?? Math.max(max_tokens || DEFAULT_OPENAI_MAXTOKENS, 1024);
-      // Do not add unsupported fields like reasoning unguarded here
+      // Avoid sending 'reasoning' parameter to models that don't accept it
     } else {
       base.max_tokens = opts.maxOut ?? (max_tokens || DEFAULT_OPENAI_MAXTOKENS);
     }

@@ -260,8 +260,7 @@ ${incomingReply}
       if (isInferenceModel) {
         // For inference models prefer max_completion_tokens
         base.max_completion_tokens = opts.maxOut ?? Math.max(max_tokens, 1024);
-        // Attempt to include reasoning effort only when model supports it (guarded below)
-        try { base.reasoning = { effort: "low" }; } catch {}
+        // Do not include 'reasoning' parameter here to avoid unknown parameter errors
       } else {
         base.max_tokens = opts.maxOut ?? max_tokens;
       }
