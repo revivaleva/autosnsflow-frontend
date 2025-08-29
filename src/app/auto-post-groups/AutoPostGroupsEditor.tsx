@@ -86,7 +86,7 @@ function GroupModal({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
-      <div className="bg-white rounded-xl shadow-xl p-8 w-full max-w-xl">
+      <div className="bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 rounded-xl shadow-xl p-8 w-full max-w-xl">
         <div className="flex justify-between items-center mb-4">
           <div className="text-lg font-bold">{isEdit ? "グループ編集" : "グループ追加"}</div>
           <button className="text-gray-400 hover:text-gray-700 text-2xl font-bold" onClick={onClose}>×</button>
@@ -243,7 +243,7 @@ export default function AutoPostGroupsEditor() {
         </button>
       </div>
       <div className="overflow-x-auto">
-        <table className="min-w-full bg-white border">
+        <table className="min-w-full bg-white dark:bg-gray-900 border">
           <thead>
             <tr>
               <th className="border p-1">自動投稿グループ名</th>
@@ -379,7 +379,7 @@ function SlotEditor({ groupKey, items, loading, onReload }: { groupKey: string; 
   };
 
   return (
-    <div className="p-3 bg-gray-50">
+    <div className="p-3 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100">
       <div className="flex justify-between items-center mb-2">
         <div className="font-semibold">スロット（最大10件）</div>
         <div className="space-x-2">
@@ -392,8 +392,8 @@ function SlotEditor({ groupKey, items, loading, onReload }: { groupKey: string; 
       ) : rows.length === 0 ? (
         <div className="text-gray-500">スロットがありません</div>
       ) : (
-        <table className="w-full bg-white border">
-          <thead>
+        <table className="w-full bg-white dark:bg-gray-900 border">
+          <thead className="dark:bg-gray-800">
             <tr>
               <th className="border p-1 w-20">順序</th>
               <th className="border p-1 w-56">時間帯</th>
@@ -408,8 +408,8 @@ function SlotEditor({ groupKey, items, loading, onReload }: { groupKey: string; 
               return (
                 <tr key={it.slotId}>
                   <td className="border p-1 text-center space-x-1">
-                    <button className="px-2 py-0.5 bg-gray-200 rounded" onClick={() => updateOrder(i, -1)}>↑</button>
-                    <button className="px-2 py-0.5 bg-gray-200 rounded" onClick={() => updateOrder(i, +1)}>↓</button>
+                    <button className="px-2 py-0.5 bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-100 rounded" onClick={() => updateOrder(i, -1)}>↑</button>
+                    <button className="px-2 py-0.5 bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-100 rounded" onClick={() => updateOrder(i, +1)}>↓</button>
                   </td>
                   <td className="border p-1">
                     <div className="flex items-center gap-1">

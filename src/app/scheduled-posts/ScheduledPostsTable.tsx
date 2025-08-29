@@ -334,8 +334,8 @@ export default function ScheduledPostsTable() {
       </div>
 
       <div className="overflow-x-auto">
-        <table className="min-w-full bg-white border">
-          <thead>
+        <table className="min-w-full bg-white dark:bg-gray-900 border">
+          <thead className="dark:bg-gray-800">
             <tr>
               <th className="border p-1">アカウント名</th>
               <th className="border p-1">アカウントID</th>
@@ -472,7 +472,7 @@ export default function ScheduledPostsTable() {
                   </td>
                   <td className="border p-1">
                     <button
-                      className="px-2 py-1 rounded text-xs bg-gray-200 text-gray-800 hover:bg-blue-200"
+                      className="px-2 py-1 rounded text-xs bg-gray-200 text-gray-800 dark:bg-gray-700 dark:text-gray-100 hover:bg-blue-200 dark:hover:bg-blue-700"
                       onClick={() =>
                         openReplies((post as any).replies || [], post.scheduledPostId)
                       }

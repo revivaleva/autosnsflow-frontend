@@ -133,7 +133,7 @@ export default function AppLayout({ children }) {
         </div>
       </nav>
 
-      <main className="ml-56 bg-gray-100 min-h-screen p-8">{children}</main>
+      <main className="ml-56 min-h-screen p-8 bg-[var(--background)] text-[var(--foreground)]">{children}</main>
 
       {/* デバッグDLG（任意） */}
       {authDebugOpen && (
