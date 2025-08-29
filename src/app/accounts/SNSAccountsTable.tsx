@@ -61,7 +61,9 @@ export default function SNSAccountsTable() {
         throw new Error(data.error);
       }
       
-      const accounts = (data.items ?? data.accounts) ?? [];
+      let accounts = (data.items ?? data.accounts) ?? [];
+      // 登録日(createdAt)の降順でソート（新しい順）
+      accounts = accounts.sort((a: any, b: any) => (b.createdAt || 0) - (a.createdAt || 0));
       console.log("Parsed accounts:", accounts); // [DEBUG]
       setAccounts(accounts);
     } catch (error: any) {

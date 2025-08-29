@@ -24,7 +24,11 @@ export default function AccountCopyModal({ open, onClose, onSelect }: AccountCop
     if (open) {
       fetch(`/api/threads-accounts`, { credentials: "include" })
         .then((res) => res.json())
-        .then((data) => setAccounts((data.accounts ?? data.items ?? []) as AccountType[]));
+        .then((data) => {
+          const list = (data.accounts ?? data.items ?? []) as AccountType[];
+          list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+          setAccounts(list);
+        });
       setSelected(null);
     }
   }, [open]);
