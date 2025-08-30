@@ -466,11 +466,21 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
       personaModeUsed = "simple";
     }
 
+    // テーマがカンマ区切りで複数ある場合はランダムに1つを選択してテーマ欄に残す
+    let themeUsed = String(theme || "");
+    if (themeUsed.includes(",")) {
+      const parts = themeUsed.split(",").map(s => s.trim()).filter(Boolean);
+      if (parts.length > 0) {
+        themeUsed = parts[Math.floor(Math.random() * parts.length)];
+        setTheme(themeUsed);
+      }
+    }
+
     // [ADD] マスタープロンプト + ペルソナ + テーマ を結合して送信
     const prompt = [
       masterPrompt?.trim() ? masterPrompt.trim() : "",
       personaText ? `# ペルソナ\n${personaText}` : "",
-      `# テーマ\n${theme}`,
+      `# テーマ\n${themeUsed}`,
     ]
       .filter(Boolean)
       .join("\n\n");
@@ -581,6 +591,7 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
               onClick={handleClickGenerate}
               className={`px-3 py-2 rounded-md text-white ${isGenerating ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
               disabled={isGenerating}
+              style={{ display: 'inline-block' }}
             >
               {isGenerating ? '生成中...' : 'AIで生成'}
             </button>
