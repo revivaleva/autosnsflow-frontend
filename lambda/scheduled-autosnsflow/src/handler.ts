@@ -620,6 +620,9 @@ async function createScheduledPost(userId: any, { acct, group, type, whenJst, ov
     timeRange: { S: timeRange },
     // スロットに二段階投稿指定があれば予約レコードに保存
     secondStageWanted: { BOOL: !!(overrideTheme && (typeof overrideTheme === 'object' ? overrideTheme.secondStageWanted : false)) || false },
+    // 削除予約フィールド（Lambda 経由での予約作成時に渡されれば保存する）
+    deleteScheduledAt: (typeof overrideTheme === 'object' && overrideTheme?.deleteScheduledAt) ? { N: String(Math.floor(new Date(String(overrideTheme.deleteScheduledAt)).getTime() / 1000)) } : undefined,
+    deleteParentAfter: (typeof overrideTheme === 'object' && typeof overrideTheme?.deleteParentAfter !== 'undefined') ? { BOOL: !!overrideTheme.deleteParentAfter } : undefined,
   };
   await ddb.send(new PutItemCommand({ TableName: TBL_SCHEDULED, Item: item }));
   return { id, groupTypeStr, themeStr };

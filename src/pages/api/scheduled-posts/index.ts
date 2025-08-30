@@ -180,6 +180,9 @@ export default async function handler(
         theme?: string;
         autoPostGroupId?: string;
         timeRange?: string;
+        secondStageWanted?: boolean;
+        deleteScheduledAt?: number | string;
+        deleteParentAfter?: boolean;
       };
 
       const id = crypto.randomUUID();
@@ -205,6 +208,11 @@ export default async function handler(
         isDeleted: { BOOL: false },
         createdAt: { N: String(Math.floor(Date.now() / 1000)) },
         timeRange: { S: body.timeRange ?? "" },
+        // 二段階投稿希望フラグを保存
+        secondStageWanted: { BOOL: !!body.secondStageWanted },
+        // 削除予定・種別
+        deleteScheduledAt: typeof body.deleteScheduledAt !== 'undefined' && body.deleteScheduledAt !== null && body.deleteScheduledAt !== '' ? { N: String(typeof body.deleteScheduledAt === 'number' ? body.deleteScheduledAt : Math.floor(new Date(String(body.deleteScheduledAt)).getTime() / 1000)) } : undefined,
+        deleteParentAfter: { BOOL: !!body.deleteParentAfter },
       };
 
       await ddb.send(new PutItemCommand({ TableName: TBL_SCHEDULED, Item: item }));

@@ -199,6 +199,12 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
   const [scheduledAtLocal, setScheduledAtLocal] = useState(
     mode === "edit" ? toLocalDatetimeValueAny(initial?.scheduledAt) : "" // [FIX] Any対応
   );
+  // 二段階投稿希望フラグ（フォーム上で指定する）
+  const [secondStageWantedFlag, setSecondStageWantedFlag] = useState<boolean>(initial?.secondStageWanted || false);
+  // 削除予定（datetime-local）
+  const [deleteScheduledLocal, setDeleteScheduledLocal] = useState<string>(initial?.deleteScheduledAt ? toLocalDatetimeValue(initial?.deleteScheduledAt) : "");
+  // 削除対象（親を削除するかどうか）
+  const [deleteParentAfterFlag, setDeleteParentAfterFlag] = useState<boolean>(false);
   // 投稿時間範囲（HH:MM）
   const [timeStart, setTimeStart] = useState<string>("00:00");
   const [timeEnd, setTimeEnd] = useState<string>("23:59");
@@ -397,6 +403,8 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
       setTheme(initial.theme || "");
       setContent(initial.content || "");
       setScheduledAtLocal(toLocalDatetimeValueAny(initial.scheduledAt)); // [FIX]
+      setSecondStageWantedFlag(!!initial.secondStageWanted);
+      setDeleteScheduledLocal(initial?.deleteScheduledAt ? toLocalDatetimeValue(initial.deleteScheduledAt) : "");
       // [MOD] 種別/グループは initial.autoPostGroupId 側で復元するためここではクリア
       setAutoType(null);
       setGroupId("");
@@ -408,6 +416,7 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
     const scheduledPostId =
       mode === "add" ? Math.random().toString(36).slice(2, 12) : (initial?.scheduledPostId as string);
     const unix = scheduledAtLocal ? datetimeLocalToEpochSec(scheduledAtLocal) : 0;
+    const deleteUnix = deleteScheduledLocal ? datetimeLocalToEpochSec(deleteScheduledLocal) : undefined;
 
     let autoPostGroupId = "";
     if (selectedGroup && autoType) {
@@ -423,6 +432,12 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
       theme,
       autoPostGroupId,
       timeRange: `${timeStart}-${timeEnd}`,
+      // 二段階投稿指定を明示して保存
+      secondStageWanted: !!secondStageWantedFlag,
+      // 削除予定と種別（親削除）
+      deleteScheduledAt: deleteUnix,
+      // deleteParentAfter は editor では未選択時 false とする
+      // フロント側の型では未定義許容なのでここでは含めないが、API側で反映する
     };
 
     await onSave(payload);

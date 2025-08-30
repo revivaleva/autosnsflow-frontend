@@ -495,8 +495,8 @@ export default function ScheduledPostsTable() {
                         <div className="text-sm">
                           {post.scheduledAt
                             ? typeof post.scheduledAt === 'number'
-                              ? new Date(post.scheduledAt * 1000).toLocaleTimeString()
-                              : new Date(String(post.scheduledAt)).toLocaleTimeString()
+                              ? new Date(post.scheduledAt * 1000).toLocaleString()
+                              : new Date(String(post.scheduledAt)).toLocaleString()
                             : (post.autoPostGroupId && post.timeRange ? post.timeRange : '')}
                         </div>
                         {/* 削除予定時刻があれば表示 */}
