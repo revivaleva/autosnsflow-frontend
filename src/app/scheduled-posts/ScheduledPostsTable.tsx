@@ -127,7 +127,7 @@ export default function ScheduledPostsTable() {
         const groupKeys = Array.from(new Set((data.posts || []).map((p: any) => p.autoPostGroupId).filter(Boolean)));
         for (const gk of groupKeys) {
           try {
-            const resSlots = await fetch(`/api/auto-post-group-items?groupKey=${encodeURIComponent(gk)}`, { credentials: "include" });
+            const resSlots = await fetch(`/api/auto-post-group-items?groupKey=${encodeURIComponent(String(gk))}`, { credentials: "include" });
             const j = await resSlots.json().catch(() => ({}));
             const items = j.items || [];
             for (const it of items) {
