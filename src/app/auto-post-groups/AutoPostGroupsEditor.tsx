@@ -225,7 +225,7 @@ export default function AutoPostGroupsEditor() {
   };
 
   return (
-    <div className="p-6 max-w-3xl mx-auto">
+    <div className="p-6 max-w-5xl mx-auto">
       <GroupModal
         open={modalOpen}
         onClose={() => setModalOpen(false)}
@@ -397,10 +397,11 @@ function SlotEditor({ groupKey, items, loading, onReload }: { groupKey: string; 
           <thead className="dark:bg-gray-800">
             <tr>
               <th className="border p-1 w-20">順序</th>
-              <th className="border p-1 w-56">時間帯</th>
-              <th className="border p-1">テーマ</th>
-              <th className="border p-1 w-24">有効</th>
-              <th className="border p-1 w-40">操作</th>
+              <th className="border p-1 w-28">時間帯</th>
+              <th className="border p-1 w-96">テーマ</th>
+              <th className="border p-1 w-20"><div className="whitespace-pre-line">二段階\n投稿</div></th>
+              <th className="border p-1 w-20">有効</th>
+              <th className="border p-1 w-28">操作</th>
             </tr>
           </thead>
           <tbody>
@@ -413,11 +414,11 @@ function SlotEditor({ groupKey, items, loading, onReload }: { groupKey: string; 
                     <button className="px-2 py-0.5 bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-100 rounded" onClick={() => updateOrder(i, +1)}>↓</button>
                   </td>
                   <td className="border p-1">
-                    <div className="flex items-center gap-1">
+                    <div className="flex flex-col items-center gap-1">
                       <input type="time" className="border rounded p-1 w-24"
                         value={start}
                         onChange={(e) => setField(i, 'timeRange', `${e.target.value}-${end}`)} />
-                      <span>〜</span>
+                      <span className="text-xs">〜</span>
                       <input type="time" className="border rounded p-1 w-24"
                         value={end}
                         onChange={(e) => setField(i, 'timeRange', `${start}-${e.target.value}`)} />
@@ -427,19 +428,18 @@ function SlotEditor({ groupKey, items, loading, onReload }: { groupKey: string; 
                     <textarea className="border rounded p-2 w-full min-h-[40px]" value={it.theme}
                       onChange={(e) => setField(i, 'theme', e.target.value)} />
                   </td>
-                  <td className="border p-1 w-28 text-center">
-                    <div className="flex flex-col items-center gap-1">
-                      <label className="text-xs">二段階</label>
-                      <input type="checkbox" checked={!!it.secondStageWanted} onChange={(e) => setField(i, 'secondStageWanted', e.target.checked)} />
-                    </div>
+                  <td className="border p-1 text-center">
+                    <input type="checkbox" checked={!!it.secondStageWanted} onChange={(e) => setField(i, 'secondStageWanted', e.target.checked)} />
                   </td>
                   <td className="border p-1 text-center">
                     <input type="checkbox" checked={it.enabled}
                       onChange={(e) => setField(i, 'enabled', e.target.checked)} />
                   </td>
-                  <td className="border p-1 text-center space-x-2">
-                    <button className="bg-blue-600 text-white px-3 py-1 rounded" onClick={() => saveRow(it)}>保存</button>
-                    <button className="bg-red-600 text-white px-3 py-1 rounded" onClick={() => deleteRow(it.slotId)}>削除</button>
+                  <td className="border p-1 text-center">
+                    <div className="inline-flex gap-2">
+                      <button className="bg-blue-600 text-white px-3 py-1 rounded" onClick={() => saveRow(it)}>保存</button>
+                      <button className="bg-red-600 text-white px-3 py-1 rounded" onClick={() => deleteRow(it.slotId)}>削除</button>
+                    </div>
                   </td>
                 </tr>
               );
