@@ -22,6 +22,7 @@ export default function ScheduledPostsTable() {
   const [posts, setPosts] = useState<ScheduledPostType[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [userSettings, setUserSettings] = useState<any>(null);
+  const [groupSlotSecondWanted, setGroupSlotSecondWanted] = useState<Record<string, boolean>>({});
   const [sortKey, setSortKey] = useState<"scheduledAt" | "status">("scheduledAt");
   const [sortAsc, setSortAsc] = useState<boolean>(true);
   const [filterStatus, setFilterStatus] = useState<ScheduledPostStatus>("");
@@ -118,6 +119,28 @@ export default function ScheduledPostsTable() {
         setUserSettings(s?.settings ?? null);
       } catch (e) {
         setUserSettings(null);
+      }
+
+      // 追加: 自動投稿グループのスロット情報を取得して二段階投稿フラグを補完
+      try {
+        const mapping: Record<string, boolean> = {};
+        const groupKeys = Array.from(new Set((data.posts || []).map((p: any) => p.autoPostGroupId).filter(Boolean)));
+        for (const gk of groupKeys) {
+          try {
+            const resSlots = await fetch(`/api/auto-post-group-items?groupKey=${encodeURIComponent(gk)}`, { credentials: "include" });
+            const j = await resSlots.json().catch(() => ({}));
+            const items = j.items || [];
+            for (const it of items) {
+              const key = `${gk}::${it.timeRange || ""}`;
+              mapping[key] = !!it.secondStageWanted;
+            }
+          } catch (e) {
+            // ignore per-group errors
+          }
+        }
+        setGroupSlotSecondWanted(mapping);
+      } catch (e) {
+        setGroupSlotSecondWanted({});
       }
     } catch (e: any) {
       alert(e.message);
@@ -469,7 +492,12 @@ export default function ScheduledPostsTable() {
                     ) : (
                       // 未投稿時: 削除予定がある場合は投稿日時欄に削除予定を表示
                       (() => {
-                        const wantsSecond = !!post.secondStageWanted;
+                        // 二段階希望フラグは予約レコードにある場合もあれば、スロット定義にある場合もある
+                        let wantsSecond = !!post.secondStageWanted;
+                        if (!wantsSecond && post.autoPostGroupId && post.timeRange) {
+                          const key = `${post.autoPostGroupId}::${post.timeRange}`;
+                          wantsSecond = !!groupSlotSecondWanted[key];
+                        }
                         const deleteEnabled = !!userSettings?.doublePostDelete;
                         const deleteDelayMin = Number(userSettings?.doublePostDeleteDelay || "0");
                         if (wantsSecond && deleteEnabled && deleteDelayMin > 0) {
