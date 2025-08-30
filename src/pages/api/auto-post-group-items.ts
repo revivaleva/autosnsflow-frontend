@@ -60,6 +60,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           timeRange: { S: String(timeRange || "") },
           theme: { S: String(theme || "") },
           enabled: { BOOL: !!enabled },
+          secondStageWanted: { BOOL: !!(body.secondStageWanted) },
           createdAt: { N: String(Math.floor(Date.now() / 1000)) },
         },
       }));
@@ -76,6 +77,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (has(theme))     { names["#th"] = "theme";     values[":th"] = { S: String(theme || "") };     sets.push("#th = :th"); }
       if (has(order))     { names["#od"] = "order";     values[":od"] = { N: String(Number(order) || 0) }; sets.push("#od = :od"); }
       if (has(enabled))   { names["#en"] = "enabled";   values[":en"] = { BOOL: !!enabled };               sets.push("#en = :en"); }
+      if (has(body.secondStageWanted)) { names["#ssw"] = "secondStageWanted"; values[":ssw"] = { BOOL: !!body.secondStageWanted }; sets.push("#ssw = :ssw"); }
       if (!sets.length) return res.status(400).json({ error: "no_fields" });
       await ddb.send(new UpdateItemCommand({
         TableName: TBL_GROUPS,

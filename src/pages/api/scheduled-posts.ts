@@ -116,6 +116,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             status: { S: "scheduled" },
             isDeleted: { BOOL: false },
             createdAt: { N: String(now) },
+            // 新: スロットで指定された二段階投稿フラグを予約データへ伝搬できるようにする
+            secondStageWanted: { BOOL: false },
           },
           // [NOTE] 同一IDでの二重登録を避ける
           ConditionExpression: "attribute_not_exists(PK) AND attribute_not_exists(SK)",

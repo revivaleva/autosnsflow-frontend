@@ -19,6 +19,7 @@ type SlotType = {
   timeRange: string; // "HH:MM-HH:MM"
   theme: string;
   enabled: boolean;
+  secondStageWanted?: boolean;
 };
 
 type ScheduleType = { start: string; end: string; theme: string };
@@ -345,7 +346,7 @@ function SlotEditor({ groupKey, items, loading, onReload }: { groupKey: string; 
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({ groupKey, slotId: it.slotId, timeRange: it.timeRange, theme: it.theme, enabled: it.enabled }),
+      body: JSON.stringify({ groupKey, slotId: it.slotId, timeRange: it.timeRange, theme: it.theme, enabled: it.enabled, secondStageWanted: !!it.secondStageWanted }),
     });
     onReload();
   };
@@ -425,6 +426,12 @@ function SlotEditor({ groupKey, items, loading, onReload }: { groupKey: string; 
                   <td className="border p-1">
                     <textarea className="border rounded p-2 w-full min-h-[40px]" value={it.theme}
                       onChange={(e) => setField(i, 'theme', e.target.value)} />
+                  </td>
+                  <td className="border p-1 w-28 text-center">
+                    <div className="flex flex-col items-center gap-1">
+                      <label className="text-xs">二段階</label>
+                      <input type="checkbox" checked={!!it.secondStageWanted} onChange={(e) => setField(i, 'secondStageWanted', e.target.checked)} />
+                    </div>
                   </td>
                   <td className="border p-1 text-center">
                     <input type="checkbox" checked={it.enabled}

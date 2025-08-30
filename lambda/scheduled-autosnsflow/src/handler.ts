@@ -615,6 +615,8 @@ async function createScheduledPost(userId: any, { acct, group, type, whenJst, ov
     createdAt: { N: String(nowSec()) },
     isDeleted: { BOOL: false },
     timeRange: { S: timeRange },
+    // スロットに二段階投稿指定があれば予約レコードに保存
+    secondStageWanted: { BOOL: !!(overrideTheme && (typeof overrideTheme === 'object' ? overrideTheme.secondStageWanted : false)) || false },
   };
   await ddb.send(new PutItemCommand({ TableName: TBL_SCHEDULED, Item: item }));
   return { id, groupTypeStr, themeStr };
@@ -1565,6 +1567,8 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
       // テーマ/時間帯：スロットに設定があればそれを優先
       overrideTheme: String(slot.theme || ""),
       overrideTimeRange: String(slot.timeRange || ""),
+      // スロット単位の二段階投稿指定を予約データへ伝搬
+      secondStageWanted: !!slot.secondStageWanted,
     });
     await generateAndAttachContent(userId, acct, id, themeStr, settings);
 
