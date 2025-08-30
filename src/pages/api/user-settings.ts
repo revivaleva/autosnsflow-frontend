@@ -16,8 +16,11 @@ const DEFAULTS = {
   selectedModel: "gpt-5-mini",
   masterPrompt: "",
   replyPrompt: "",
-  autoPost: false as boolean,            // [MOD] "active"|"inactive" → boolean
-  doublePostDelay: "5",                  // [FIX] フロントエンドと統一
+  autoPost: false as boolean,
+  doublePostDelay: "5",
+  doublePostDelete: false,
+  doublePostDeleteDelay: "60",
+  parentDelete: false,
 };
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -64,6 +67,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         replyPrompt: it.replyPrompt?.S || "",
         autoPost,
         doublePostDelay: it.doublePostDelay?.N ? String(it.doublePostDelay.N) : "5",
+        doublePostDelete: it.doublePostDelete?.BOOL === true,
+        doublePostDeleteDelay: it.doublePostDeleteDelay?.N ? String(it.doublePostDeleteDelay.N) : "60",
+        parentDelete: it.parentDelete?.BOOL === true,
       };
 
       return res.status(200).json({ settings });
@@ -82,6 +88,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         replyPrompt,
         autoPost,
         doublePostDelay,
+        doublePostDelete,
+        doublePostDeleteDelay,
+        parentDelete,
       } = body;
 
       // [ADD] 型ガード（最低限）
@@ -134,6 +143,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         names["#dpd"] = "doublePostDelay";
         values[":dpd"] = { N: String(n) };
         sets.push("#dpd = :dpd");
+      }
+      if (has(doublePostDelete)) {
+        names["#dpdel"] = "doublePostDelete";
+        values[":dpdel"] = { BOOL: !!doublePostDelete };
+        sets.push("#dpdel = :dpdel");
+      }
+      if (has(doublePostDeleteDelay)) {
+        const n = Math.max(0, Number(doublePostDeleteDelay) || 0);
+        names["#dpdelD"] = "doublePostDeleteDelay";
+        values[":dpdelD"] = { N: String(n) };
+        sets.push("#dpdelD = :dpdelD");
+      }
+      if (has(parentDelete)) {
+        names["#pdel"] = "parentDelete";
+        values[":pdel"] = { BOOL: !!parentDelete };
+        sets.push("#pdel = :pdel");
       }
 
       if (!sets.length) return res.status(400).json({ error: "no_fields" });

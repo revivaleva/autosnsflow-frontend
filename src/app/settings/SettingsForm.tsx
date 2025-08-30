@@ -50,6 +50,9 @@ export default function SettingsForm() {
             replyPrompt: s.replyPrompt ?? "",
             autoPost: !!s.autoPost,
             doublePostDelay: String(s.doublePostDelay ?? "5"),
+            doublePostDelete: !!s.doublePostDelete,
+            doublePostDeleteDelay: String(s.doublePostDeleteDelay ?? "60"),
+            parentDelete: !!s.parentDelete,
           });
         }
       } finally {
@@ -168,6 +171,41 @@ export default function SettingsForm() {
               value={values.doublePostDelay}
               onChange={(e) => setValues({ ...values, doublePostDelay: e.target.value })}
             />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-4">
+          <div>
+            <label className="block text-sm text-gray-600">二段階投稿削除</label>
+            <select
+              className="mt-1 w-full border rounded-md px-3 py-2"
+              value={values.doublePostDelete ? "true" : "false"}
+              onChange={(e) => setValues({ ...values, doublePostDelete: e.target.value === "true" })}
+            >
+              <option value="false">無効</option>
+              <option value="true">有効</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm text-gray-600">二段階投稿削除ディレイ（分）</label>
+            <input
+              className="mt-1 w-full border rounded-md px-3 py-2"
+              type="number"
+              min={0}
+              value={values.doublePostDeleteDelay}
+              onChange={(e) => setValues({ ...values, doublePostDeleteDelay: e.target.value })}
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-gray-600">親投稿削除</label>
+            <select
+              className="mt-1 w-full border rounded-md px-3 py-2"
+              value={values.parentDelete ? "true" : "false"}
+              onChange={(e) => setValues({ ...values, parentDelete: e.target.value === "true" })}
+            >
+              <option value="false">二段階のみ削除</option>
+              <option value="true">親投稿も削除</option>
+            </select>
           </div>
         </div>
 
