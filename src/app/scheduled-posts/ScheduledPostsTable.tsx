@@ -458,11 +458,27 @@ export default function ScheduledPostsTable() {
                   <td className="border p-1">{post.accountName}</td>
                   <td className="border p-1">{post.accountId}</td>
                   <td className="border p-1">
-                    {post.scheduledAt
-                      ? typeof post.scheduledAt === "number"
-                        ? new Date(post.scheduledAt * 1000).toLocaleString()
-                        : post.scheduledAt
-                      : ""}
+                    {post.status === "posted" ? (
+                      post.postedAt
+                        ? typeof post.postedAt === "number"
+                          ? new Date(post.postedAt * 1000).toLocaleString()
+                          : (post.postedAt as any)
+                        : ""
+                    ) : post.isDeleted ? (
+                      post.deletedAt ? new Date(post.deletedAt * 1000).toLocaleString() : "削除予定"
+                    ) : (
+                      // 未投稿時: 削除予定がある場合は投稿日時欄に削除予定を表示
+                      (() => {
+                        const wantsSecond = !!post.secondStageWanted;
+                        const deleteEnabled = !!userSettings?.doublePostDelete;
+                        const deleteDelayMin = Number(userSettings?.doublePostDeleteDelay || "0");
+                        if (wantsSecond && deleteEnabled && deleteDelayMin > 0) {
+                          return `削除予定 (親(${deleteDelayMin}分))`;
+                        }
+                        // 未投稿かつ自動投稿グループ使用時は timeRange を表示
+                        return post.autoPostGroupId && post.timeRange ? post.timeRange : (post.scheduledAt ? (typeof post.scheduledAt === 'number' ? new Date(post.scheduledAt * 1000).toLocaleString() : post.scheduledAt) : "");
+                      })()
+                    )}
                   </td>
                   <td className="border p-1">{autoPostLabel}</td>
                   <td className="border p-1">{post.theme}</td>
@@ -493,7 +509,7 @@ export default function ScheduledPostsTable() {
                     )}
                   </td>
                   <td className="border p-1">
-                    {/* 投稿日時欄の表示を拡張：二段階投稿の予定・削除予定を反映 */}
+                    {/* 投稿ID 列: posted の場合はリンク、未投稿は空 */}
                     {post.status === "posted" ? (
                       pUrl ? (
                         <a
@@ -503,7 +519,7 @@ export default function ScheduledPostsTable() {
                           className="text-blue-600 underline"
                           title="Threadsで開く"
                         >
-                          {pUrl.split("/post/").pop() /* ショートコードだけ表示 */}
+                          {pUrl.split("/post/").pop()}
                         </a>
                       ) : generatedUrl ? (
                         <a
@@ -513,7 +529,7 @@ export default function ScheduledPostsTable() {
                           className="text-blue-600 underline"
                           title="Threadsで開く"
                         >
-                          {postId /* postID表示 */}
+                          {postId}
                         </a>
                       ) : (
                         <a
@@ -527,60 +543,44 @@ export default function ScheduledPostsTable() {
                         </a>
                       )
                     ) : (
-                      // 未投稿または削除予定の表示
-                      post.isDeleted ? (
-                        post.deletedAt ? new Date(post.deletedAt * 1000).toLocaleString() : "削除予定"
-                      ) : (
-                        // 未投稿かつ autoPostGroup で二段階削除設定がある場合は表示を上書き
-                        (() => {
-                          // 二段階投稿を行うかどうかは post.secondStageWanted (予約時フラグ) と userSettings.doublePostDelete の組み合わせで判断
-                          const wantsSecond = !!post.secondStageWanted;
-                          const deleteEnabled = !!userSettings?.doublePostDelete;
-                          const deleteDelayMin = Number(userSettings?.doublePostDeleteDelay || "0");
-                          if (!wantsSecond) return "投稿無し";
-                          // 二段階投稿が予定されている
-                          if (deleteEnabled && deleteDelayMin > 0) {
-                            return `投稿予定 (削除予定: 親(${deleteDelayMin}分))`;
-                          }
-                          // 削除はしないが二段階投稿は行う
-                          const delayMin = Number(userSettings?.doublePostDelay || "0");
-                          if (delayMin > 0) {
-                            // 表示は現在の予定時間 + delay を示す（簡易表示）
-                            return `投稿予定 (${delayMin}分後)`;
-                          }
-                          return "投稿予定 (未設定)";
-                        })()
-                      )
+                      "" /* 未投稿時は投稿ID列は空 */
                     )}
                   </td>
-                  <td className="border p-1">
-                    {/* 二段階投稿状況 */}
-                    {post.status === "posted" && post.doublePostStatus ? (
-                      post.doublePostStatus === "done" ? (
-                        <div className="text-xs">
-                          <div className="text-green-600 font-medium">投稿済</div>
-                          {post.secondStageAt && (
-                            <div className="text-gray-500">
-                              {typeof post.secondStageAt === "number"
-                                ? new Date(post.secondStageAt * 1000).toLocaleString()
-                                : new Date(post.secondStageAt).toLocaleString()}
-                            </div>
-                          )}
-                        </div>
+                  <td className="border p-1 text-center">
+                    {/* 二段階投稿状況 (未投稿時はここに投稿無し/投稿予定を表示) */}
+                    {post.status === "posted" ? (
+                      post.doublePostStatus ? (
+                        post.doublePostStatus === "done" ? (
+                          <div className="text-xs">
+                            <div className="text-green-600 font-medium">投稿済</div>
+                            {post.secondStageAt && (
+                              <div className="text-gray-500">
+                                {typeof post.secondStageAt === "number"
+                                  ? new Date(post.secondStageAt * 1000).toLocaleString()
+                                  : new Date(post.secondStageAt).toLocaleString()}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="text-xs">
+                            <div className="text-yellow-600 font-medium">待機中</div>
+                            {post.timeRange && (
+                              <div className="text-gray-500 text-xs">範囲: {post.timeRange}</div>
+                            )}
+                          </div>
+                        )
                       ) : (
-                        <div className="text-xs">
-                          <div className="text-yellow-600 font-medium">待機中</div>
-                          {post.timeRange && (
-                            <div className="text-gray-500 text-xs">
-                              範囲: {post.timeRange}
-                            </div>
-                          )}
-                        </div>
+                        <div className="text-xs text-gray-500">未設定</div>
                       )
-                    ) : post.status === "posted" ? (
-                      <div className="text-xs text-gray-500">未設定</div>
                     ) : (
-                      ""
+                      // 未投稿時は予約レコードのフラグとユーザー設定で表示
+                      (() => {
+                        const wantsSecond = !!post.secondStageWanted;
+                        if (!wantsSecond) return <div className="text-xs">投稿無し</div>;
+                        const delayMin = Number(userSettings?.doublePostDelay || "0");
+                        if (delayMin > 0) return <div className="text-xs">投稿予定 ({delayMin}分後)</div>;
+                        return <div className="text-xs">投稿予定 (未設定)</div>;
+                      })()
                     )}
                   </td>
                   <td className="border p-1">
