@@ -37,6 +37,9 @@ function toUiPost(it: any) {
     // [FIX] 投稿IDは postId をそのまま返す
     postId: it?.postId?.S || "",
     isDeleted: it?.isDeleted?.BOOL === true,
+    deletedAt: Number(it?.deletedAt?.N || "0"),
+    // 予約側に保存される二段階投稿希望フラグ
+    secondStageWanted: it?.secondStageWanted?.BOOL === true || String(it?.secondStageWanted?.S || "").toLowerCase() === "true",
     // UIの「0/0」表示用に一応返す
     replyCount: Number(it?.replyCount?.N || "0"),
   };

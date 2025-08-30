@@ -242,8 +242,7 @@ export default function ScheduledPostsTable() {
 
 
   const sortedPosts = posts
-    .filter((post) => !post.isDeleted)
-    .filter((post) => !filterStatus || (post.status || "scheduled") === filterStatus)
+    .filter((post) => filterStatus ? (post.status || "scheduled") === filterStatus : true)
     .sort((a, b) => {
       if (sortKey === "scheduledAt") {
         return sortAsc
@@ -414,9 +413,10 @@ export default function ScheduledPostsTable() {
               const postId = (post as any).postId as string | undefined;
               const generatedUrl = postId ? `https://www.threads.net/post/${postId}` : undefined;
 
+              const deleted = !!post.isDeleted;
               return (
-                <tr key={post.scheduledPostId}>
-                  <td className="border p-1"><input type="checkbox" checked={selectedIds.includes(post.scheduledPostId)} onChange={() => toggleSelect(post.scheduledPostId)} /></td>
+                <tr key={post.scheduledPostId} className={deleted ? 'bg-gray-100 text-gray-500' : ''}>
+                  <td className="border p-1">{!deleted && <input type="checkbox" checked={selectedIds.includes(post.scheduledPostId)} onChange={() => toggleSelect(post.scheduledPostId)} />}</td>
                   <td className="border p-1">{post.accountName}</td>
                   <td className="border p-1">{post.accountId}</td>
                   <td className="border p-1">
@@ -443,6 +443,8 @@ export default function ScheduledPostsTable() {
                           ? new Date(post.postedAt * 1000).toLocaleString()
                           : (post.postedAt as any)
                         : ""
+                    ) : deleted ? (
+                      post.deletedAt ? new Date(post.deletedAt * 1000).toLocaleString() : "削除予定"
                     ) : (
                       // 未投稿かつ自動投稿グループ使用時は timeRange を表示
                       <span className="text-xs text-gray-600">
