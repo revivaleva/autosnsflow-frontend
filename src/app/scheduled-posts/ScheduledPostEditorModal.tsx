@@ -22,6 +22,8 @@ export type ScheduledPostType = {
   replyCount?: number;
   // 削除日時（予約が削除された/削除予定のタイムスタンプ秒）
   deletedAt?: number;
+  // 投稿後に設定される削除予定時刻（タイムスタンプ秒）
+  deleteScheduledAt?: number;
   // スロットで指定された二段階投稿希望フラグ
   secondStageWanted?: boolean;
   // リプライ状況

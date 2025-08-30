@@ -490,22 +490,35 @@ export default function ScheduledPostsTable() {
                     ) : post.isDeleted ? (
                       post.deletedAt ? new Date(post.deletedAt * 1000).toLocaleString() : "削除予定"
                     ) : (
-                      // 未投稿時: 削除予定がある場合は投稿日時欄に削除予定を表示
-                      (() => {
-                        // 二段階希望フラグは予約レコードにある場合もあれば、スロット定義にある場合もある
-                        let wantsSecond = !!post.secondStageWanted;
-                        if (!wantsSecond && post.autoPostGroupId && post.timeRange) {
-                          const key = `${post.autoPostGroupId}::${post.timeRange}`;
-                          wantsSecond = !!groupSlotSecondWanted[key];
-                        }
-                        const deleteEnabled = !!userSettings?.doublePostDelete;
-                        const deleteDelayMin = Number(userSettings?.doublePostDeleteDelay || "0");
-                        if (wantsSecond && deleteEnabled && deleteDelayMin > 0) {
-                          return `削除予定 (親(${deleteDelayMin}分))`;
-                        }
-                        // 未投稿かつ自動投稿グループ使用時は timeRange を表示
-                        return post.autoPostGroupId && post.timeRange ? post.timeRange : (post.scheduledAt ? (typeof post.scheduledAt === 'number' ? new Date(post.scheduledAt * 1000).toLocaleString() : post.scheduledAt) : "");
-                      })()
+                      // 未投稿時: 時刻表示（scheduledAt がある場合は時刻のみ）、下に削除予定時刻を表示
+                      <div>
+                        <div className="text-sm">
+                          {post.scheduledAt
+                            ? typeof post.scheduledAt === 'number'
+                              ? new Date(post.scheduledAt * 1000).toLocaleTimeString()
+                              : new Date(String(post.scheduledAt)).toLocaleTimeString()
+                            : (post.autoPostGroupId && post.timeRange ? post.timeRange : '')}
+                        </div>
+                        {/* 削除予定時刻があれば表示 */}
+                        {post.deleteScheduledAt ? (
+                          <div className="text-xs text-red-600">
+                            削除予定: {typeof post.deleteScheduledAt === 'number' ? new Date(post.deleteScheduledAt * 1000).toLocaleString() : new Date(String(post.deleteScheduledAt)).toLocaleString()}
+                          </div>
+                        ) : (() => {
+                          // 以前のロジック: 二段階投稿の設定により削除予定を表示する場合
+                          let wantsSecond = !!post.secondStageWanted;
+                          if (!wantsSecond && post.autoPostGroupId && post.timeRange) {
+                            const key = `${post.autoPostGroupId}::${post.timeRange}`;
+                            wantsSecond = !!groupSlotSecondWanted[key];
+                          }
+                          const deleteEnabled = !!userSettings?.doublePostDelete;
+                          const deleteDelayMin = Number(userSettings?.doublePostDeleteDelay || "0");
+                          if (wantsSecond && deleteEnabled && deleteDelayMin > 0) {
+                            return <div className="text-xs text-red-600">削除予定 (親({deleteDelayMin}分))</div>;
+                          }
+                          return null;
+                        })()}
+                      </div>
                     )}
                   </td>
                   <td className="border p-1">{autoPostLabel}</td>
@@ -603,7 +616,13 @@ export default function ScheduledPostsTable() {
                     ) : (
                       // 未投稿時は予約レコードのフラグとユーザー設定で表示
                       (() => {
-                        const wantsSecond = !!post.secondStageWanted;
+                        // 二段階投稿の判定をより正確に行う: 予約レコードのフラグと自動投稿スロット設定を確認
+                        const hasScheduleSecondFlag = !!post.secondStageWanted;
+                        let wantsSecond = hasScheduleSecondFlag;
+                        if (!wantsSecond && post.autoPostGroupId && post.timeRange) {
+                          const key = `${post.autoPostGroupId}::${post.timeRange}`;
+                          wantsSecond = !!groupSlotSecondWanted[key];
+                        }
                         if (!wantsSecond) return <div className="text-xs">投稿無し</div>;
                         const delayMin = Number(userSettings?.doublePostDelay || "0");
                         if (delayMin > 0) return <div className="text-xs">投稿予定 ({delayMin}分後)</div>;

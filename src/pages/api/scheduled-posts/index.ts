@@ -105,6 +105,8 @@ function mapItem(it: any) {
     postUrl: getS("postUrl"),
     isDeleted: getB("isDeleted"),
     deletedAt: getN("deletedAt"),
+    // 削除予定時刻（削除が予約されている場合）
+    deleteScheduledAt: getN("deleteScheduledAt"),
     replyCount: getN("replyCount") ?? 0,
     // 二段階投稿関連
     doublePostStatus: getS("doublePostStatus"),
