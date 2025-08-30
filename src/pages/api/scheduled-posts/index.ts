@@ -185,7 +185,8 @@ export default async function handler(
           ? Math.floor(new Date(body.scheduledAt).getTime() / 1000)
           : 0;
 
-      const item = {
+      // Build item without undefined fields to satisfy TypeScript types for PutItemCommand
+      const item: Record<string, any> = {
         PK: { S: `USER#${userId}` },
         SK: { S: `SCHEDULEDPOST#${id}` },
         scheduledPostId: { S: id },
@@ -200,9 +201,21 @@ export default async function handler(
         isDeleted: { BOOL: false },
         createdAt: { N: String(Math.floor(Date.now() / 1000)) },
         timeRange: { S: body.timeRange ?? "" },
+        // 二段階投稿希望フラグを保存（デフォルト false）
+        secondStageWanted: { BOOL: !!(body as any).secondStageWanted },
+        // 削除種別フラグ（デフォルト false）
+        deleteParentAfter: { BOOL: !!(body as any).deleteParentAfter },
       };
 
-      await ddb.send(new PutItemCommand({ TableName: TBL_SCHEDULED, Item: item }));
+      // deleteScheduledAt は存在時のみ追加（数値または日時文字列を受け付ける）
+      if (typeof (body as any).deleteScheduledAt !== 'undefined' && (body as any).deleteScheduledAt !== null && (body as any).deleteScheduledAt !== '') {
+        const v = (body as any).deleteScheduledAt;
+        const sec = typeof v === 'number' ? v : Math.floor(new Date(String(v)).getTime() / 1000);
+        item.deleteScheduledAt = { N: String(sec) };
+      }
+
+      // Put with a looser type to avoid TypeScript complaining about optional/undefined union
+      await ddb.send(new PutItemCommand({ TableName: TBL_SCHEDULED, Item: item as any }));
 
       res.status(200).json({
         ok: true,
