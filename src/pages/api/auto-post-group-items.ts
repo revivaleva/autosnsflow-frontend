@@ -34,6 +34,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         timeRange: i.timeRange?.S || "",
         theme: i.theme?.S || "",
         enabled: i.enabled?.BOOL === true,
+        secondStageWanted: i.secondStageWanted?.BOOL === true,
       })).sort((a, b) => a.order - b.order);
       return res.status(200).json({ items });
     }
