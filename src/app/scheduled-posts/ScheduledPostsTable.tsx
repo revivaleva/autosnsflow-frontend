@@ -49,18 +49,47 @@ export default function ScheduledPostsTable() {
 
   const handleBulkDelete = async () => {
     if (selectedIds.length === 0) return alert("選択がありません");
-    if (!confirm(`選択した ${selectedIds.length} 件を削除しますか？`)) return;
-    try {
-      await fetch(`/api/scheduled-posts/bulk-delete`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ scheduledPostIds: selectedIds }),
-      });
-      setPosts(prev => prev.map(p => selectedIds.includes(p.scheduledPostId) ? { ...p, isDeleted: true } : p));
-      clearSelection();
-    } catch (e: any) {
-      alert(`削除に失敗しました: ${e.message || String(e)}`);
+    // ユーザに未投稿削除 or 投稿削除を選ばせる
+    const mode = window.prompt('削除モードを入力してください: "physical" 未投稿を物理削除 / "post" 投稿済の投稿削除 (Threads) を論理削除する', 'physical');
+    if (!mode) return;
+    if (mode === 'physical') {
+      // 未投稿の物理削除: 呼び出し先は /api/scheduled-posts/physical-delete
+      if (!confirm(`選択した ${selectedIds.length} 件を物理削除しますか？`)) return;
+      try {
+        const resp = await fetch('/api/scheduled-posts/physical-delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ scheduledPostIds: selectedIds }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data?.error || 'physical_delete_failed');
+        // 成功したものはUI上から除去
+        setPosts(prev => prev.filter(p => !selectedIds.includes(p.scheduledPostId)));
+        clearSelection();
+      } catch (e: any) {
+        alert(`物理削除に失敗しました: ${e.message || String(e)}`);
+      }
+    } else if (mode === 'post') {
+      // 投稿済みの投稿削除（Threads API呼び出し + DB論理削除）
+      if (!confirm(`選択した ${selectedIds.length} 件の投稿削除(Threads)を実行しますか？`)) return;
+      try {
+        const resp = await fetch('/api/scheduled-posts/bulk-delete-posts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ scheduledPostIds: selectedIds }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data?.error || 'bulk_post_delete_failed');
+        // 削除済は isDeleted=true と deletedAt を反映
+        setPosts(prev => prev.map(p => selectedIds.includes(p.scheduledPostId) ? { ...p, isDeleted: true, deletedAt: Math.floor(Date.now() / 1000) } : p));
+        clearSelection();
+      } catch (e: any) {
+        alert(`投稿削除に失敗しました: ${e.message || String(e)}`);
+      }
+    } else {
+      alert('不明なモードです');
     }
   };
 
