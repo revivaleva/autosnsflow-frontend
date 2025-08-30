@@ -20,6 +20,10 @@ export type ScheduledPostType = {
   postUrl?: string; // 投稿URL
   isDeleted?: boolean;
   replyCount?: number;
+  // 削除日時（予約が削除された/削除予定のタイムスタンプ秒）
+  deletedAt?: number;
+  // スロットで指定された二段階投稿希望フラグ
+  secondStageWanted?: boolean;
   // リプライ状況
   replyStatus?: {
     replied: number;
