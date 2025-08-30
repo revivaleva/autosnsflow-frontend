@@ -513,7 +513,14 @@ export default function RepliesList() {
         <table className="min-w-full bg-white dark:bg-gray-900 border">
           <thead className="dark:bg-gray-800">
             <tr>
-              <th className="border p-1"><input type="checkbox" checked={selectedReplyIds.length === sortedReplies.length && sortedReplies.length > 0} onChange={(e) => e.target.checked ? selectAllReplies() : clearSelectedReplies()} /></th>
+              {/* ヘッダのチェックは『選択可能な行（未返信）』のみを対象にする */}
+              <th className="border p-1">
+                <input
+                  type="checkbox"
+                  checked={selectedReplyIds.length === sortedReplies.filter(r => r.status !== "replied").length && sortedReplies.filter(r => r.status !== "replied").length > 0}
+                  onChange={(e) => e.target.checked ? selectAllReplies() : clearSelectedReplies()}
+                />
+              </th>
               <th className="border p-1">アカウントID</th>
               <th className="border p-1">
                 <button
@@ -552,7 +559,11 @@ export default function RepliesList() {
           <tbody>
             {sortedReplies.map(r => (
               <tr key={r.id}>
-                <td className="border p-1"><input type="checkbox" checked={selectedReplyIds.includes(r.id)} onChange={() => toggleSelectReply(r.id)} /></td>
+                <td className="border p-1">
+                  {r.status !== "replied" ? (
+                    <input type="checkbox" checked={selectedReplyIds.includes(r.id)} onChange={() => toggleSelectReply(r.id)} />
+                  ) : null}
+                </td>
                 <td className="border p-1">{r.accountId}</td>
                 <td className="border p-1">{r.threadsPostedAt}</td>
                 <td className="border p-1">
