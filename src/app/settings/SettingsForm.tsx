@@ -14,6 +14,9 @@ type Settings = {
   // [MOD] autoPost: boolean（既定 false）
   autoPost: boolean;
   doublePostDelay: string; // minutes as string
+  doublePostDelete?: boolean;
+  doublePostDeleteDelay?: string;
+  parentDelete?: boolean;
 };
 
 const DEFAULTS: Settings = {
@@ -25,6 +28,9 @@ const DEFAULTS: Settings = {
   replyPrompt: "",
   autoPost: false,
   doublePostDelay: "5",
+  doublePostDelete: false,
+  doublePostDeleteDelay: "60",
+  parentDelete: false,
 };
 
 export default function SettingsForm() {
