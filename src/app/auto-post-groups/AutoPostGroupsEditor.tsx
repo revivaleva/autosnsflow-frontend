@@ -399,7 +399,7 @@ function SlotEditor({ groupKey, items, loading, onReload }: { groupKey: string; 
               <th className="border p-1 w-20">順序</th>
               <th className="border p-1 w-28">時間帯</th>
               <th className="border p-1 w-96">テーマ</th>
-              <th className="border p-1 w-20"><div className="whitespace-pre-line">二段階\n投稿</div></th>
+              <th className="border p-1 w-20 text-center"><div>二段階<br/>投稿</div></th>
               <th className="border p-1 w-20">有効</th>
               <th className="border p-1 w-28">操作</th>
             </tr>
