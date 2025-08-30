@@ -21,6 +21,7 @@ const statusOptions = [
 export default function ScheduledPostsTable() {
   const [posts, setPosts] = useState<ScheduledPostType[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [userSettings, setUserSettings] = useState<any>(null);
   const [sortKey, setSortKey] = useState<"scheduledAt" | "status">("scheduledAt");
   const [sortAsc, setSortAsc] = useState<boolean>(true);
   const [filterStatus, setFilterStatus] = useState<ScheduledPostStatus>("");
@@ -110,6 +111,14 @@ export default function ScheduledPostsTable() {
       const res = await fetch(`/api/scheduled-posts`, { credentials: "include" });
       const data = await res.json();
       setPosts(data.posts ?? []);
+      // 追加: ユーザー設定も取得しておく（二段階投稿ディレイ/削除設定など）
+      try {
+        const r2 = await fetch(`/api/user-settings`, { credentials: "include" });
+        const s = await r2.json();
+        setUserSettings(s?.settings ?? null);
+      } catch (e) {
+        setUserSettings(null);
+      }
     } catch (e: any) {
       alert(e.message);
     } finally {
@@ -484,7 +493,7 @@ export default function ScheduledPostsTable() {
                     )}
                   </td>
                   <td className="border p-1">
-                    {/* [ADD] postUrl が無い場合はpostIdから生成したURLを使用、それもなければプロフィールURLへフォールバック */}
+                    {/* 投稿日時欄の表示を拡張：二段階投稿の予定・削除予定を反映 */}
                     {post.status === "posted" ? (
                       pUrl ? (
                         <a
@@ -518,7 +527,30 @@ export default function ScheduledPostsTable() {
                         </a>
                       )
                     ) : (
-                      "" /* 未投稿 */
+                      // 未投稿または削除予定の表示
+                      post.isDeleted ? (
+                        post.deletedAt ? new Date(post.deletedAt * 1000).toLocaleString() : "削除予定"
+                      ) : (
+                        // 未投稿かつ autoPostGroup で二段階削除設定がある場合は表示を上書き
+                        (() => {
+                          // 二段階投稿を行うかどうかは post.secondStageWanted (予約時フラグ) と userSettings.doublePostDelete の組み合わせで判断
+                          const wantsSecond = !!post.secondStageWanted;
+                          const deleteEnabled = !!userSettings?.doublePostDelete;
+                          const deleteDelayMin = Number(userSettings?.doublePostDeleteDelay || "0");
+                          if (!wantsSecond) return "投稿無し";
+                          // 二段階投稿が予定されている
+                          if (deleteEnabled && deleteDelayMin > 0) {
+                            return `投稿予定 (削除予定: 親(${deleteDelayMin}分))`;
+                          }
+                          // 削除はしないが二段階投稿は行う
+                          const delayMin = Number(userSettings?.doublePostDelay || "0");
+                          if (delayMin > 0) {
+                            // 表示は現在の予定時間 + delay を示す（簡易表示）
+                            return `投稿予定 (${delayMin}分後)`;
+                          }
+                          return "投稿予定 (未設定)";
+                        })()
+                      )
                     )}
                   </td>
                   <td className="border p-1">
