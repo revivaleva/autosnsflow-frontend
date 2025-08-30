@@ -104,11 +104,14 @@ function mapItem(it: any) {
     numericPostId: getS("numericPostId"), // 数字の投稿ID
     postUrl: getS("postUrl"),
     isDeleted: getB("isDeleted"),
+    deletedAt: getN("deletedAt"),
     replyCount: getN("replyCount") ?? 0,
     // 二段階投稿関連
     doublePostStatus: getS("doublePostStatus"),
     secondStagePostId: getS("secondStagePostId"),
     secondStageAt: getN("secondStageAt"),
+    // 予約側に保存される二段階投稿希望フラグ
+    secondStageWanted: getB("secondStageWanted"),
     timeRange: getS("timeRange"),
   };
 }
