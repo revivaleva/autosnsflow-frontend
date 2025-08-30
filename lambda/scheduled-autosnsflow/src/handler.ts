@@ -311,7 +311,7 @@ async function getUserSettings(userId = USER_ID) {
       TableName: TBL_SETTINGS,
       Key: { PK: { S: `USER#${userId}` }, SK: { S: "SETTINGS" } },
       ProjectionExpression:
-        "doublePostDelay, autoPost, dailyOpenAiLimit, defaultOpenAiCost, openaiApiKey, selectedModel, masterPrompt, openAiTemperature, openAiMaxTokens, autoPostAdminStop",
+        "doublePostDelay, autoPost, dailyOpenAiLimit, defaultOpenAiCost, openaiApiKey, selectedModel, masterPrompt, openAiTemperature, openAiMaxTokens, autoPostAdminStop, doublePostDelete, doublePostDeleteDelay, parentDelete",
     })
   );
   const delay = Number(out.Item?.doublePostDelay?.N || "0");
@@ -345,6 +345,9 @@ async function getUserSettings(userId = USER_ID) {
     masterPrompt,
     openAiTemperature,
     openAiMaxTokens,
+    doublePostDelete: out.Item?.doublePostDelete?.BOOL === true,
+    doublePostDeleteDelayMinutes: Number(out.Item?.doublePostDeleteDelay?.N || "60"),
+    parentDelete: out.Item?.parentDelete?.BOOL === true,
   };
 }
 
@@ -2096,7 +2099,9 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
     const pid = f.postId?.S || "";
     const nid = f.numericPostId?.S || "";
     const pat = f.postedAt?.N || "";
-    const ok = st === "posted" && pid && (!dp || dp !== "done") && apg.includes("自動投稿") && Number(pat || 0) <= threshold;
+    // secondStageWanted を尊重：存在すれば true のもののみ対象、未指定なら従来通り
+    const ssw = (typeof f.secondStageWanted !== 'undefined') ? (f.secondStageWanted?.BOOL === true || String(f.secondStageWanted?.S || '').toLowerCase() === 'true') : undefined;
+    const ok = st === "posted" && pid && (!dp || dp !== "done") && apg.includes("自動投稿") && Number(pat || 0) <= threshold && (ssw === undefined || ssw === true);
     if (debugMode && debugTried.length < 5) debugTried.push({ ksk, st, dp, apg, pid, nid, pat, ok });
     if (ok) { found = { kpk, ksk, pid, nid, pat }; break; }
   }
@@ -2229,6 +2234,14 @@ async function runFiveMinJobForUser(userId: any) {
     }
 
     if (a.skipped === "window_expired") rateSkipped++;
+    // 二段階投稿削除のスケジュールがある場合、期限切れのものを処理
+    try {
+      if (settings.doublePostDelete) {
+        await performScheduledDeletesForAccount(acct, userId, settings);
+      }
+    } catch (e) {
+      console.log("[warn] performScheduledDeletesForAccount failed:", e);
+    }
   }
 
   const urls = await getDiscordWebhooks(userId);
@@ -2242,6 +2255,51 @@ async function runFiveMinJobForUser(userId: any) {
   const base = `**[定期実行レポート] ${now} (every-5min)**\n${metrics}`;
   await postDiscordLog({ userId, content: base });
   return { userId, totalAuto, totalReply, totalTwo, rateSkipped };
+}
+
+// 指定アカウントの予約から deleteScheduledAt が過ぎているものを削除する処理
+async function performScheduledDeletesForAccount(acct: any, userId: any, settings: any) {
+  try {
+    const now = nowSec();
+    const q = await ddb.send(new QueryCommand({
+      TableName: TBL_SCHEDULED,
+      IndexName: GSI_POS_BY_ACC_TIME,
+      KeyConditionExpression: "accountId = :acc AND postedAt <= :th",
+      ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":th": { N: String(now) } },
+      ProjectionExpression: "PK, SK, postId, secondStagePostId, deleteScheduledAt, deleteParentAfter, status"
+    }));
+
+    for (const it of (q.Items || [])) {
+      const delAt = Number(it.deleteScheduledAt?.N || 0);
+      if (!delAt || delAt > now) continue;
+      const pk = it.PK.S, sk = it.SK.S;
+      const postId = it.postId?.S || "";
+      const secondId = it.secondStagePostId?.S || "";
+      const deleteParent = it.deleteParentAfter?.BOOL === true;
+
+      // 削除対象を判定してThreads APIで削除を試みる
+      try {
+        if (deleteParent && postId) {
+          await fetch(`https://graph.threads.net/v1.0/${encodeURIComponent(postId)}?access_token=${encodeURIComponent(acct.accessToken)}`, { method: 'DELETE' });
+        }
+        if (!deleteParent && secondId) {
+          await fetch(`https://graph.threads.net/v1.0/${encodeURIComponent(secondId)}?access_token=${encodeURIComponent(acct.accessToken)}`, { method: 'DELETE' });
+        }
+        // 成功したら予約レコードに削除フラグと削除日時をセット
+        await ddb.send(new UpdateItemCommand({
+          TableName: TBL_SCHEDULED,
+          Key: { PK: { S: pk }, SK: { S: sk } },
+          UpdateExpression: "SET isDeleted = :t, deletedAt = :ts",
+          ExpressionAttributeValues: { ":t": { BOOL: true }, ":ts": { N: String(now) } }
+        }));
+        await putLog({ userId, type: "second-stage-delete", accountId: acct.accountId, targetId: sk, status: "ok", message: "二段階投稿削除を実行" });
+      } catch (e) {
+        await putLog({ userId, type: "second-stage-delete", accountId: acct.accountId, targetId: sk, status: "error", message: "二段階投稿削除に失敗", detail: { error: String(e) } });
+      }
+    }
+  } catch (e) {
+    console.log("[warn] performScheduledDeletesForAccount error:", e);
+  }
 }
 
 /// ========== マスタ通知（集計サマリ） ==========
