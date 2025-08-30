@@ -39,7 +39,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
         // Threads 側削除（実装は lib/threads-delete に委譲）
         try {
-          await deleteThreadsPost({ postId, accountId });
+          await deleteThreadsPost({ postId, accountId, userId });
         } catch (e: any) {
           // 削除失敗はログにして status を update で記録
           await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${id}` } }, UpdateExpression: 'SET deleteAttemptFailed = :t', ExpressionAttributeValues: { ':t': { BOOL: true } } }));
