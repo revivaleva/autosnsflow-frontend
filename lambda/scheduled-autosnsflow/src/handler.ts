@@ -2266,12 +2266,24 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
       IndexName: GSI_POS_BY_ACC_TIME,
       KeyConditionExpression: "accountId = :acc AND postedAt <= :th",
       ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":th": { N: String(now) } },
-      ProjectionExpression: "PK, SK, postId, secondStagePostId, deleteScheduledAt, deleteParentAfter, status"
+      // include secondStageAt and deleteOnSecondStage flag (we no longer rely on fixed deleteScheduledAt)
+      ProjectionExpression: "PK, SK, postId, secondStagePostId, secondStageAt, deleteOnSecondStage, deleteParentAfter, status"
     }));
 
     for (const it of (q.Items || [])) {
-      const delAt = Number(it.deleteScheduledAt?.N || 0);
-      if (!delAt || delAt > now) continue;
+      const secondAt = Number(it.secondStageAt?.N || 0);
+      if (!secondAt) continue; // nothing to base delete timing on
+      // determine whether deletion is enabled for this reservation
+      const resDeleteFlag = it.deleteOnSecondStage?.BOOL === true;
+      const globalDeleteFlag = !!(settings && settings.doublePostDelete);
+      if (!resDeleteFlag && !globalDeleteFlag) {
+        // no deletion configured for this item
+        continue;
+      }
+      // compute delay (minutes) from settings, default to 0
+      const delayMin = Number(settings?.doublePostDeleteDelay || process.env.DOUBLE_POST_DELETE_DELAY || 0);
+      const threshold = secondAt + Math.floor(delayMin * 60);
+      if (threshold > now) continue;
       const pk = it.PK.S, sk = it.SK.S;
       const postId = it.postId?.S || "";
       const secondId = it.secondStagePostId?.S || "";
