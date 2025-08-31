@@ -19,12 +19,12 @@ export type ScheduledPostType = {
   numericPostId?: string; // 数字の投稿ID（リプライ取得用）
   postUrl?: string; // 投稿URL
   isDeleted?: boolean;
-  replyCount?: number;
   // 削除日時（予約が削除された/削除予定のタイムスタンプ秒）
   deletedAt?: number;
-  // 投稿後に設定される削除予定時刻（タイムスタンプ秒）
+  // 削除予定時刻（投稿後に設定される可能性がある）
   deleteScheduledAt?: number;
-  // スロットで指定された二段階投稿希望フラグ
+  replyCount?: number;
+  // 予約側に保存される二段階投稿希望フラグ
   secondStageWanted?: boolean;
   // リプライ状況
   replyStatus?: {
@@ -58,6 +58,8 @@ type AutoPostGroupItem = {
   timeRange: string;
   theme: string;
   enabled?: boolean;
+  // スロットで二段階投稿を指定できる
+  secondStageWanted?: boolean;
 };
 
 type Props = {
@@ -187,6 +189,7 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
   const [accounts, setAccounts] = useState<AccountItem[]>([]);
   const [groups, setGroups] = useState<AutoPostGroup[]>([]);
   const [masterPrompt, setMasterPrompt] = useState<string>(""); // [ADD]
+  const [userSettings, setUserSettings] = useState<any>(null);
 
   const [accountId, setAccountId] = useState(initial?.accountId || "");
   const [accountName, setAccountName] = useState(initial?.accountName || "");
@@ -199,11 +202,9 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
   const [scheduledAtLocal, setScheduledAtLocal] = useState(
     mode === "edit" ? toLocalDatetimeValueAny(initial?.scheduledAt) : "" // [FIX] Any対応
   );
-  // 二段階投稿希望フラグ（フォーム上で指定する）
-  const [secondStageWantedFlag, setSecondStageWantedFlag] = useState<boolean>(initial?.secondStageWanted || false);
-  // 削除予定（datetime-local）
-  const [deleteScheduledLocal, setDeleteScheduledLocal] = useState<string>(initial?.deleteScheduledAt ? toLocalDatetimeValue(initial?.deleteScheduledAt) : "");
-  // 削除対象（親を削除するかどうか）
+  // 二段階投稿チェック/二段階削除フラグ(日時は保持しない)/親削除フラグ
+  const [secondStageWantedFlag, setSecondStageWantedFlag] = useState<boolean>(!!initial?.secondStageWanted);
+  const [deleteOnSecondStageFlag, setDeleteOnSecondStageFlag] = useState<boolean>(!!(initial as any)?.deleteOnSecondStage);
   const [deleteParentAfterFlag, setDeleteParentAfterFlag] = useState<boolean>(false);
   // 投稿時間範囲（HH:MM）
   const [timeStart, setTimeStart] = useState<string>("00:00");
@@ -272,6 +273,7 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
           const j = await r.json();
           const s = j?.settings || j;
           setMasterPrompt(s?.masterPrompt || "");
+          setUserSettings(s || null);
         }
       } catch (e) {
         console.log("settings load error:", e);
@@ -286,6 +288,19 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
           now.getMinutes()
         )}`
       );
+    }
+
+    // モーダル開時にユーザー設定から二段階削除・親削除の既定値を反映（追加モード時）
+    if (mode === "add") {
+      if (userSettings) {
+        if (typeof userSettings.parentDelete !== 'undefined') setDeleteParentAfterFlag(!!userSettings.parentDelete);
+        if (typeof userSettings.doublePostDelete !== 'undefined') setDeleteOnSecondStageFlag(!!userSettings.doublePostDelete);
+      }
+      // スロットの二段階投稿既定を反映
+      if (autoType && groupItems && groupItems.length >= autoType) {
+        const slot = groupItems[autoType - 1];
+        if (typeof slot.secondStageWanted !== 'undefined') setSecondStageWantedFlag(!!slot.secondStageWanted);
+      }
     }
 
     // 初期 timeRange（編集時）
@@ -347,6 +362,7 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
           timeRange: String(it.timeRange || ""),
           theme: String(it.theme || ""),
           enabled: it.enabled !== false,
+          secondStageWanted: !!it.secondStageWanted,
         }));
         const enabledSorted = items
           .filter((x) => x.enabled)
@@ -404,19 +420,35 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
       setContent(initial.content || "");
       setScheduledAtLocal(toLocalDatetimeValueAny(initial.scheduledAt)); // [FIX]
       setSecondStageWantedFlag(!!initial.secondStageWanted);
-      setDeleteScheduledLocal(initial?.deleteScheduledAt ? toLocalDatetimeValue(initial.deleteScheduledAt) : "");
+      setDeleteOnSecondStageFlag(!!(initial as any).deleteOnSecondStage);
+      setDeleteParentAfterFlag(!!(initial as any).deleteParentAfter);
       // [MOD] 種別/グループは initial.autoPostGroupId 側で復元するためここではクリア
       setAutoType(null);
       setGroupId("");
     }
   }, [open, mode, initial]);
 
+  // AI生成時に自動投稿グループやユーザー設定からチェック状態を反映するユーティリティ
+  const applyDefaultsFromGroupAndSettings = () => {
+    // 自動投稿グループのスロット設定を参照
+    if (autoType && groupItems && groupItems.length >= autoType) {
+      const slot = groupItems[autoType - 1];
+      if (typeof slot.secondStageWanted !== 'undefined') setSecondStageWantedFlag(!!slot.secondStageWanted);
+    }
+    // ユーザー設定から親削除・二段階削除の既定値を参照
+    if (userSettings) {
+      if (typeof userSettings.parentDelete !== 'undefined') setDeleteParentAfterFlag(!!userSettings.parentDelete);
+      if (typeof userSettings.doublePostDelete !== 'undefined') {
+        setDeleteOnSecondStageFlag(!!userSettings.doublePostDelete);
+      }
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const scheduledPostId =
       mode === "add" ? Math.random().toString(36).slice(2, 12) : (initial?.scheduledPostId as string);
     const unix = scheduledAtLocal ? datetimeLocalToEpochSec(scheduledAtLocal) : 0;
-    const deleteUnix = deleteScheduledLocal ? datetimeLocalToEpochSec(deleteScheduledLocal) : undefined;
 
     let autoPostGroupId = "";
     if (selectedGroup && autoType) {
@@ -432,15 +464,17 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
       theme,
       autoPostGroupId,
       timeRange: `${timeStart}-${timeEnd}`,
-      // 二段階投稿指定を明示して保存
+      // 二段階投稿/削除予定/親削除フラグ
       secondStageWanted: !!secondStageWantedFlag,
-      // 削除予定と種別（親削除）
-      deleteScheduledAt: deleteUnix,
-      // deleteParentAfter は editor では未選択時 false とする
-      // フロント側の型では未定義許容なのでここでは含めないが、API側で反映する
+      deleteScheduledAt: deleteOnSecondStageFlag && scheduledAtLocal ? datetimeLocalToEpochSec(scheduledAtLocal) : undefined,
+      // note: deleteParentAfterFlag will be sent from editor if true
     };
 
-    await onSave(payload);
+    // attach deleteParentAfter only if true to avoid adding undefined to some Put flows
+    const outPayload = { ...payload } as any;
+    if (deleteParentAfterFlag) outPayload.deleteParentAfter = true;
+
+    await onSave(outPayload);
     onClose();
   };
 
@@ -506,6 +540,9 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
       .filter(Boolean)
       .join("\n\n");
 
+    // AI生成直前にデフォルトのチェック状態を適用
+    applyDefaultsFromGroupAndSettings();
+
     try {
       setIsGenerating(true);
       const res = await fetch("/api/ai-gateway", {
@@ -541,7 +578,7 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
       <form onSubmit={handleSubmit} className="bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 w-[640px] max-w-[96vw] rounded-xl p-5 shadow-xl relative">
-        <button type="button" className="absolute top-2 right-2 text-gray-400 text-2xl p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800" onClick={onClose} aria-label="閉じる">×</button>
+        <button type="button" className="absolute top-2 right-2 text-gray-400 text-2xl p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800" onClick={onClose} aria-label="閉じる" disabled={isGenerating}>×</button>
         <h3 className="text-lg font-semibold mb-4">{mode === "add" ? "予約投稿の追加" : "予約投稿の編集"}</h3>
 
         <label className="block text-sm font-medium">アカウント</label>
@@ -640,6 +677,25 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
           <p className="text-xs text-gray-500 mt-1">グループ未選択時は 00:00～23:59 が既定になります</p>
         </div>
 
+        {/* 二段階投稿・削除設定 */}
+        <div className="mt-4 grid grid-cols-3 gap-3 items-center">
+          <div>
+            <label className="block text-sm font-medium">二段階投稿</label>
+            <input type="checkbox" className="mt-2" checked={secondStageWantedFlag} onChange={(e) => setSecondStageWantedFlag(e.target.checked)} />
+          </div>
+          <div>
+            <label className="block text-sm font-medium">二段階投稿削除予定</label>
+            <div className="flex items-center gap-2 mt-2">
+              <input type="checkbox" checked={deleteOnSecondStageFlag} onChange={(e) => { setDeleteOnSecondStageFlag(e.target.checked); if (!e.target.checked) setScheduledAtLocal(""); }} />
+              <span className="text-xs text-gray-500">チェックすると二段階投稿の削除予定を有効化します（遅延は設定に従います）</span>
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium">親投稿も削除</label>
+            <input type="checkbox" className="mt-2" checked={deleteParentAfterFlag} onChange={(e) => setDeleteParentAfterFlag(e.target.checked)} />
+          </div>
+        </div>
+
         <div className="mt-4">
           <label className="block text-sm font-medium">予約日時</label>
           <input
@@ -661,8 +717,8 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
         </div>
 
         <div className="flex justify-end gap-2 mt-5">
-          <button type="submit" className="bg-green-600 text-white rounded px-5 py-2 hover:bg-green-700">
-            保存
+          <button type="submit" className={`bg-green-600 text-white rounded px-5 py-2 ${isGenerating ? 'opacity-60 cursor-not-allowed' : 'hover:bg-green-700'}`} disabled={isGenerating}>
+            {isGenerating ? '生成中...' : '保存'}
           </button>
         </div>
       </form>

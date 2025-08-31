@@ -1568,10 +1568,17 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
     }
 
     // 予約作成 → 本文生成
+    // overrideTheme may contain comma-separated themes; pick one randomly like the editor does
+    let slotTheme = String(slot.theme || "");
+    if (slotTheme.includes(",")) {
+      const parts = slotTheme.split(",").map((s: any) => String(s).trim()).filter(Boolean);
+      if (parts.length > 0) slotTheme = parts[Math.floor(Math.random() * parts.length)];
+    }
+
     const { id, themeStr } = await createScheduledPost(userId, {
       acct, group, type: idx, whenJst: when,
       // テーマ/時間帯：スロットに設定があればそれを優先
-      overrideTheme: String(slot.theme || ""),
+      overrideTheme: slotTheme,
       overrideTimeRange: String(slot.timeRange || ""),
       // スロット単位の二段階投稿指定を予約データへ伝搬
       secondStageWanted: !!slot.secondStageWanted,
@@ -2269,25 +2276,81 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
       IndexName: GSI_POS_BY_ACC_TIME,
       KeyConditionExpression: "accountId = :acc AND postedAt <= :th",
       ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":th": { N: String(now) } },
-      ProjectionExpression: "PK, SK, postId, secondStagePostId, deleteScheduledAt, deleteParentAfter, status"
+      // include secondStageAt and deleteOnSecondStage flag (we no longer rely on fixed deleteScheduledAt)
+      ProjectionExpression: "PK, SK, postId, secondStagePostId, secondStageAt, deleteOnSecondStage, deleteParentAfter, status"
     }));
 
     for (const it of (q.Items || [])) {
-      const delAt = Number(it.deleteScheduledAt?.N || 0);
-      if (!delAt || delAt > now) continue;
+      const secondAt = Number(it.secondStageAt?.N || 0);
+      if (!secondAt) continue; // nothing to base delete timing on
+      // determine whether deletion is enabled for this reservation
+      const resDeleteFlag = it.deleteOnSecondStage?.BOOL === true;
+      const globalDeleteFlag = !!(settings && settings.doublePostDelete);
+      let effectiveDeleteFlag = resDeleteFlag || globalDeleteFlag;
+      // track which source enabled deletion for observability
+      let flagSource: string | null = null;
+      if (resDeleteFlag) flagSource = 'explicit';
+      else if (globalDeleteFlag) flagSource = 'userSetting';
+      // If not enabled explicitly, try to infer from auto-post-group slot settings (match by timeRange)
+      if (!effectiveDeleteFlag) {
+        const timeRange = it.timeRange?.S || "";
+        if (timeRange) {
+          try {
+            const slotsQ = await ddb.send(new QueryCommand({
+              TableName: TBL_GROUPS,
+              KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+              ExpressionAttributeValues: { ":pk": { S: `USER#${userId}` }, ":pfx": { S: `GROUPITEM#` } },
+              ProjectionExpression: "timeRange, secondStageWanted"
+            }));
+            for (const s of (slotsQ.Items || [])) {
+              const slotTr = s.timeRange?.S || "";
+              const slotSecond = s.secondStageWanted?.BOOL === true;
+              if (slotSecond && slotTr === timeRange) {
+                effectiveDeleteFlag = true;
+                flagSource = 'slotInference';
+                break;
+              }
+            }
+          } catch (e) {
+            console.log("[warn] failed to load slots for delete inference:", String(e));
+          }
+        }
+      }
+      if (!effectiveDeleteFlag) {
+        // nothing to do for this item
+        continue;
+      }
+      // compute delay (minutes) from settings, default to 0
+      const delayMin = Number(settings?.doublePostDeleteDelay || process.env.DOUBLE_POST_DELETE_DELAY || 0);
+      const threshold = secondAt + Math.floor(delayMin * 60);
+      if (threshold > now) continue;
       const pk = it.PK.S, sk = it.SK.S;
       const postId = it.postId?.S || "";
       const secondId = it.secondStagePostId?.S || "";
       const deleteParent = it.deleteParentAfter?.BOOL === true;
 
-      // 削除対象を判定してThreads APIで削除を試みる
+      // 削除対象を判定してThreads APIで削除を試みる（共通ユーティリティ経由、詳細ログ追加）
       try {
+        const { deleteThreadPost } = await import("../../../packages/backend-core/src/services/threadsDelete");
+
+        // トークンハッシュを作成（ログにそのままトークンを出さない）
+        const tokenHash = acct.accessToken ? crypto.createHash("sha256").update(acct.accessToken).digest("hex").slice(0, 12) : "";
+
+        let deleteResult: any = null;
         if (deleteParent && postId) {
-          await fetch(`https://graph.threads.net/v1.0/${encodeURIComponent(postId)}?access_token=${encodeURIComponent(acct.accessToken)}`, { method: 'DELETE' });
+          deleteResult = await deleteThreadPost({ postId, accessToken: acct.accessToken });
         }
         if (!deleteParent && secondId) {
-          await fetch(`https://graph.threads.net/v1.0/${encodeURIComponent(secondId)}?access_token=${encodeURIComponent(acct.accessToken)}`, { method: 'DELETE' });
+          deleteResult = await deleteThreadPost({ postId: secondId, accessToken: acct.accessToken });
         }
+
+        // Delete result must be checked
+        if (!deleteResult || !deleteResult.ok) {
+          // 保存用だけputLogして上位catchへ投げる
+          await putLog({ userId, type: "second-stage-delete", accountId: acct.accountId, targetId: sk, status: "error", message: "二段階投稿削除に失敗(HTTP)", detail: { whichFlagUsed: flagSource || 'unknown', deleteTarget: deleteParent ? 'parent' : 'second-stage', postId: postId || secondId || '', statusCode: deleteResult?.status || 0, bodySnippet: (deleteResult?.body || '').slice(0, 1000), accessTokenHash: tokenHash } });
+          throw new Error(`threads delete failed: ${deleteResult?.status} ${deleteResult?.body}`);
+        }
+
         // 成功したら予約レコードに削除フラグと削除日時をセット
         await ddb.send(new UpdateItemCommand({
           TableName: TBL_SCHEDULED,
@@ -2295,9 +2358,10 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
           UpdateExpression: "SET isDeleted = :t, deletedAt = :ts",
           ExpressionAttributeValues: { ":t": { BOOL: true }, ":ts": { N: String(now) } }
         }));
-        await putLog({ userId, type: "second-stage-delete", accountId: acct.accountId, targetId: sk, status: "ok", message: "二段階投稿削除を実行" });
+
+        await putLog({ userId, type: "second-stage-delete", accountId: acct.accountId, targetId: sk, status: "ok", message: "二段階投稿削除を実行", detail: { whichFlagUsed: flagSource || 'unknown', deleteTarget: deleteParent ? 'parent' : 'second-stage', postId: postId || secondId || '', statusCode: deleteResult.status, bodySnippet: (deleteResult.body || '').slice(0, 1000), accessTokenHash: tokenHash } });
       } catch (e) {
-        await putLog({ userId, type: "second-stage-delete", accountId: acct.accountId, targetId: sk, status: "error", message: "二段階投稿削除に失敗", detail: { error: String(e) } });
+        await putLog({ userId, type: "second-stage-delete", accountId: acct.accountId, targetId: sk, status: "error", message: "二段階投稿削除に失敗", detail: { error: String(e), whichFlagUsed: flagSource || 'unknown', deleteTarget: deleteParent ? 'parent' : 'second-stage', postId: postId || '', secondId: secondId || '' } });
       }
     }
   } catch (e) {

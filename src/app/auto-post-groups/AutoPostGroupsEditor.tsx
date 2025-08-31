@@ -20,6 +20,8 @@ type SlotType = {
   theme: string;
   enabled: boolean;
   secondStageWanted?: boolean;
+  // スロット単位で二段階投稿削除を有効にするか
+  slotDeleteOnSecondStage?: boolean;
 };
 
 type ScheduleType = { start: string; end: string; theme: string };
@@ -341,12 +343,12 @@ function SlotEditor({ groupKey, items, loading, onReload }: { groupKey: string; 
     onReload();
   };
 
-  const saveRow = async (it: SlotType) => {
+  const saveRow = async (it: SlotType & { slotDeleteOnSecondStage?: boolean }) => {
     await fetch(API_ITEMS, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({ groupKey, slotId: it.slotId, timeRange: it.timeRange, theme: it.theme, enabled: it.enabled, secondStageWanted: !!it.secondStageWanted }),
+      body: JSON.stringify({ groupKey, slotId: it.slotId, timeRange: it.timeRange, theme: it.theme, enabled: it.enabled, secondStageWanted: !!it.secondStageWanted, slotDeleteOnSecondStage: !!(it as any).slotDeleteOnSecondStage }),
     });
     onReload();
   };
@@ -399,7 +401,7 @@ function SlotEditor({ groupKey, items, loading, onReload }: { groupKey: string; 
               <th className="border p-1 w-20">順序</th>
               <th className="border p-1 w-28">時間帯</th>
               <th className="border p-1 w-96">テーマ</th>
-              <th className="border p-1 w-20 text-center"><div>二段階<br/>投稿</div></th>
+              <th className="border p-1 w-20">二段階投稿</th>
               <th className="border p-1 w-20">有効</th>
               <th className="border p-1 w-28">操作</th>
             </tr>
@@ -431,6 +433,7 @@ function SlotEditor({ groupKey, items, loading, onReload }: { groupKey: string; 
                   <td className="border p-1 text-center">
                     <input type="checkbox" checked={!!it.secondStageWanted} onChange={(e) => setField(i, 'secondStageWanted', e.target.checked)} />
                   </td>
+                  {/* slot-level delete flag removed from UI; use group slot secondStageWanted + global settings */}
                   <td className="border p-1 text-center">
                     <input type="checkbox" checked={it.enabled}
                       onChange={(e) => setField(i, 'enabled', e.target.checked)} />

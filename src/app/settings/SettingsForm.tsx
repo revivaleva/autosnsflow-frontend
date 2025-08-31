@@ -14,9 +14,12 @@ type Settings = {
   // [MOD] autoPost: boolean（既定 false）
   autoPost: boolean;
   doublePostDelay: string; // minutes as string
-  doublePostDelete?: boolean;
-  doublePostDeleteDelay?: string;
-  parentDelete?: boolean;
+  // 二段階投稿削除を有効化するか
+  doublePostDelete: boolean;
+  // 二段階投稿削除の遅延（分）
+  doublePostDeleteDelay: string;
+  // 親投稿も削除するか
+  parentDelete: boolean;
 };
 
 const DEFAULTS: Settings = {
@@ -79,6 +82,11 @@ export default function SettingsForm() {
       });
       if (!r.ok) throw new Error("保存に失敗しました");
       setMessage("保存しました");
+      try {
+        window.dispatchEvent(new CustomEvent("userSettingsUpdated", { detail: values }));
+      } catch (e) {
+        // ignore in environments that disallow window events
+      }
     } catch (e: any) {
       setMessage(e?.message || "保存に失敗しました");
     } finally {

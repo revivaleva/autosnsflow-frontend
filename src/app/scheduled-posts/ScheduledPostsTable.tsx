@@ -21,8 +21,6 @@ const statusOptions = [
 export default function ScheduledPostsTable() {
   const [posts, setPosts] = useState<ScheduledPostType[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
-  const [userSettings, setUserSettings] = useState<any>(null);
-  const [groupSlotSecondWanted, setGroupSlotSecondWanted] = useState<Record<string, boolean>>({});
   const [sortKey, setSortKey] = useState<"scheduledAt" | "status">("scheduledAt");
   const [sortAsc, setSortAsc] = useState<boolean>(true);
   const [filterStatus, setFilterStatus] = useState<ScheduledPostStatus>("");
@@ -51,47 +49,46 @@ export default function ScheduledPostsTable() {
 
   const handleBulkDelete = async () => {
     if (selectedIds.length === 0) return alert("選択がありません");
-    // ユーザに未投稿削除 or 投稿削除を選ばせる
-    const mode = window.prompt('削除モードを入力してください: "physical" 未投稿を物理削除 / "post" 投稿済の投稿削除 (Threads) を論理削除する', 'physical');
-    if (!mode) return;
-    if (mode === 'physical') {
-      // 未投稿の物理削除: 呼び出し先は /api/scheduled-posts/physical-delete
-      if (!confirm(`選択した ${selectedIds.length} 件を物理削除しますか？`)) return;
-      try {
-        const resp = await fetch('/api/scheduled-posts/physical-delete', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ scheduledPostIds: selectedIds }),
-        });
-        const data = await resp.json().catch(() => ({}));
-        if (!resp.ok) throw new Error(data?.error || 'physical_delete_failed');
-        // 成功したものはUI上から除去
-        setPosts(prev => prev.filter(p => !selectedIds.includes(p.scheduledPostId)));
-        clearSelection();
-      } catch (e: any) {
-        alert(`物理削除に失敗しました: ${e.message || String(e)}`);
+    if (!confirm(`選択した ${selectedIds.length} 件を削除しますか？`)) return;
+    setBulkDeleting(true);
+    try {
+      // Execute same patch flow as single delete per item to keep behavior identical
+      const results: { id: string; ok: boolean; deleted: boolean }[] = [];
+      for (const id of selectedIds) {
+        try {
+          const resp = await fetch(`/api/scheduled-posts`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ scheduledPostId: id, isDeleted: true }),
+          });
+          const data = await resp.json().catch(() => ({}));
+          if (!resp.ok || !data?.ok) {
+            results.push({ id, ok: false, deleted: false });
+          } else {
+            results.push({ id, ok: true, deleted: !!data.deleted });
+          }
+        } catch (e) {
+          results.push({ id, ok: false, deleted: false });
+        }
       }
-    } else if (mode === 'post') {
-      // 投稿済みの投稿削除（Threads API呼び出し + DB論理削除）
-      if (!confirm(`選択した ${selectedIds.length} 件の投稿削除(Threads)を実行しますか？`)) return;
-      try {
-        const resp = await fetch('/api/scheduled-posts/bulk-delete-posts', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ scheduledPostIds: selectedIds }),
-        });
-        const data = await resp.json().catch(() => ({}));
-        if (!resp.ok) throw new Error(data?.error || 'bulk_post_delete_failed');
-        // 削除済は isDeleted=true と deletedAt を反映
-        setPosts(prev => prev.map(p => selectedIds.includes(p.scheduledPostId) ? { ...p, isDeleted: true, deletedAt: Math.floor(Date.now() / 1000) } : p));
-        clearSelection();
-      } catch (e: any) {
-        alert(`投稿削除に失敗しました: ${e.message || String(e)}`);
-      }
-    } else {
-      alert('不明なモードです');
+
+      // Apply results client-side using same rules as handleDelete
+      setPosts(prev => prev.flatMap(p => {
+        if (!selectedIds.includes(p.scheduledPostId)) return [p];
+        const r = results.find(x => x.id === p.scheduledPostId);
+        if (!r || !r.ok) return [p]; // leave unchanged on failure
+        // If server reported deleted=true and post was not posted, remove from list
+        if (r.deleted && !(p.status === "posted")) return [] as any;
+        // Otherwise mark isDeleted
+        return [{ ...p, isDeleted: true }];
+      }));
+
+      clearSelection();
+    } catch (e: any) {
+      alert(`一括削除に失敗しました: ${e.message || String(e)}`);
+    } finally {
+      setBulkDeleting(false);
     }
   };
 
@@ -104,6 +101,7 @@ export default function ScheduledPostsTable() {
   // [ADD] デバッグ関連のstate
   const [debugModalOpen, setDebugModalOpen] = useState<boolean>(false);
   const [debugData, setDebugData] = useState<any>(null);
+  const [bulkDeleting, setBulkDeleting] = useState<boolean>(false);
 
   // 一覧取得（既存API）
   const loadPosts = async () => {
@@ -112,36 +110,6 @@ export default function ScheduledPostsTable() {
       const res = await fetch(`/api/scheduled-posts`, { credentials: "include" });
       const data = await res.json();
       setPosts(data.posts ?? []);
-      // 追加: ユーザー設定も取得しておく（二段階投稿ディレイ/削除設定など）
-      try {
-        const r2 = await fetch(`/api/user-settings`, { credentials: "include" });
-        const s = await r2.json();
-        setUserSettings(s?.settings ?? null);
-      } catch (e) {
-        setUserSettings(null);
-      }
-
-      // 追加: 自動投稿グループのスロット情報を取得して二段階投稿フラグを補完
-      try {
-        const mapping: Record<string, boolean> = {};
-        const groupKeys = Array.from(new Set((data.posts || []).map((p: any) => p.autoPostGroupId).filter(Boolean)));
-        for (const gk of groupKeys) {
-          try {
-            const resSlots = await fetch(`/api/auto-post-group-items?groupKey=${encodeURIComponent(String(gk))}`, { credentials: "include" });
-            const j = await resSlots.json().catch(() => ({}));
-            const items = j.items || [];
-            for (const it of items) {
-              const key = `${gk}::${it.timeRange || ""}`;
-              mapping[key] = !!it.secondStageWanted;
-            }
-          } catch (e) {
-            // ignore per-group errors
-          }
-        }
-        setGroupSlotSecondWanted(mapping);
-      } catch (e) {
-        setGroupSlotSecondWanted({});
-      }
     } catch (e: any) {
       alert(e.message);
     } finally {
@@ -151,9 +119,16 @@ export default function ScheduledPostsTable() {
 
   useEffect(() => {
     loadPosts();
+    // リモート設定が変わったら一覧を再読み込み
+    const handler = (e: any) => {
+      loadPosts();
+    };
+    window.addEventListener("userSettingsUpdated", handler as EventListener);
+    return () => window.removeEventListener("userSettingsUpdated", handler as EventListener);
   }, []);
 
   // [MOD] 追加
+
   const openAdd = () => {
     setEditorMode("add");
     setEditorInitial(null);
@@ -187,40 +162,59 @@ export default function ScheduledPostsTable() {
 
   // [MOD] 編集保存（既存PATCH）
   const handleEditSave = async (edited: ScheduledPostType) => {
+    // Send full editable fields so server saves secondStageWanted/deleteScheduledAt/deleteParentAfter
+    const payload: any = {
+      scheduledPostId: edited.scheduledPostId,
+      content: edited.content,
+      scheduledAt: edited.scheduledAt,
+    };
+    if (typeof (edited as any).secondStageWanted !== 'undefined') payload.secondStageWanted = !!(edited as any).secondStageWanted;
+    if (typeof (edited as any).deleteScheduledAt !== 'undefined') payload.deleteScheduledAt = (edited as any).deleteScheduledAt;
+    if (typeof (edited as any).deleteParentAfter !== 'undefined') payload.deleteParentAfter = !!(edited as any).deleteParentAfter;
+
     const resp = await fetch(`/api/scheduled-posts`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({
-        scheduledPostId: edited.scheduledPostId,
-        content: edited.content,
-        scheduledAt: edited.scheduledAt,
-      }),
+      body: JSON.stringify(payload),
     });
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok || !data?.ok) {
       alert(`更新に失敗しました: ${data?.error || resp.statusText}`);
       return;
     }
-    setPosts((prev) =>
-      prev.map((p) =>
-        p.scheduledPostId === edited.scheduledPostId ? { ...p, ...edited } : p
-      )
-    );
+
+    // Prefer authoritative server response if available
+    const updated = data.post || edited;
+    setPosts((prev) => prev.map((p) => (p.scheduledPostId === edited.scheduledPostId ? { ...p, ...updated } : p)));
   };
 
-  // 削除（既存）
+  // 削除（新）: 未投稿は物理削除、投稿済は実投稿削除 + 論理削除
   const handleDelete = async (id: string) => {
     if (!window.confirm("削除しますか？")) return;
-    await fetch(`/api/scheduled-posts`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ scheduledPostId: id, isDeleted: true }),
-    });
-    setPosts((prev) =>
-      prev.map((p) => (p.scheduledPostId === id ? { ...p, isDeleted: true } : p))
-    );
+    try {
+      const resp = await fetch(`/api/scheduled-posts`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ scheduledPostId: id, isDeleted: true }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || !data?.ok) {
+        throw new Error(data?.error || resp.statusText || "削除に失敗しました");
+      }
+
+      // 未投稿はサーバ側で物理削除される -> クライアント側でも一覧から除外
+      if (data.deleted && !(posts.find(p => p.scheduledPostId === id)?.status === "posted")) {
+        setPosts(prev => prev.filter(p => p.scheduledPostId !== id));
+        return;
+      }
+
+      // 投稿済みは論理削除 -> isDeleted を true にしてグレーアウト表示
+      setPosts((prev) => prev.map((p) => (p.scheduledPostId === id ? { ...p, isDeleted: true, deletedAt: data.deletedAt || p.deletedAt } : p)));
+    } catch (e: any) {
+      alert(`削除に失敗しました: ${e.message || String(e)}`);
+    }
   };
 
   // リプモーダル（既存UIのまま）
@@ -368,8 +362,16 @@ export default function ScheduledPostsTable() {
         onSave={editorMode === "add" ? handleAddSave : handleEditSave}
       />
 
+      {bulkDeleting && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
+          <div className="bg-white rounded p-4 shadow">
+            <div className="text-center font-medium">一括削除実行中…</div>
+          </div>
+        </div>
+      )}
+
       {/* 既存ボタン群 */}
-      <div className="flex justify-between items-center mb-4">
+      <div className="flex justify-between items-center mb-4" style={{ background: 'white', paddingTop: 8, paddingBottom: 8 }}>
         <h2 className="text-xl font-bold">予約投稿一覧</h2>
         <div className="flex gap-2">
           <button
@@ -401,13 +403,14 @@ export default function ScheduledPostsTable() {
           <button
             onClick={handleBulkDelete}
             className="bg-red-500 text-white rounded px-3 py-1 hover:bg-red-600"
+            disabled={bulkDeleting}
           >
-            選択削除
+            {bulkDeleting ? "削除中..." : "選択削除"}
           </button>
         </div>
       </div>
 
-      <div className="flex space-x-2 mb-2">
+      <div className="flex space-x-2 mb-2" style={{ paddingTop: 6, paddingBottom: 6 }}>
         <select
           className="border rounded p-1"
           value={filterStatus}
@@ -445,18 +448,19 @@ export default function ScheduledPostsTable() {
         <table className="min-w-full bg-white dark:bg-gray-900 border">
           <thead className="dark:bg-gray-800">
             <tr>
-              <th className="border p-1"><input type="checkbox" checked={selectedIds.length === sortedPosts.length && sortedPosts.length > 0} onChange={(e) => e.target.checked ? selectAllVisible() : clearSelection()} /></th>
-              <th className="border p-1">アカウント名</th>
-              <th className="border p-1">アカウントID</th>
-              <th className="border p-1">予約投稿日時</th>
-              <th className="border p-1">自動投稿</th>
-              <th className="border p-1">生成テーマ</th>
-              <th className="border p-1">本文テキスト</th>
-              <th className="border p-1">投稿日時</th>
-              <th className="border p-1">投稿ID</th>
-              <th className="border p-1">二段階投稿</th>
-              <th className="border p-1">リプ状況</th>
-              <th className="border p-1">アクション</th>
+              <th className="border p-1" style={{ width: 40 }}><input type="checkbox" checked={selectedIds.length === sortedPosts.length && sortedPosts.length > 0} onChange={(e) => e.target.checked ? selectAllVisible() : clearSelection()} /></th>
+              <th className="border p-1" style={{ width: 180 }}>アカウント</th>
+              <th className="border p-1" style={{ width: 160 }}>予約投稿日時</th>
+              <th className="border p-1" style={{ width: 140 }}>自動投稿</th>
+              <th className="border p-1" style={{ width: 200 }}>生成テーマ</th>
+              <th className="border p-1" style={{ width: 360 }}>本文テキスト</th>
+              <th className="border p-1" style={{ width: 160 }}>投稿日時</th>
+              <th className="border p-1" style={{ width: 140 }}>投稿ID</th>
+              <th className="border p-1" style={{ width: 140 }}>二段階投稿</th>
+              <th className="border p-1" style={{ width: 120 }}>二段階投稿削除</th>
+              <th className="border p-1" style={{ width: 120 }}>投稿削除</th>
+              <th className="border p-1" style={{ width: 90 }}>リプ状況</th>
+              <th className="border p-1" style={{ width: 180 }}>アクション</th>
             </tr>
           </thead>
           <tbody>
@@ -478,58 +482,23 @@ export default function ScheduledPostsTable() {
               return (
                 <tr key={post.scheduledPostId} className={deleted ? 'bg-gray-100 text-gray-500' : ''}>
                   <td className="border p-1">{!deleted && <input type="checkbox" checked={selectedIds.includes(post.scheduledPostId)} onChange={() => toggleSelect(post.scheduledPostId)} />}</td>
-                  <td className="border p-1">{post.accountName}</td>
-                  <td className="border p-1">{post.accountId}</td>
                   <td className="border p-1">
-                    {post.status === "posted" ? (
-                      post.postedAt
-                        ? typeof post.postedAt === "number"
-                          ? new Date(post.postedAt * 1000).toLocaleString()
-                          : (post.postedAt as any)
-                        : ""
-                    ) : post.isDeleted ? (
-                      post.deletedAt ? new Date(post.deletedAt * 1000).toLocaleString() : "削除予定"
-                    ) : (
-                      // 未投稿時: 時刻表示（scheduledAt がある場合は時刻のみ）、下に削除予定時刻を表示
-                      <div>
-                        <div className="text-sm">
-                          {post.scheduledAt
-                            ? typeof post.scheduledAt === 'number'
-                              ? new Date(post.scheduledAt * 1000).toLocaleString()
-                              : new Date(String(post.scheduledAt)).toLocaleString()
-                            : (post.autoPostGroupId && post.timeRange ? post.timeRange : '')}
-                        </div>
-                        {/* 削除予定時刻があれば表示 */}
-                        {post.deleteScheduledAt ? (
-                          <div className="text-xs text-red-600">
-                            削除予定: {typeof post.deleteScheduledAt === 'number' ? new Date(post.deleteScheduledAt * 1000).toLocaleString() : new Date(String(post.deleteScheduledAt)).toLocaleString()}
-                          </div>
-                        ) : (() => {
-                          // 以前のロジック: 二段階投稿の設定により削除予定を表示する場合
-                          let wantsSecond = !!post.secondStageWanted;
-                          if (!wantsSecond && post.autoPostGroupId && post.timeRange) {
-                            const key = `${post.autoPostGroupId}::${post.timeRange}`;
-                            wantsSecond = !!groupSlotSecondWanted[key];
-                          }
-                          const deleteEnabled = !!userSettings?.doublePostDelete;
-                          const deleteDelayMin = Number(userSettings?.doublePostDeleteDelay || "0");
-                          if (wantsSecond && deleteEnabled && deleteDelayMin > 0) {
-                            return <div className="text-xs text-red-600">削除予定 (親({deleteDelayMin}分))</div>;
-                          }
-                          return null;
-                        })()}
-                      </div>
-                    )}
+                    <div className="text-sm font-medium">{post.accountName}</div>
+                    <div className="text-xs text-gray-500 break-words">{post.accountId}</div>
+                  </td>
+                  <td className="border p-1">
+                    {post.scheduledAt
+                      ? typeof post.scheduledAt === "number"
+                        ? new Date(post.scheduledAt * 1000).toLocaleString()
+                        : post.scheduledAt
+                      : ""}
                   </td>
                   <td className="border p-1">{autoPostLabel}</td>
-                  <td className="border p-1">{post.theme}</td>
                   <td className="border p-1">
-                    <div 
-                      className="truncate max-w-xs" 
-                      title={post.content}
-                    >
-                      {post.content}
-                    </div>
+                    <div className="text-sm" style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'normal', maxHeight: '3rem' }} title={post.theme}>{post.theme}</div>
+                  </td>
+                  <td className="border p-1">
+                    <div className="text-sm text-[13px] leading-tight" style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'normal', maxHeight: '4.2rem' }} title={post.content}>{post.content}</div>
                   </td>
                   <td className="border p-1">
                     {post.status === "posted" ? (
@@ -539,7 +508,7 @@ export default function ScheduledPostsTable() {
                           : (post.postedAt as any)
                         : ""
                     ) : deleted ? (
-                      post.deletedAt ? new Date(post.deletedAt * 1000).toLocaleString() : "削除予定"
+                      (post as any).deletedAt ? new Date((post as any).deletedAt * 1000).toLocaleString() : "削除予定"
                     ) : (
                       // 未投稿かつ自動投稿グループ使用時は timeRange を表示
                       <span className="text-xs text-gray-600">
@@ -550,7 +519,7 @@ export default function ScheduledPostsTable() {
                     )}
                   </td>
                   <td className="border p-1">
-                    {/* 投稿ID 列: posted の場合はリンク、未投稿は空 */}
+                    {/* [ADD] postUrl が無い場合はpostIdから生成したURLを使用、それもなければプロフィールURLへフォールバック */}
                     {post.status === "posted" ? (
                       pUrl ? (
                         <a
@@ -560,7 +529,7 @@ export default function ScheduledPostsTable() {
                           className="text-blue-600 underline"
                           title="Threadsで開く"
                         >
-                          {pUrl.split("/post/").pop()}
+                          {pUrl.split("/post/").pop() /* ショートコードだけ表示 */}
                         </a>
                       ) : generatedUrl ? (
                         <a
@@ -570,7 +539,7 @@ export default function ScheduledPostsTable() {
                           className="text-blue-600 underline"
                           title="Threadsで開く"
                         >
-                          {postId}
+                          {postId /* postID表示 */}
                         </a>
                       ) : (
                         <a
@@ -584,51 +553,65 @@ export default function ScheduledPostsTable() {
                         </a>
                       )
                     ) : (
-                      "" /* 未投稿時は投稿ID列は空 */
+                      "" /* 未投稿 */
                     )}
                   </td>
-                  <td className="border p-1 text-center">
-                    {/* 二段階投稿状況 (未投稿時はここに投稿無し/投稿予定を表示) */}
-                    {post.status === "posted" ? (
-                      post.doublePostStatus ? (
-                        post.doublePostStatus === "done" ? (
-                          <div className="text-xs">
-                            <div className="text-green-600 font-medium">投稿済</div>
-                            {post.secondStageAt && (
-                              <div className="text-gray-500">
-                                {typeof post.secondStageAt === "number"
-                                  ? new Date(post.secondStageAt * 1000).toLocaleString()
-                                  : new Date(post.secondStageAt).toLocaleString()}
-                              </div>
-                            )}
-                          </div>
-                        ) : (
+                  <td className="border p-1">
+                    {/* 二段階投稿状況 */}
+                    {(() => {
+                      const secondWanted = (post as any).secondStageWanted;
+                      if (post.status === "posted" && post.doublePostStatus) {
+                        // If reservation explicitly set secondStageWanted === false, keep showing '投稿無し'
+                        if (secondWanted === false) {
+                          return <div className="text-xs">投稿無し</div>;
+                        }
+                        if (post.doublePostStatus === "done") {
+                          return (
+                            <div className="text-xs">
+                              <div className="text-green-600 font-medium">投稿済</div>
+                              {post.secondStageAt && (
+                                <div className="text-gray-500">
+                                  {typeof post.secondStageAt === "number"
+                                    ? new Date(post.secondStageAt * 1000).toLocaleString()
+                                    : new Date(post.secondStageAt).toLocaleString()}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        }
+                        return (
                           <div className="text-xs">
                             <div className="text-yellow-600 font-medium">待機中</div>
                             {post.timeRange && (
                               <div className="text-gray-500 text-xs">範囲: {post.timeRange}</div>
                             )}
                           </div>
-                        )
-                      ) : (
-                        <div className="text-xs text-gray-500">未設定</div>
-                      )
-                    ) : (
-                      // 未投稿時は予約レコードのフラグとユーザー設定で表示
-                      (() => {
-                        // 二段階投稿の判定をより正確に行う: 予約レコードのフラグと自動投稿スロット設定を確認
-                        const hasScheduleSecondFlag = !!post.secondStageWanted;
-                        let wantsSecond = hasScheduleSecondFlag;
-                        if (!wantsSecond && post.autoPostGroupId && post.timeRange) {
-                          const key = `${post.autoPostGroupId}::${post.timeRange}`;
-                          wantsSecond = !!groupSlotSecondWanted[key];
+                        );
+                      }
+
+                      // 未投稿／未設定時の表示
+                      if (post.status !== "posted") {
+                        if (typeof secondWanted !== "undefined") {
+                          return secondWanted === false ? (
+                            <div className="text-xs">投稿無し</div>
+                          ) : (
+                            <div className="text-xs text-gray-500">投稿予定</div>
+                          );
                         }
-                        if (!wantsSecond) return <div className="text-xs">投稿無し</div>;
-                        const delayMin = Number(userSettings?.doublePostDelay || "0");
-                        if (delayMin > 0) return <div className="text-xs">投稿予定 ({delayMin}分後)</div>;
-                        return <div className="text-xs">投稿予定 (未設定)</div>;
-                      })()
-                    )}
+                        return <div className="text-xs text-gray-500">未設定</div>;
+                      }
+
+                      // 投稿済だが doublePostStatus が空など
+                      return <div className="text-xs text-gray-500">未設定</div>;
+                    })()}
+                  </td>
+                  <td className="border p-1 text-center">
+                    {/* 二段階投稿削除フラグ（日時ではなく設定による有無） */}
+                    {(post as any).deleteOnSecondStage ? <span className="text-green-600 font-medium">有</span> : <span className="text-gray-500">無</span>}
+                  </td>
+                  <td className="border p-1 text-center">
+                    {/* 親投稿削除フラグ */}
+                    {(post as any).deleteParentAfter ? <span className="text-green-600 font-medium">有</span> : <span className="text-gray-500">無</span>}
                   </td>
                   <td className="border p-1">
                     <button

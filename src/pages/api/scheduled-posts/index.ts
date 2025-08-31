@@ -7,6 +7,8 @@ import {
   QueryCommand,
   PutItemCommand,
   UpdateItemCommand,
+  GetItemCommand,
+  DeleteItemCommand,
 } from "@aws-sdk/client-dynamodb";
 import { createDynamoClient } from "@/lib/ddb";
 import { verifyUserFromRequest } from "@/lib/auth";
@@ -15,6 +17,36 @@ import crypto from "crypto";
 const ddb = createDynamoClient();
 const TBL_SCHEDULED = "ScheduledPosts";
 const TBL_REPLIES = "Replies";
+/* eslint-disable @typescript-eslint/no-explicit-any */
+const TBL_LOGS = "ExecutionLogs";
+
+// 任意の実行ログ出力（テーブル未作成時は黙ってスキップ）
+async function putLog({
+  userId = "unknown",
+  type,
+  accountId = "",
+  targetId = "",
+  status = "info",
+  message = "",
+  detail = {},
+}: any) {
+  const item = {
+    PK: { S: `USER#${userId}` },
+    SK: { S: `LOG#${Date.now()}#${crypto.randomUUID()}` },
+    type: { S: type || "system" },
+    accountId: { S: accountId },
+    targetId: { S: targetId },
+    status: { S: status },
+    message: { S: message },
+    detail: { S: JSON.stringify(detail || {}) },
+    createdAt: { N: String(Math.floor(Date.now() / 1000)) },
+  };
+  try {
+    await ddb.send(new PutItemCommand({ TableName: TBL_LOGS, Item: item }));
+  } catch (e) {
+    console.log("[warn] putLog skipped:", String((e as Error)?.message || e));
+  }
+}
 
 // リプライ状況を取得する関数（postIdとnumericPostIdの両方で検索）
 async function getReplyStatusForPost(userId: string, postId: string | undefined, numericPostId?: string | undefined): Promise<{ replied: number; total: number }> {
@@ -24,7 +56,7 @@ async function getReplyStatusForPost(userId: string, postId: string | undefined,
     const searchIds = [postId, numericPostId].filter(Boolean);
     console.log(`[DEBUG] リプライ状況検索開始 - 検索ID: [${searchIds.join(', ')}]`);
     
-    let allItems: any[] = [];
+    const allItems: any[] = [];
     
     // 複数のpostIDで検索
     for (const searchId of searchIds) {
@@ -104,17 +136,20 @@ function mapItem(it: any) {
     numericPostId: getS("numericPostId"), // 数字の投稿ID
     postUrl: getS("postUrl"),
     isDeleted: getB("isDeleted"),
-    deletedAt: getN("deletedAt"),
-    // 削除予定時刻（削除が予約されている場合）
-    deleteScheduledAt: getN("deleteScheduledAt"),
     replyCount: getN("replyCount") ?? 0,
     // 二段階投稿関連
     doublePostStatus: getS("doublePostStatus"),
     secondStagePostId: getS("secondStagePostId"),
     secondStageAt: getN("secondStageAt"),
+    timeRange: getS("timeRange"),
     // 予約側に保存される二段階投稿希望フラグ
     secondStageWanted: getB("secondStageWanted"),
-    timeRange: getS("timeRange"),
+    // 削除予定時刻（秒）
+    deleteScheduledAt: getN("deleteScheduledAt"),
+    // 親投稿も削除するか
+    deleteParentAfter: getB("deleteParentAfter"),
+    // 削除済み時刻
+    deletedAt: getN("deletedAt"),
   };
 }
 
@@ -180,9 +215,6 @@ export default async function handler(
         theme?: string;
         autoPostGroupId?: string;
         timeRange?: string;
-        secondStageWanted?: boolean;
-        deleteScheduledAt?: number | string;
-        deleteParentAfter?: boolean;
       };
 
       const id = crypto.randomUUID();
@@ -193,7 +225,8 @@ export default async function handler(
           ? Math.floor(new Date(body.scheduledAt).getTime() / 1000)
           : 0;
 
-      const item = {
+      // Build item without undefined fields to satisfy TypeScript types for PutItemCommand
+      const item: Record<string, any> = {
         PK: { S: `USER#${userId}` },
         SK: { S: `SCHEDULEDPOST#${id}` },
         scheduledPostId: { S: id },
@@ -208,14 +241,18 @@ export default async function handler(
         isDeleted: { BOOL: false },
         createdAt: { N: String(Math.floor(Date.now() / 1000)) },
         timeRange: { S: body.timeRange ?? "" },
-        // 二段階投稿希望フラグを保存
-        secondStageWanted: { BOOL: !!body.secondStageWanted },
-        // 削除予定・種別
-        deleteScheduledAt: typeof body.deleteScheduledAt !== 'undefined' && body.deleteScheduledAt !== null && body.deleteScheduledAt !== '' ? { N: String(typeof body.deleteScheduledAt === 'number' ? body.deleteScheduledAt : Math.floor(new Date(String(body.deleteScheduledAt)).getTime() / 1000)) } : undefined,
-        deleteParentAfter: { BOOL: !!body.deleteParentAfter },
+        // 二段階投稿希望フラグを保存（デフォルト false）
+        secondStageWanted: { BOOL: !!(body as any).secondStageWanted },
+        // スロット/予約単位で二段階削除を有効化するフラグ（日時は保存しない）
+        deleteOnSecondStage: { BOOL: !!(body as any).deleteOnSecondStage },
+        // 削除種別フラグ（デフォルト false）
+        deleteParentAfter: { BOOL: !!(body as any).deleteParentAfter },
       };
 
-      await ddb.send(new PutItemCommand({ TableName: TBL_SCHEDULED, Item: item }));
+      // no deleteScheduledAt: we store only boolean deleteOnSecondStage and compute timing at runtime
+
+      // Put with a looser type to avoid TypeScript complaining about optional/undefined union
+      await ddb.send(new PutItemCommand({ TableName: TBL_SCHEDULED, Item: item as any }));
 
       res.status(200).json({
         ok: true,
@@ -232,6 +269,11 @@ export default async function handler(
         content?: string;
         scheduledAt?: number | string;
         timeRange?: string;
+        // 追加フィールド
+        secondStageWanted?: boolean;
+        // 新仕様: 日時ではなくフラグで管理する
+        deleteOnSecondStage?: boolean;
+        deleteParentAfter?: boolean;
       };
       if (!body.scheduledPostId) {
         res.status(400).json({ error: "missing_scheduledPostId" });
@@ -245,16 +287,97 @@ export default async function handler(
 
       // 削除フラグ
       if (body.isDeleted === true) {
-        await ddb.send(
-          new UpdateItemCommand({
-            TableName: TBL_SCHEDULED,
-            Key: key,
-            UpdateExpression: "SET isDeleted = :t",
-            ExpressionAttributeValues: { ":t": { BOOL: true } },
-          })
-        );
-        res.status(200).json({ ok: true });
-        return;
+        // 予約レコードを取得して状態確認
+        const existing = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: key }));
+        const status = existing.Item?.status?.S || "";
+        // legacyPostId intentionally unused; kept for debugging context
+        void existing.Item?.postId?.S;
+        const accountId = existing.Item?.accountId?.S || "";
+
+        // 未投稿 (status !== 'posted') の場合は物理削除
+        if (status !== "posted") {
+          await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: key }));
+          res.status(200).json({ ok: true, deleted: true });
+          return;
+        }
+
+        // 投稿済みの場合は Threads API を呼んで実投稿を削除し、論理削除を行う
+        try {
+          // アカウントのアクセストークンを取得
+          let accessToken = "";
+          if (accountId) {
+            const acc = await ddb.send(new GetItemCommand({ TableName: "ThreadsAccounts", Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } }, ProjectionExpression: "accessToken" }));
+            accessToken = acc.Item?.accessToken?.S || "";
+          }
+
+          // 削除対象は numericPostId のみ許可。存在しない場合はエラーログを残して終了
+          const numericId = existing.Item?.numericPostId?.S || "";
+          if (!numericId || !/^\d+$/.test(numericId)) {
+            await putLog({
+              userId,
+              type: "manual-delete-threads",
+              accountId: accountId || "",
+              targetId: key.SK.S || "",
+              status: "error",
+              message: "numericPostId missing or invalid - cannot delete",
+              detail: { scheduledPostId: body.scheduledPostId, numericPostId: numericId },
+            });
+            res.status(400).json({ ok: false, error: "numericPostId_missing_or_invalid" });
+            return;
+          }
+
+          const deleteTargetId = numericId;
+
+          if (deleteTargetId && accessToken) {
+            // Threads の投稿削除を試みる（共通ユーティリティを利用）
+            try {
+              const { deleteThreadPost } = await import("@/../packages/backend-core/src/services/threadsDelete");
+              const result = await deleteThreadPost({ postId: deleteTargetId, accessToken });
+
+              // ログに出すためアクセストークンのハッシュを作成（漏洩防止）
+              const tokenHash = crypto.createHash("sha256").update(accessToken || "").digest("hex").slice(0, 12);
+
+              // 成功/失敗いずれも詳細ログを残す
+              await putLog({
+                userId,
+                type: "manual-delete-threads",
+                accountId: accountId || "",
+                targetId: key.SK.S || "",
+                status: result.ok ? "ok" : "error",
+                message: result.ok ? "Threads delete attempted" : "Threads delete failed",
+                detail: {
+                  postId: deleteTargetId,
+                  statusCode: result.status,
+                  bodySnippet: (result.body || "").slice(0, 1000),
+                  accessTokenHash: tokenHash,
+                  initiatedBy: "api-manual",
+                },
+              });
+
+              if (!result.ok) {
+                throw new Error(`threads delete failed: ${result.status} ${result.body}`);
+              }
+            } catch (e) {
+              throw e;
+            }
+          }
+
+          const now = Math.floor(Date.now() / 1000);
+          await ddb.send(
+            new UpdateItemCommand({
+              TableName: TBL_SCHEDULED,
+              Key: key,
+              UpdateExpression: "SET isDeleted = :t, deletedAt = :ts",
+              ExpressionAttributeValues: { ":t": { BOOL: true }, ":ts": { N: String(now) } },
+            })
+          );
+          res.status(200).json({ ok: true, deleted: true, deletedAt: Math.floor(Date.now() / 1000) });
+          return;
+        } catch (e: any) {
+          console.error("failed to delete posted thread:", e);
+          res.status(500).json({ ok: false, error: String(e) });
+          return;
+        }
       }
 
       // 内容/日時の編集
@@ -275,6 +398,20 @@ export default async function handler(
             : Math.floor(new Date(body.scheduledAt).getTime() / 1000);
         expr.push("scheduledAt = :sa");
         values[":sa"] = { N: String(sec) };
+      }
+
+      // 追加: 二段階投稿/削除予定/親削除の PATCH 更新対応
+      if (typeof body.secondStageWanted !== "undefined") {
+        expr.push("secondStageWanted = :ssw");
+        values[":ssw"] = { BOOL: !!body.secondStageWanted };
+      }
+      if (typeof body.deleteOnSecondStage !== "undefined") {
+        expr.push("deleteOnSecondStage = :doss");
+        values[":doss"] = { BOOL: !!body.deleteOnSecondStage };
+      }
+      if (typeof body.deleteParentAfter !== "undefined") {
+        expr.push("deleteParentAfter = :dpa");
+        values[":dpa"] = { BOOL: !!body.deleteParentAfter };
       }
 
       if (typeof body.timeRange === "string") {
