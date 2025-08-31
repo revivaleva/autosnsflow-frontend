@@ -2277,6 +2277,10 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
       const resDeleteFlag = it.deleteOnSecondStage?.BOOL === true;
       const globalDeleteFlag = !!(settings && settings.doublePostDelete);
       let effectiveDeleteFlag = resDeleteFlag || globalDeleteFlag;
+      // track which source enabled deletion for observability
+      let flagSource: string | null = null;
+      if (resDeleteFlag) flagSource = 'explicit';
+      else if (globalDeleteFlag) flagSource = 'userSetting';
       // If not enabled explicitly, try to infer from auto-post-group slot settings (match by timeRange)
       if (!effectiveDeleteFlag) {
         const timeRange = it.timeRange?.S || "";
@@ -2293,6 +2297,7 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
               const slotSecond = s.secondStageWanted?.BOOL === true;
               if (slotSecond && slotTr === timeRange) {
                 effectiveDeleteFlag = true;
+                flagSource = 'slotInference';
                 break;
               }
             }
@@ -2302,6 +2307,7 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
         }
       }
       if (!effectiveDeleteFlag) {
+        // nothing to do for this item
         continue;
       }
       // compute delay (minutes) from settings, default to 0
@@ -2328,9 +2334,9 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
           UpdateExpression: "SET isDeleted = :t, deletedAt = :ts",
           ExpressionAttributeValues: { ":t": { BOOL: true }, ":ts": { N: String(now) } }
         }));
-        await putLog({ userId, type: "second-stage-delete", accountId: acct.accountId, targetId: sk, status: "ok", message: "二段階投稿削除を実行" });
+        await putLog({ userId, type: "second-stage-delete", accountId: acct.accountId, targetId: sk, status: "ok", message: "二段階投稿削除を実行", detail: { whichFlagUsed: flagSource || 'unknown', deleteTarget: deleteParent ? 'parent' : 'second-stage', postId: postId || '', secondId: secondId || '' } });
       } catch (e) {
-        await putLog({ userId, type: "second-stage-delete", accountId: acct.accountId, targetId: sk, status: "error", message: "二段階投稿削除に失敗", detail: { error: String(e) } });
+        await putLog({ userId, type: "second-stage-delete", accountId: acct.accountId, targetId: sk, status: "error", message: "二段階投稿削除に失敗", detail: { error: String(e), whichFlagUsed: flagSource || 'unknown', deleteTarget: deleteParent ? 'parent' : 'second-stage', postId: postId || '', secondId: secondId || '' } });
       }
     }
   } catch (e) {
