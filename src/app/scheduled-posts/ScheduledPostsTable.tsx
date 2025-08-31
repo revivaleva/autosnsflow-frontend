@@ -548,6 +548,18 @@ export default function ScheduledPostsTable() {
                       return <div className="text-xs text-gray-500">未設定</div>;
                     })()}
                   </td>
+                  <td className="border p-1 text-xs">
+                    {/* 二段階削除: deleteScheduledAt があれば日時、無ければ無 */}
+                    {(post as any).deleteScheduledAt
+                      ? typeof (post as any).deleteScheduledAt === 'number'
+                        ? new Date((post as any).deleteScheduledAt * 1000).toLocaleString()
+                        : String((post as any).deleteScheduledAt)
+                      : <span className="text-gray-500">無</span>}
+                  </td>
+                  <td className="border p-1 text-center">
+                    {/* 親投稿削除フラグ */}
+                    {(post as any).deleteParentAfter ? <span className="text-green-600 font-medium">有</span> : <span className="text-gray-500">無</span>}
+                  </td>
                   <td className="border p-1">
                     <button
                       className="px-2 py-1 rounded text-xs bg-gray-200 text-gray-800 dark:bg-gray-700 dark:text-gray-100 hover:bg-blue-200 dark:hover:bg-blue-700"
