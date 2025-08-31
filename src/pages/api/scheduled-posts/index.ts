@@ -17,6 +17,36 @@ import crypto from "crypto";
 const ddb = createDynamoClient();
 const TBL_SCHEDULED = "ScheduledPosts";
 const TBL_REPLIES = "Replies";
+/* eslint-disable @typescript-eslint/no-explicit-any */
+const TBL_LOGS = "ExecutionLogs";
+
+// 任意の実行ログ出力（テーブル未作成時は黙ってスキップ）
+async function putLog({
+  userId = "unknown",
+  type,
+  accountId = "",
+  targetId = "",
+  status = "info",
+  message = "",
+  detail = {},
+}: any) {
+  const item = {
+    PK: { S: `USER#${userId}` },
+    SK: { S: `LOG#${Date.now()}#${crypto.randomUUID()}` },
+    type: { S: type || "system" },
+    accountId: { S: accountId },
+    targetId: { S: targetId },
+    status: { S: status },
+    message: { S: message },
+    detail: { S: JSON.stringify(detail || {}) },
+    createdAt: { N: String(Math.floor(Date.now() / 1000)) },
+  };
+  try {
+    await ddb.send(new PutItemCommand({ TableName: TBL_LOGS, Item: item }));
+  } catch (e) {
+    console.log("[warn] putLog skipped:", String((e as Error)?.message || e));
+  }
+}
 
 // リプライ状況を取得する関数（postIdとnumericPostIdの両方で検索）
 async function getReplyStatusForPost(userId: string, postId: string | undefined, numericPostId?: string | undefined): Promise<{ replied: number; total: number }> {
@@ -26,7 +56,7 @@ async function getReplyStatusForPost(userId: string, postId: string | undefined,
     const searchIds = [postId, numericPostId].filter(Boolean);
     console.log(`[DEBUG] リプライ状況検索開始 - 検索ID: [${searchIds.join(', ')}]`);
     
-    let allItems: any[] = [];
+    const allItems: any[] = [];
     
     // 複数のpostIDで検索
     for (const searchId of searchIds) {
@@ -260,7 +290,8 @@ export default async function handler(
         // 予約レコードを取得して状態確認
         const existing = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: key }));
         const status = existing.Item?.status?.S || "";
-        const postId = existing.Item?.postId?.S || existing.Item?.numericPostId?.S || "";
+        // legacyPostId intentionally unused; kept for debugging context
+        void existing.Item?.postId?.S;
         const accountId = existing.Item?.accountId?.S || "";
 
         // 未投稿 (status !== 'posted') の場合は物理削除
@@ -279,16 +310,23 @@ export default async function handler(
             accessToken = acc.Item?.accessToken?.S || "";
           }
 
-          // numericPostId を優先して削除対象IDを決定（数字のみを対象）
-          let deleteTargetId = "";
-          if (existing.Item?.numericPostId?.S && (/^\d+$/.test(existing.Item.numericPostId.S))) {
-            deleteTargetId = existing.Item.numericPostId.S;
-          } else if (existing.Item?.postId?.S && (/^\d+$/.test(existing.Item.postId.S))) {
-            deleteTargetId = existing.Item.postId.S;
-          } else {
-            // 数字IDが存在しない場合は文字列IDを最後の手段として使う
-            deleteTargetId = existing.Item?.numericPostId?.S || existing.Item?.postId?.S || "";
+          // 削除対象は numericPostId のみ許可。存在しない場合はエラーログを残して終了
+          const numericId = existing.Item?.numericPostId?.S || "";
+          if (!numericId || !/^\d+$/.test(numericId)) {
+            await putLog({
+              userId,
+              type: "manual-delete-threads",
+              accountId: accountId || "",
+              targetId: key.SK.S || "",
+              status: "error",
+              message: "numericPostId missing or invalid - cannot delete",
+              detail: { scheduledPostId: body.scheduledPostId, numericPostId: numericId },
+            });
+            res.status(400).json({ ok: false, error: "numericPostId_missing_or_invalid" });
+            return;
           }
+
+          const deleteTargetId = numericId;
 
           if (deleteTargetId && accessToken) {
             // Threads の投稿削除を試みる（共通ユーティリティを利用）
