@@ -2276,8 +2276,32 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
       // determine whether deletion is enabled for this reservation
       const resDeleteFlag = it.deleteOnSecondStage?.BOOL === true;
       const globalDeleteFlag = !!(settings && settings.doublePostDelete);
-      if (!resDeleteFlag && !globalDeleteFlag) {
-        // no deletion configured for this item
+      let effectiveDeleteFlag = resDeleteFlag || globalDeleteFlag;
+      // If not enabled explicitly, try to infer from auto-post-group slot settings (match by timeRange)
+      if (!effectiveDeleteFlag) {
+        const timeRange = it.timeRange?.S || "";
+        if (timeRange) {
+          try {
+            const slotsQ = await ddb.send(new QueryCommand({
+              TableName: TBL_GROUPS,
+              KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+              ExpressionAttributeValues: { ":pk": { S: `USER#${userId}` }, ":pfx": { S: `GROUPITEM#` } },
+              ProjectionExpression: "timeRange, secondStageWanted"
+            }));
+            for (const s of (slotsQ.Items || [])) {
+              const slotTr = s.timeRange?.S || "";
+              const slotSecond = s.secondStageWanted?.BOOL === true;
+              if (slotSecond && slotTr === timeRange) {
+                effectiveDeleteFlag = true;
+                break;
+              }
+            }
+          } catch (e) {
+            console.log("[warn] failed to load slots for delete inference:", String(e));
+          }
+        }
+      }
+      if (!effectiveDeleteFlag) {
         continue;
       }
       // compute delay (minutes) from settings, default to 0

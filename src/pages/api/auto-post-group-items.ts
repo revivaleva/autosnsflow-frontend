@@ -35,8 +35,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         theme: i.theme?.S || "",
         enabled: i.enabled?.BOOL === true,
         secondStageWanted: i.secondStageWanted?.BOOL === true,
-        // スロット単位で二段階投稿削除の有無を保持する
-        slotDeleteOnSecondStage: i.slotDeleteOnSecondStage?.BOOL === true,
       })).sort((a, b) => a.order - b.order);
       return res.status(200).json({ items });
     }
