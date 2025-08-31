@@ -20,6 +20,8 @@ type SlotType = {
   theme: string;
   enabled: boolean;
   secondStageWanted?: boolean;
+  // スロット単位で二段階投稿削除を有効にするか
+  slotDeleteOnSecondStage?: boolean;
 };
 
 type ScheduleType = { start: string; end: string; theme: string };
@@ -341,12 +343,12 @@ function SlotEditor({ groupKey, items, loading, onReload }: { groupKey: string; 
     onReload();
   };
 
-  const saveRow = async (it: SlotType) => {
+  const saveRow = async (it: SlotType & { slotDeleteOnSecondStage?: boolean }) => {
     await fetch(API_ITEMS, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({ groupKey, slotId: it.slotId, timeRange: it.timeRange, theme: it.theme, enabled: it.enabled, secondStageWanted: !!it.secondStageWanted }),
+      body: JSON.stringify({ groupKey, slotId: it.slotId, timeRange: it.timeRange, theme: it.theme, enabled: it.enabled, secondStageWanted: !!it.secondStageWanted, slotDeleteOnSecondStage: !!(it as any).slotDeleteOnSecondStage }),
     });
     onReload();
   };
@@ -400,6 +402,7 @@ function SlotEditor({ groupKey, items, loading, onReload }: { groupKey: string; 
               <th className="border p-1 w-28">時間帯</th>
               <th className="border p-1 w-96">テーマ</th>
               <th className="border p-1 w-20"><div className="whitespace-pre-line">二段階\n投稿</div></th>
+              <th className="border p-1 w-24"><div className="whitespace-pre-line">二段階削除\n(スロット)</div></th>
               <th className="border p-1 w-20">有効</th>
               <th className="border p-1 w-28">操作</th>
             </tr>
@@ -430,6 +433,9 @@ function SlotEditor({ groupKey, items, loading, onReload }: { groupKey: string; 
                   </td>
                   <td className="border p-1 text-center">
                     <input type="checkbox" checked={!!it.secondStageWanted} onChange={(e) => setField(i, 'secondStageWanted', e.target.checked)} />
+                  </td>
+                  <td className="border p-1 text-center">
+                    <input type="checkbox" checked={!!(it as any).slotDeleteOnSecondStage} onChange={(e) => setField(i, 'slotDeleteOnSecondStage', e.target.checked)} />
                   </td>
                   <td className="border p-1 text-center">
                     <input type="checkbox" checked={it.enabled}
