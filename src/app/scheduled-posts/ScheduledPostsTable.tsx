@@ -16,6 +16,7 @@ const statusOptions = [
   { value: "scheduled", label: "未投稿" },
   { value: "posted", label: "投稿済み" },
   { value: "expired", label: "期限切れ" },
+  { value: "deleted", label: "削除済" },
 ];
 
 export default function ScheduledPostsTable() {
@@ -297,7 +298,14 @@ export default function ScheduledPostsTable() {
 
 
   const sortedPosts = posts
-    .filter((post) => filterStatus ? (post.status || "scheduled") === filterStatus : true)
+    .filter((post) => {
+      // デフォルト（filterStatusが空）は論理削除されたものを除外
+      if (!filterStatus) return !post.isDeleted;
+      // 削除済フィルタが選択された場合は isDeleted=true のみ表示
+      if (filterStatus === "deleted") return !!post.isDeleted;
+      // それ以外のステータスフィルタは isDeleted=false のものを対象にする
+      return (post.status || "scheduled") === filterStatus && !post.isDeleted;
+    })
     .sort((a, b) => {
       if (sortKey === "scheduledAt") {
         return sortAsc
