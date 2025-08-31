@@ -78,8 +78,49 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       // 4) スロット分だけ新規予約を作成（スロットの timeRange も利用できるがここでは scheduledAt をスロットに依らず JST のランダム時間に設定）
       for (const slot of slots) {
         const id = crypto.randomUUID();
-        const whenJst = new Date(); // default to now; you could map timeRange -> timestamp if desired
-        const scheduledAt = Math.floor(whenJst.getTime() / 1000);
+        // scheduledAt をスロットの timeRange に基づいて割り当てる
+        // timeRange 形式: "HH:MM-HH:MM" 例: "05:00-08:00"
+        function parseRangeToEpoch(range: string) {
+          try {
+            const parts = (range || "").split('-').map(s => s.trim());
+            if (parts.length !== 2) return null;
+            const [a, b] = parts;
+            const pa = a.split(':').map(x => parseInt(x, 10));
+            const pb = b.split(':').map(x => parseInt(x, 10));
+            if (pa.length < 2 || pb.length < 2) return null;
+            // 今日の JST 日付の 00:00 を取得
+            const now = new Date();
+            const utc = now.getTime() + now.getTimezoneOffset() * 60000;
+            const jstOffset = 9 * 60; // minutes
+            const jstMid = new Date(utc + jstOffset * 60000);
+            jstMid.setHours(0,0,0,0);
+            const dateY = jstMid.getFullYear();
+            const dateM = jstMid.getMonth();
+            const dateD = jstMid.getDate();
+            const ta = new Date(Date.UTC(dateY, dateM, dateD, pa[0]-9, pa[1], 0));
+            const tb = new Date(Date.UTC(dateY, dateM, dateD, pb[0]-9, pb[1], 0));
+            // If end <= start, treat as single point at start
+            const mid = Math.floor((ta.getTime() + tb.getTime()) / 2);
+            return Math.floor(mid / 1000);
+          } catch (e) {
+            return null;
+          }
+        }
+
+        let scheduledAt = null as number | null;
+        if (slot.timeRange) {
+          const v = parseRangeToEpoch(slot.timeRange);
+          if (v) scheduledAt = v;
+        }
+        if (!scheduledAt) {
+          // フォールバック: 本日12:00 JST
+          const now = new Date();
+          const utc = now.getTime() + now.getTimezoneOffset() * 60000;
+          const jstOffset = 9 * 60; // minutes
+          const jst = new Date(utc + jstOffset * 60000);
+          jst.setHours(12,0,0,0);
+          scheduledAt = Math.floor(jst.getTime() / 1000);
+        }
         const item: any = {
           PK: { S: `USER#${userId}` },
           SK: { S: `SCHEDULEDPOST#${id}` },
