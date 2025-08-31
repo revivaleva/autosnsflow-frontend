@@ -50,6 +50,7 @@ export default function ScheduledPostsTable() {
   const handleBulkDelete = async () => {
     if (selectedIds.length === 0) return alert("選択がありません");
     if (!confirm(`選択した ${selectedIds.length} 件を削除しますか？`)) return;
+    setBulkDeleting(true);
     try {
       // Execute same patch flow as single delete per item to keep behavior identical
       const results: { id: string; ok: boolean; deleted: boolean }[] = [];
@@ -86,6 +87,8 @@ export default function ScheduledPostsTable() {
       clearSelection();
     } catch (e: any) {
       alert(`一括削除に失敗しました: ${e.message || String(e)}`);
+    } finally {
+      setBulkDeleting(false);
     }
   };
 
@@ -98,6 +101,7 @@ export default function ScheduledPostsTable() {
   // [ADD] デバッグ関連のstate
   const [debugModalOpen, setDebugModalOpen] = useState<boolean>(false);
   const [debugData, setDebugData] = useState<any>(null);
+  const [bulkDeleting, setBulkDeleting] = useState<boolean>(false);
 
   // 一覧取得（既存API）
   const loadPosts = async () => {
@@ -358,6 +362,14 @@ export default function ScheduledPostsTable() {
         onSave={editorMode === "add" ? handleAddSave : handleEditSave}
       />
 
+      {bulkDeleting && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
+          <div className="bg-white rounded p-4 shadow">
+            <div className="text-center font-medium">一括削除実行中…</div>
+          </div>
+        </div>
+      )}
+
       {/* 既存ボタン群 */}
       <div className="flex justify-between items-center mb-4" style={{ background: 'white', paddingTop: 8, paddingBottom: 8 }}>
         <h2 className="text-xl font-bold">予約投稿一覧</h2>
@@ -391,8 +403,9 @@ export default function ScheduledPostsTable() {
           <button
             onClick={handleBulkDelete}
             className="bg-red-500 text-white rounded px-3 py-1 hover:bg-red-600"
+            disabled={bulkDeleting}
           >
-            選択削除
+            {bulkDeleting ? "削除中..." : "選択削除"}
           </button>
         </div>
       </div>
