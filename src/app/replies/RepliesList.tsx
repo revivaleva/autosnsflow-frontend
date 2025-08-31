@@ -133,23 +133,36 @@ export default function RepliesList() {
   const toggleSelectReply = (id: string) => {
     const reply = replies.find(r => r.id === id);
     if (!reply) return;
+    if (reply.status === "replied") return; // 返信済は選択不可
     setSelectedReplyIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
 
-  const selectAllReplies = () => setSelectedReplyIds(sortedReplies.map(r => r.id));
+  const selectAllReplies = () => setSelectedReplyIds(sortedReplies.filter(r => r.status !== "replied").map(r => r.id));
   const clearSelectedReplies = () => setSelectedReplyIds([]);
 
   const handleBulkDeleteReplies = async () => {
     if (selectedReplyIds.length === 0) return alert("選択がありません");
     if (!confirm(`選択した ${selectedReplyIds.length} 件を削除しますか？`)) return;
     try {
-      await fetch(`/api/replies/bulk-delete`, {
-        method: "PATCH",
+      const resp = await fetch(`/api/replies/bulk-delete`, {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({ replyIds: selectedReplyIds }),
       });
-      setReplies(prev => prev.map(r => selectedReplyIds.includes(r.id) ? { ...r, status: 'deleted' as any } : r));
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data?.error || `HTTP ${resp.status}`);
+
+      // API の結果に基づいて UI を更新
+      const results: any[] = data.results || data.results || [];
+      setReplies(prev => prev.filter(r => {
+        const res = results.find((x: any) => x.id === r.id);
+        if (!res) return true; // 影響なし
+        if (res.ok && res.deleted) return false; // 物理削除されたものは一覧から除外
+        if (res.ok && !res.deleted) return { ...r, status: 'deleted' } ? false : false; // 論理削除は除外（非表示）
+        return true;
+      }));
+
       clearSelectedReplies();
     } catch (e: any) {
       alert(`削除に失敗しました: ${e.message || String(e)}`);
