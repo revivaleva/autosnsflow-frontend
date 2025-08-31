@@ -23,7 +23,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       // DB のキーは "REPLY#<id>" なので二重付与を避けるため正規化する
       const id = String(rawId).startsWith("REPLY#") ? String(rawId).slice(6) : String(rawId);
       try {
-        const get = await ddb.send(new GetItemCommand({ TableName: TBL_REPLIES, Key: { PK: { S: `USER#${userId}` }, SK: { S: `REPLY#${id}` } }, ProjectionExpression: 'status, responsePostId, postId, accountId' }));
+        const get = await ddb.send(new GetItemCommand({
+          TableName: TBL_REPLIES,
+          Key: { PK: { S: `USER#${userId}` }, SK: { S: `REPLY#${id}` } },
+          ProjectionExpression: '#st, responsePostId, postId, accountId',
+          ExpressionAttributeNames: { '#st': 'status' },
+        }));
         const item = get.Item;
         if (!item) {
           results.push({ id: rawId, ok: false, error: 'not_found' });
