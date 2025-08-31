@@ -333,7 +333,7 @@ export default function ScheduledPostsTable() {
       />
 
       {/* 既存ボタン群 */}
-      <div className="flex justify-between items-center mb-4">
+      <div className="flex justify-between items-center mb-4" style={{ position: 'sticky', top: 0, zIndex: 60, background: 'white', paddingTop: 8, paddingBottom: 8, boxShadow: '0 1px 0 rgba(0,0,0,0.06)' }}>
         <h2 className="text-xl font-bold">予約投稿一覧</h2>
         <div className="flex gap-2">
           <button
@@ -371,7 +371,7 @@ export default function ScheduledPostsTable() {
         </div>
       </div>
 
-      <div className="flex space-x-2 mb-2">
+      <div className="flex space-x-2 mb-2" style={{ position: 'sticky', top: 56, zIndex: 50, background: 'white', paddingTop: 6, paddingBottom: 6, boxShadow: '0 1px 0 rgba(0,0,0,0.04)' }}>
         <select
           className="border rounded p-1"
           value={filterStatus}
@@ -409,19 +409,19 @@ export default function ScheduledPostsTable() {
         <table className="min-w-full bg-white dark:bg-gray-900 border">
           <thead className="dark:bg-gray-800">
             <tr>
-              <th className="border p-1" style={{ width: 40 }}><input type="checkbox" checked={selectedIds.length === sortedPosts.length && sortedPosts.length > 0} onChange={(e) => e.target.checked ? selectAllVisible() : clearSelection()} /></th>
-              <th className="border p-1" style={{ width: 180 }}>アカウント</th>
-              <th className="border p-1" style={{ width: 160 }}>予約投稿日時</th>
-              <th className="border p-1" style={{ width: 140 }}>自動投稿</th>
-              <th className="border p-1" style={{ width: 200 }}>生成テーマ</th>
-              <th className="border p-1" style={{ width: 360 }}>本文テキスト</th>
-              <th className="border p-1" style={{ width: 160 }}>投稿日時</th>
-              <th className="border p-1" style={{ width: 140 }}>投稿ID</th>
-              <th className="border p-1" style={{ width: 140 }}>二段階投稿</th>
-              <th className="border p-1" style={{ width: 120 }}>二段階投稿削除</th>
-              <th className="border p-1" style={{ width: 120 }}>投稿削除</th>
-              <th className="border p-1" style={{ width: 90 }}>リプ状況</th>
-              <th className="border p-1" style={{ width: 180 }}>アクション</th>
+              <th className="border p-1" style={{ width: 40, position: 'sticky', top: 112, background: 'white', zIndex: 45 }}><input type="checkbox" checked={selectedIds.length === sortedPosts.length && sortedPosts.length > 0} onChange={(e) => e.target.checked ? selectAllVisible() : clearSelection()} /></th>
+              <th className="border p-1" style={{ width: 180, position: 'sticky', top: 112, background: 'white', zIndex: 45 }}>アカウント</th>
+              <th className="border p-1" style={{ width: 160, position: 'sticky', top: 112, background: 'white', zIndex: 45 }}>予約投稿日時</th>
+              <th className="border p-1" style={{ width: 140, position: 'sticky', top: 112, background: 'white', zIndex: 45 }}>自動投稿</th>
+              <th className="border p-1" style={{ width: 200, position: 'sticky', top: 112, background: 'white', zIndex: 45 }}>生成テーマ</th>
+              <th className="border p-1" style={{ width: 360, position: 'sticky', top: 112, background: 'white', zIndex: 45 }}>本文テキスト</th>
+              <th className="border p-1" style={{ width: 160, position: 'sticky', top: 112, background: 'white', zIndex: 45 }}>投稿日時</th>
+              <th className="border p-1" style={{ width: 140, position: 'sticky', top: 112, background: 'white', zIndex: 45 }}>投稿ID</th>
+              <th className="border p-1" style={{ width: 140, position: 'sticky', top: 112, background: 'white', zIndex: 45 }}>二段階投稿</th>
+              <th className="border p-1" style={{ width: 120, position: 'sticky', top: 112, background: 'white', zIndex: 45 }}>二段階投稿削除</th>
+              <th className="border p-1" style={{ width: 120, position: 'sticky', top: 112, background: 'white', zIndex: 45 }}>投稿削除</th>
+              <th className="border p-1" style={{ width: 90, position: 'sticky', top: 112, background: 'white', zIndex: 45 }}>リプ状況</th>
+              <th className="border p-1" style={{ width: 180, position: 'sticky', top: 112, background: 'white', zIndex: 45 }}>アクション</th>
             </tr>
           </thead>
           <tbody>
