@@ -159,18 +159,32 @@ export default function ScheduledPostsTable() {
     setPosts((prev) => prev.map((p) => (p.scheduledPostId === edited.scheduledPostId ? { ...p, ...updated } : p)));
   };
 
-  // 削除（既存）
+  // 削除（新）: 未投稿は物理削除、投稿済は実投稿削除 + 論理削除
   const handleDelete = async (id: string) => {
     if (!window.confirm("削除しますか？")) return;
-    await fetch(`/api/scheduled-posts`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ scheduledPostId: id, isDeleted: true }),
-    });
-    setPosts((prev) =>
-      prev.map((p) => (p.scheduledPostId === id ? { ...p, isDeleted: true } : p))
-    );
+    try {
+      const resp = await fetch(`/api/scheduled-posts`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ scheduledPostId: id, isDeleted: true }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || !data?.ok) {
+        throw new Error(data?.error || resp.statusText || "削除に失敗しました");
+      }
+
+      // 未投稿はサーバ側で物理削除される -> クライアント側でも一覧から除外
+      if (data.deleted && !(posts.find(p => p.scheduledPostId === id)?.status === "posted")) {
+        setPosts(prev => prev.filter(p => p.scheduledPostId !== id));
+        return;
+      }
+
+      // 投稿済みは論理削除 -> isDeleted を true にしてグレーアウト表示
+      setPosts((prev) => prev.map((p) => (p.scheduledPostId === id ? { ...p, isDeleted: true, deletedAt: data.deletedAt || p.deletedAt } : p)));
+    } catch (e: any) {
+      alert(`削除に失敗しました: ${e.message || String(e)}`);
+    }
   };
 
   // リプモーダル（既存UIのまま）

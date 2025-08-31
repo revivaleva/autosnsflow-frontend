@@ -7,6 +7,8 @@ import {
   QueryCommand,
   PutItemCommand,
   UpdateItemCommand,
+  GetItemCommand,
+  DeleteItemCommand,
 } from "@aws-sdk/client-dynamodb";
 import { createDynamoClient } from "@/lib/ddb";
 import { verifyUserFromRequest } from "@/lib/auth";
@@ -255,16 +257,54 @@ export default async function handler(
 
       // 削除フラグ
       if (body.isDeleted === true) {
-        await ddb.send(
-          new UpdateItemCommand({
-            TableName: TBL_SCHEDULED,
-            Key: key,
-            UpdateExpression: "SET isDeleted = :t",
-            ExpressionAttributeValues: { ":t": { BOOL: true } },
-          })
-        );
-        res.status(200).json({ ok: true });
-        return;
+        // 予約レコードを取得して状態確認
+        const existing = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: key }));
+        const status = existing.Item?.status?.S || "";
+        const postId = existing.Item?.postId?.S || existing.Item?.numericPostId?.S || "";
+        const accountId = existing.Item?.accountId?.S || "";
+
+        // 未投稿 (status !== 'posted') の場合は物理削除
+        if (status !== "posted") {
+          await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: key }));
+          res.status(200).json({ ok: true, deleted: true });
+          return;
+        }
+
+        // 投稿済みの場合は Threads API を呼んで実投稿を削除し、論理削除を行う
+        try {
+          // アカウントのアクセストークンを取得
+          let accessToken = "";
+          if (accountId) {
+            const acc = await ddb.send(new GetItemCommand({ TableName: "ThreadsAccounts", Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } }, ProjectionExpression: "accessToken" }));
+            accessToken = acc.Item?.accessToken?.S || "";
+          }
+
+          if (postId && accessToken) {
+            // Threads の投稿削除を試みる
+            const delRes = await fetch(`https://graph.threads.net/v1.0/${encodeURIComponent(postId)}?access_token=${encodeURIComponent(accessToken)}`, { method: "DELETE" });
+            // ignore body; consider non-2xx as error
+            if (!delRes.ok) {
+              const txt = await delRes.text().catch(() => "");
+              throw new Error(`threads delete failed: ${delRes.status} ${txt}`);
+            }
+          }
+
+          const now = Math.floor(Date.now() / 1000);
+          await ddb.send(
+            new UpdateItemCommand({
+              TableName: TBL_SCHEDULED,
+              Key: key,
+              UpdateExpression: "SET isDeleted = :t, deletedAt = :ts",
+              ExpressionAttributeValues: { ":t": { BOOL: true }, ":ts": { N: String(now) } },
+            })
+          );
+          res.status(200).json({ ok: true, deleted: true, deletedAt: Math.floor(Date.now() / 1000) });
+          return;
+        } catch (e: any) {
+          console.error("failed to delete posted thread:", e);
+          res.status(500).json({ ok: false, error: String(e) });
+          return;
+        }
       }
 
       // 内容/日時の編集
