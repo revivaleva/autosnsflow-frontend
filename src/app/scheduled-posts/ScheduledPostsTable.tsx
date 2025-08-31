@@ -8,7 +8,7 @@ import ScheduledPostEditorModal, {
 } from "./ScheduledPostEditorModal";
 
 // 既存定義は維持
-type ScheduledPostStatus = "" | "scheduled" | "posted" | "expired";
+type ScheduledPostStatus = "" | "scheduled" | "posted" | "expired" | "deleted";
 type ReplyType = { id: string; replyContent: string; status: "replied" | "unreplied" };
 
 const statusOptions = [
