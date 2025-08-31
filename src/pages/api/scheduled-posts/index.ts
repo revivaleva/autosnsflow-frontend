@@ -232,6 +232,10 @@ export default async function handler(
         content?: string;
         scheduledAt?: number | string;
         timeRange?: string;
+        // 追加フィールド
+        secondStageWanted?: boolean;
+        deleteScheduledAt?: number | string;
+        deleteParentAfter?: boolean;
       };
       if (!body.scheduledPostId) {
         res.status(400).json({ error: "missing_scheduledPostId" });
