@@ -2,7 +2,7 @@
 // [MOD] 投稿IDセル：投稿済みのときのみクリックで別タブ（postUrlがあればアンカー表示）
 "use client";
 
-import React, { useEffect, useState, useRef, useLayoutEffect } from "react";
+import React, { useEffect, useState } from "react";
 import ScheduledPostEditorModal, {
   ScheduledPostType,
 } from "./ScheduledPostEditorModal";
@@ -51,16 +51,41 @@ export default function ScheduledPostsTable() {
     if (selectedIds.length === 0) return alert("選択がありません");
     if (!confirm(`選択した ${selectedIds.length} 件を削除しますか？`)) return;
     try {
-      await fetch(`/api/scheduled-posts/bulk-delete`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ scheduledPostIds: selectedIds }),
-      });
-      setPosts(prev => prev.map(p => selectedIds.includes(p.scheduledPostId) ? { ...p, isDeleted: true } : p));
+      // Execute same patch flow as single delete per item to keep behavior identical
+      const results: { id: string; ok: boolean; deleted: boolean }[] = [];
+      for (const id of selectedIds) {
+        try {
+          const resp = await fetch(`/api/scheduled-posts`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ scheduledPostId: id, isDeleted: true }),
+          });
+          const data = await resp.json().catch(() => ({}));
+          if (!resp.ok || !data?.ok) {
+            results.push({ id, ok: false, deleted: false });
+          } else {
+            results.push({ id, ok: true, deleted: !!data.deleted });
+          }
+        } catch (e) {
+          results.push({ id, ok: false, deleted: false });
+        }
+      }
+
+      // Apply results client-side using same rules as handleDelete
+      setPosts(prev => prev.flatMap(p => {
+        if (!selectedIds.includes(p.scheduledPostId)) return [p];
+        const r = results.find(x => x.id === p.scheduledPostId);
+        if (!r || !r.ok) return [p]; // leave unchanged on failure
+        // If server reported deleted=true and post was not posted, remove from list
+        if (r.deleted && !(p.status === "posted")) return [] as any;
+        // Otherwise mark isDeleted
+        return [{ ...p, isDeleted: true }];
+      }));
+
       clearSelection();
     } catch (e: any) {
-      alert(`削除に失敗しました: ${e.message || String(e)}`);
+      alert(`一括削除に失敗しました: ${e.message || String(e)}`);
     }
   };
 
@@ -99,18 +124,6 @@ export default function ScheduledPostsTable() {
   }, []);
 
   // [MOD] 追加
-  const headerRef = useRef<HTMLDivElement | null>(null);
-  const [headerHeight, setHeaderHeight] = useState<number>(0);
-
-  useLayoutEffect(() => {
-    const measure = () => {
-      const h = headerRef.current ? Math.ceil(headerRef.current.getBoundingClientRect().height) : 0;
-      setHeaderHeight(h);
-    };
-    measure();
-    window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
-  }, []);
 
   const openAdd = () => {
     setEditorMode("add");
@@ -346,7 +359,7 @@ export default function ScheduledPostsTable() {
       />
 
       {/* 既存ボタン群 */}
-      <div ref={headerRef} className="flex justify-between items-center mb-4" style={{ position: 'sticky', top: 0, zIndex: 60, background: 'white', paddingTop: 8, paddingBottom: 8, boxShadow: '0 1px 0 rgba(0,0,0,0.06)' }}>
+      <div className="flex justify-between items-center mb-4" style={{ background: 'white', paddingTop: 8, paddingBottom: 8 }}>
         <h2 className="text-xl font-bold">予約投稿一覧</h2>
         <div className="flex gap-2">
           <button
@@ -384,7 +397,7 @@ export default function ScheduledPostsTable() {
         </div>
       </div>
 
-      <div className="flex space-x-2 mb-2" style={{ position: 'sticky', top: headerHeight, zIndex: 50, background: 'white', paddingTop: 6, paddingBottom: 6, boxShadow: '0 1px 0 rgba(0,0,0,0.04)' }}>
+      <div className="flex space-x-2 mb-2" style={{ paddingTop: 6, paddingBottom: 6 }}>
         <select
           className="border rounded p-1"
           value={filterStatus}
@@ -420,7 +433,7 @@ export default function ScheduledPostsTable() {
 
       <div className="overflow-x-auto">
         <table className="min-w-full bg-white dark:bg-gray-900 border">
-          <thead className="dark:bg-gray-800" style={{ position: 'sticky', top: headerHeight + 48, zIndex: 45, background: 'white' }}>
+          <thead className="dark:bg-gray-800">
             <tr>
               <th className="border p-1" style={{ width: 40 }}><input type="checkbox" checked={selectedIds.length === sortedPosts.length && sortedPosts.length > 0} onChange={(e) => e.target.checked ? selectAllVisible() : clearSelection()} /></th>
               <th className="border p-1" style={{ width: 180 }}>アカウント</th>
