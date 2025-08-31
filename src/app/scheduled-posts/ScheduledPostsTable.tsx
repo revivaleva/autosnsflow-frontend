@@ -105,6 +105,7 @@ export default function ScheduledPostsTable() {
   const [debugModalOpen, setDebugModalOpen] = useState<boolean>(false);
   const [debugData, setDebugData] = useState<any>(null);
   const [bulkDeleting, setBulkDeleting] = useState<boolean>(false);
+  const [creatingToday, setCreatingToday] = useState<boolean>(false);
 
   // 一覧取得（既存API）
   const loadPosts = async () => {
@@ -312,6 +313,23 @@ export default function ScheduledPostsTable() {
     }
   };
 
+  // 当日の自動投稿を一括作成する
+  const handleCreateTodayAutoPosts = async () => {
+    if (!confirm('当日の未作成の自動投稿をすべて生成します。よろしいですか？')) return;
+    setCreatingToday(true);
+    try {
+      const res = await fetch('/api/auto-posts/create-today', { method: 'POST', credentials: 'include' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || data?.message || `HTTP ${res.status}`);
+      alert(`作成完了: ${data.created || 0} 件`);
+      await loadPosts();
+    } catch (e: any) {
+      alert(`作成に失敗しました: ${e.message || String(e)}`);
+    } finally {
+      setCreatingToday(false);
+    }
+  };
+
 
 
   const sortedPosts = posts
@@ -414,6 +432,12 @@ export default function ScheduledPostsTable() {
             className="bg-green-500 text-white rounded px-4 py-2 hover:bg-green-600"
           >
             ＋予約投稿追加
+          </button>
+          <button
+            onClick={handleCreateTodayAutoPosts}
+            className="bg-purple-500 text-white rounded px-4 py-2 hover:bg-purple-600"
+          >
+            当日自動作成
           </button>
           <button
             onClick={selectAllVisible}

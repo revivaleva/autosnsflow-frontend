@@ -1,0 +1,130 @@
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { QueryCommand, PutItemCommand } from '@aws-sdk/client-dynamodb';
+import { createDynamoClient } from '@/lib/ddb';
+import { verifyUserFromRequest } from '@/lib/auth';
+import crypto from 'crypto';
+
+const ddb = createDynamoClient();
+const TBL_SCHEDULED = process.env.TBL_SCHEDULED_POSTS || 'ScheduledPosts';
+const TBL_ACCOUNTS = process.env.TBL_THREADS_ACCOUNTS || 'ThreadsAccounts';
+const TBL_GROUPS = process.env.TBL_AUTO_POST_GROUPS || 'AutoPostGroups';
+
+// helper: epoch seconds for start/end of today JST
+function todayRangeJst() {
+  const d = new Date();
+  // convert to JST by offset +9
+  const jstOffset = 9 * 60; // minutes
+  const utc = d.getTime() + d.getTimezoneOffset() * 60000;
+  const jst = new Date(utc + jstOffset * 60000);
+  jst.setHours(0,0,0,0);
+  const t0 = Math.floor(jst.getTime() / 1000);
+  const t1 = Math.floor((new Date(jst.getTime() + 24*3600*1000 - 1)).getTime() / 1000);
+  return { t0, t1 };
+}
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  try {
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
+    const user = await verifyUserFromRequest(req);
+    const userId = user.sub;
+
+    // 1) 取得すべきアカウント一覧（自動投稿が有効なアカウント）
+    const accs = await ddb.send(new QueryCommand({
+      TableName: TBL_ACCOUNTS,
+      KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
+      ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'ACCOUNT#' } },
+    }));
+
+    const accounts = (accs.Items || []).map((it: any) => ({
+      accountId: it.SK?.S?.replace(/^ACCOUNT#/, '') || '',
+      accountName: it.displayName?.S || '',
+      autoPostGroupId: it.autoPostGroupId?.S || '',
+      autoGenerate: it.autoGenerate?.BOOL === true,
+    })).filter(a => a.autoGenerate && a.autoPostGroupId);
+
+    const { t0, t1 } = todayRangeJst();
+    let created = 0;
+
+    for (const acct of accounts) {
+      // 2) そのアカウントの自動投稿グループのスロットを取得
+      const gq = await ddb.send(new QueryCommand({
+        TableName: TBL_GROUPS,
+        KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
+        ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: `GROUPITEM#${acct.autoPostGroupId}#` } },
+      }));
+      const slots = (gq.Items || []).map((it: any) => ({
+        slotId: (it.SK?.S || '').split('#').pop(),
+        timeRange: it.timeRange?.S || '',
+        theme: it.theme?.S || '',
+        enabled: it.enabled?.BOOL === true,
+      })).filter(s => s.enabled);
+
+      if (!slots.length) continue;
+
+      // 3) 当日の既存自動投稿の有無をチェック（accountId + autoPostGroupId + scheduledAt の範囲）
+      // 簡易的に scheduledAt BETWEEN t0..t1 AND accountId = acct.accountId AND begins_with(autoPostGroupId, acct.autoPostGroupId)
+      // Use Query + FilterExpression
+      const existed = await ddb.send(new QueryCommand({
+        TableName: TBL_SCHEDULED,
+        KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
+        ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'SCHEDULEDPOST#' }, ':acc': { S: acct.accountId }, ':grp': { S: acct.autoPostGroupId }, ':t0': { N: String(t0) }, ':t1': { N: String(t1) } },
+        FilterExpression: 'accountId = :acc AND begins_with(autoPostGroupId, :grp) AND scheduledAt BETWEEN :t0 AND :t1',
+        ProjectionExpression: 'PK, SK',
+      }));
+
+      const existCount = (existed.Items || []).length;
+      if (existCount > 0) continue; // 既に作成済みならスキップ
+
+      // 4) スロット分だけ新規予約を作成（スロットの timeRange も利用できるがここでは scheduledAt をスロットに依らず JST のランダム時間に設定）
+      for (const slot of slots) {
+        const id = crypto.randomUUID();
+        const whenJst = new Date(); // default to now; you could map timeRange -> timestamp if desired
+        const scheduledAt = Math.floor(whenJst.getTime() / 1000);
+        const item: any = {
+          PK: { S: `USER#${userId}` },
+          SK: { S: `SCHEDULEDPOST#${id}` },
+          scheduledPostId: { S: id },
+          accountId: { S: acct.accountId },
+          accountName: { S: acct.accountName || '' },
+          autoPostGroupId: { S: acct.autoPostGroupId },
+          theme: { S: slot.theme || '' },
+          content: { S: '' },
+          scheduledAt: { N: String(scheduledAt) },
+          postedAt: { N: '0' },
+          status: { S: 'scheduled' },
+          isDeleted: { BOOL: false },
+          createdAt: { N: String(Math.floor(Date.now() / 1000)) },
+          timeRange: { S: slot.timeRange || '' },
+        };
+        await ddb.send(new PutItemCommand({ TableName: TBL_SCHEDULED, Item: item }));
+        created++;
+
+        // 5) その場で AI 生成して content を更新（非同期でもよいがここでは同期実行）
+        try {
+          // call internal AI API to generate post text
+          const aiResp = await fetch(`${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/ai-gateway`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ purpose: 'post-generate', input: { accountId: acct.accountId, theme: slot.theme || '' } }),
+          });
+          const aiData = await aiResp.json().catch(() => ({}));
+          const text = aiData.text || aiData?.raw?.choices?.[0]?.message?.content || '';
+          if (text) {
+            // Update item with generated content
+            await ddb.send(new PutItemCommand({ TableName: TBL_SCHEDULED, Item: { ...item, content: { S: text } } }));
+          }
+        } catch (e) {
+          // ignore per-account generation errors
+          console.log('ai generate failed for', acct.accountId, e);
+        }
+      }
+    }
+
+    return res.status(200).json({ ok: true, created });
+  } catch (e: any) {
+    console.error('create-today error', e);
+    return res.status(500).json({ error: String(e) });
+  }
+}
+
+
