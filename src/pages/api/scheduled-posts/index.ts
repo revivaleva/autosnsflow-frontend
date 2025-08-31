@@ -239,7 +239,8 @@ export default async function handler(
         timeRange?: string;
         // 追加フィールド
         secondStageWanted?: boolean;
-        deleteScheduledAt?: number | string;
+        // 新仕様: 日時ではなくフラグで管理する
+        deleteOnSecondStage?: boolean;
         deleteParentAfter?: boolean;
       };
       if (!body.scheduledPostId) {
