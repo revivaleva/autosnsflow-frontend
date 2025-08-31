@@ -284,6 +284,27 @@ export default async function handler(
             try {
               const { deleteThreadPost } = await import("@/../packages/backend-core/src/services/threadsDelete");
               const result = await deleteThreadPost({ postId, accessToken });
+
+              // ログに出すためアクセストークンのハッシュを作成（漏洩防止）
+              const tokenHash = crypto.createHash("sha256").update(accessToken || "").digest("hex").slice(0, 12);
+
+              // 成功/失敗いずれも詳細ログを残す
+              await putLog({
+                userId,
+                type: "manual-delete-threads",
+                accountId: accountId || "",
+                targetId: key.SK.S || "",
+                status: result.ok ? "ok" : "error",
+                message: result.ok ? "Threads delete attempted" : "Threads delete failed",
+                detail: {
+                  postId,
+                  statusCode: result.status,
+                  bodySnippet: (result.body || "").slice(0, 1000),
+                  accessTokenHash: tokenHash,
+                  initiatedBy: "api-manual",
+                },
+              });
+
               if (!result.ok) {
                 throw new Error(`threads delete failed: ${result.status} ${result.body}`);
               }

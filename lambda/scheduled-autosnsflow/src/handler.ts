@@ -2319,14 +2319,28 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
       const secondId = it.secondStagePostId?.S || "";
       const deleteParent = it.deleteParentAfter?.BOOL === true;
 
-      // 削除対象を判定してThreads APIで削除を試みる
+      // 削除対象を判定してThreads APIで削除を試みる（共通ユーティリティ経由、詳細ログ追加）
       try {
+        const { deleteThreadPost } = await import("../../../packages/backend-core/src/services/threadsDelete");
+
+        // トークンハッシュを作成（ログにそのままトークンを出さない）
+        const tokenHash = acct.accessToken ? crypto.createHash("sha256").update(acct.accessToken).digest("hex").slice(0, 12) : "";
+
+        let deleteResult: any = null;
         if (deleteParent && postId) {
-          await fetch(`https://graph.threads.net/v1.0/${encodeURIComponent(postId)}?access_token=${encodeURIComponent(acct.accessToken)}`, { method: 'DELETE' });
+          deleteResult = await deleteThreadPost({ postId, accessToken: acct.accessToken });
         }
         if (!deleteParent && secondId) {
-          await fetch(`https://graph.threads.net/v1.0/${encodeURIComponent(secondId)}?access_token=${encodeURIComponent(acct.accessToken)}`, { method: 'DELETE' });
+          deleteResult = await deleteThreadPost({ postId: secondId, accessToken: acct.accessToken });
         }
+
+        // Delete result must be checked
+        if (!deleteResult || !deleteResult.ok) {
+          // 保存用だけputLogして上位catchへ投げる
+          await putLog({ userId, type: "second-stage-delete", accountId: acct.accountId, targetId: sk, status: "error", message: "二段階投稿削除に失敗(HTTP)", detail: { whichFlagUsed: flagSource || 'unknown', deleteTarget: deleteParent ? 'parent' : 'second-stage', postId: postId || secondId || '', statusCode: deleteResult?.status || 0, bodySnippet: (deleteResult?.body || '').slice(0, 1000), accessTokenHash: tokenHash } });
+          throw new Error(`threads delete failed: ${deleteResult?.status} ${deleteResult?.body}`);
+        }
+
         // 成功したら予約レコードに削除フラグと削除日時をセット
         await ddb.send(new UpdateItemCommand({
           TableName: TBL_SCHEDULED,
@@ -2334,7 +2348,8 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
           UpdateExpression: "SET isDeleted = :t, deletedAt = :ts",
           ExpressionAttributeValues: { ":t": { BOOL: true }, ":ts": { N: String(now) } }
         }));
-        await putLog({ userId, type: "second-stage-delete", accountId: acct.accountId, targetId: sk, status: "ok", message: "二段階投稿削除を実行", detail: { whichFlagUsed: flagSource || 'unknown', deleteTarget: deleteParent ? 'parent' : 'second-stage', postId: postId || '', secondId: secondId || '' } });
+
+        await putLog({ userId, type: "second-stage-delete", accountId: acct.accountId, targetId: sk, status: "ok", message: "二段階投稿削除を実行", detail: { whichFlagUsed: flagSource || 'unknown', deleteTarget: deleteParent ? 'parent' : 'second-stage', postId: postId || secondId || '', statusCode: deleteResult.status, bodySnippet: (deleteResult.body || '').slice(0, 1000), accessTokenHash: tokenHash } });
       } catch (e) {
         await putLog({ userId, type: "second-stage-delete", accountId: acct.accountId, targetId: sk, status: "error", message: "二段階投稿削除に失敗", detail: { error: String(e), whichFlagUsed: flagSource || 'unknown', deleteTarget: deleteParent ? 'parent' : 'second-stage', postId: postId || '', secondId: secondId || '' } });
       }
