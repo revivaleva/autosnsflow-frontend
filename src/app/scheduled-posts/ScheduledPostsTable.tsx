@@ -499,33 +499,48 @@ export default function ScheduledPostsTable() {
                   </td>
                   <td className="border p-1">
                     {/* 二段階投稿状況 */}
-                    {post.status === "posted" && post.doublePostStatus ? (
-                      post.doublePostStatus === "done" ? (
-                        <div className="text-xs">
-                          <div className="text-green-600 font-medium">投稿済</div>
-                          {post.secondStageAt && (
-                            <div className="text-gray-500">
-                              {typeof post.secondStageAt === "number"
-                                ? new Date(post.secondStageAt * 1000).toLocaleString()
-                                : new Date(post.secondStageAt).toLocaleString()}
+                    {(() => {
+                      const secondWanted = (post as any).secondStageWanted;
+                      if (post.status === "posted" && post.doublePostStatus) {
+                        if (post.doublePostStatus === "done") {
+                          return (
+                            <div className="text-xs">
+                              <div className="text-green-600 font-medium">投稿済</div>
+                              {post.secondStageAt && (
+                                <div className="text-gray-500">
+                                  {typeof post.secondStageAt === "number"
+                                    ? new Date(post.secondStageAt * 1000).toLocaleString()
+                                    : new Date(post.secondStageAt).toLocaleString()}
+                                </div>
+                              )}
                             </div>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="text-xs">
-                          <div className="text-yellow-600 font-medium">待機中</div>
-                          {post.timeRange && (
-                            <div className="text-gray-500 text-xs">
-                              範囲: {post.timeRange}
-                            </div>
-                          )}
-                        </div>
-                      )
-                    ) : post.status === "posted" ? (
-                      <div className="text-xs text-gray-500">未設定</div>
-                    ) : (
-                      ""
-                    )}
+                          );
+                        }
+                        return (
+                          <div className="text-xs">
+                            <div className="text-yellow-600 font-medium">待機中</div>
+                            {post.timeRange && (
+                              <div className="text-gray-500 text-xs">範囲: {post.timeRange}</div>
+                            )}
+                          </div>
+                        );
+                      }
+
+                      // 未投稿／未設定時の表示
+                      if (post.status !== "posted") {
+                        if (typeof secondWanted !== "undefined") {
+                          return secondWanted === false ? (
+                            <div className="text-xs">投稿無し</div>
+                          ) : (
+                            <div className="text-xs text-gray-500">投稿予定</div>
+                          );
+                        }
+                        return <div className="text-xs text-gray-500">未設定</div>;
+                      }
+
+                      // 投稿済だが doublePostStatus が空など
+                      return <div className="text-xs text-gray-500">未設定</div>;
+                    })()}
                   </td>
                   <td className="border p-1">
                     <button

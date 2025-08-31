@@ -110,6 +110,14 @@ function mapItem(it: any) {
     secondStagePostId: getS("secondStagePostId"),
     secondStageAt: getN("secondStageAt"),
     timeRange: getS("timeRange"),
+    // 予約側に保存される二段階投稿希望フラグ
+    secondStageWanted: getB("secondStageWanted"),
+    // 削除予定時刻（秒）
+    deleteScheduledAt: getN("deleteScheduledAt"),
+    // 親投稿も削除するか
+    deleteParentAfter: getB("deleteParentAfter"),
+    // 削除済み時刻
+    deletedAt: getN("deletedAt"),
   };
 }
 
