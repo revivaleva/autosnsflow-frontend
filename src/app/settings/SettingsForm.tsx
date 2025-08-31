@@ -82,6 +82,11 @@ export default function SettingsForm() {
       });
       if (!r.ok) throw new Error("保存に失敗しました");
       setMessage("保存しました");
+      try {
+        window.dispatchEvent(new CustomEvent("userSettingsUpdated", { detail: values }));
+      } catch (e) {
+        // ignore in environments that disallow window events
+      }
     } catch (e: any) {
       setMessage(e?.message || "保存に失敗しました");
     } finally {
