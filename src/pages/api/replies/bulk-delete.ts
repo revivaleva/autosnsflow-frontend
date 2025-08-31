@@ -18,12 +18,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (!ids.length) return res.status(400).json({ error: 'replyId or replyIds required' });
 
     const results: any[] = [];
-    for (const id of ids) {
+    for (const rawId of ids) {
+      // フロントは SK をそのまま返すことがある ("REPLY#...")、
+      // DB のキーは "REPLY#<id>" なので二重付与を避けるため正規化する
+      const id = String(rawId).startsWith("REPLY#") ? String(rawId).slice(6) : String(rawId);
       try {
         const get = await ddb.send(new GetItemCommand({ TableName: TBL_REPLIES, Key: { PK: { S: `USER#${userId}` }, SK: { S: `REPLY#${id}` } }, ProjectionExpression: 'status, responsePostId, postId, accountId' }));
         const item = get.Item;
         if (!item) {
-          results.push({ id, ok: false, error: 'not_found' });
+          results.push({ id: rawId, ok: false, error: 'not_found' });
           continue;
         }
 
@@ -32,17 +35,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         if (status !== 'replied') {
           // 未返信: 物理削除
           await ddb.send(new DeleteItemCommand({ TableName: TBL_REPLIES, Key: { PK: { S: `USER#${userId}` }, SK: { S: `REPLY#${id}` } } }));
-          results.push({ id, ok: true, deleted: true });
+          results.push({ id: rawId, ok: true, deleted: true });
           continue;
         }
 
         // 返信済: Threads 側の実投稿削除は行わず、即時に論理削除する
         const now2 = Math.floor(Date.now() / 1000);
         await ddb.send(new UpdateItemCommand({ TableName: TBL_REPLIES, Key: { PK: { S: `USER#${userId}` }, SK: { S: `REPLY#${id}` } }, UpdateExpression: 'SET isDeleted = :d, deletedAt = :ts', ExpressionAttributeValues: { ':d': { BOOL: true }, ':ts': { N: String(now2) } } }));
-        results.push({ id, ok: true, deleted: false });
+        results.push({ id: rawId, ok: true, deleted: false });
 
       } catch (e: any) {
-        results.push({ id, ok: false, error: e?.message || String(e) });
+        results.push({ id: rawId, ok: false, error: e?.message || String(e) });
       }
     }
 
