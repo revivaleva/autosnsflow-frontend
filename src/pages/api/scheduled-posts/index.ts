@@ -279,11 +279,22 @@ export default async function handler(
             accessToken = acc.Item?.accessToken?.S || "";
           }
 
-          if (postId && accessToken) {
+          // numericPostId を優先して削除対象IDを決定（数字のみを対象）
+          let deleteTargetId = "";
+          if (existing.Item?.numericPostId?.S && (/^\d+$/.test(existing.Item.numericPostId.S))) {
+            deleteTargetId = existing.Item.numericPostId.S;
+          } else if (existing.Item?.postId?.S && (/^\d+$/.test(existing.Item.postId.S))) {
+            deleteTargetId = existing.Item.postId.S;
+          } else {
+            // 数字IDが存在しない場合は文字列IDを最後の手段として使う
+            deleteTargetId = existing.Item?.numericPostId?.S || existing.Item?.postId?.S || "";
+          }
+
+          if (deleteTargetId && accessToken) {
             // Threads の投稿削除を試みる（共通ユーティリティを利用）
             try {
               const { deleteThreadPost } = await import("@/../packages/backend-core/src/services/threadsDelete");
-              const result = await deleteThreadPost({ postId, accessToken });
+              const result = await deleteThreadPost({ postId: deleteTargetId, accessToken });
 
               // ログに出すためアクセストークンのハッシュを作成（漏洩防止）
               const tokenHash = crypto.createHash("sha256").update(accessToken || "").digest("hex").slice(0, 12);
@@ -297,7 +308,7 @@ export default async function handler(
                 status: result.ok ? "ok" : "error",
                 message: result.ok ? "Threads delete attempted" : "Threads delete failed",
                 detail: {
-                  postId,
+                  postId: deleteTargetId,
                   statusCode: result.status,
                   bodySnippet: (result.body || "").slice(0, 1000),
                   accessTokenHash: tokenHash,
