@@ -280,12 +280,15 @@ export default async function handler(
           }
 
           if (postId && accessToken) {
-            // Threads の投稿削除を試みる
-            const delRes = await fetch(`https://graph.threads.net/v1.0/${encodeURIComponent(postId)}?access_token=${encodeURIComponent(accessToken)}`, { method: "DELETE" });
-            // ignore body; consider non-2xx as error
-            if (!delRes.ok) {
-              const txt = await delRes.text().catch(() => "");
-              throw new Error(`threads delete failed: ${delRes.status} ${txt}`);
+            // Threads の投稿削除を試みる（共通ユーティリティを利用）
+            try {
+              const { deleteThreadPost } = await import("@/../packages/backend-core/src/services/threadsDelete");
+              const result = await deleteThreadPost({ postId, accessToken });
+              if (!result.ok) {
+                throw new Error(`threads delete failed: ${result.status} ${result.body}`);
+              }
+            } catch (e) {
+              throw e;
             }
           }
 
