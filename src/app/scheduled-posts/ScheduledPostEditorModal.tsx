@@ -202,10 +202,9 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
   const [scheduledAtLocal, setScheduledAtLocal] = useState(
     mode === "edit" ? toLocalDatetimeValueAny(initial?.scheduledAt) : "" // [FIX] Any対応
   );
-  // 二段階投稿チェック/削除予定/親削除フラグ
+  // 二段階投稿チェック/二段階削除フラグ(日時は保持しない)/親削除フラグ
   const [secondStageWantedFlag, setSecondStageWantedFlag] = useState<boolean>(!!initial?.secondStageWanted);
-  const [deleteScheduledLocal, setDeleteScheduledLocal] = useState<string>(initial?.deleteScheduledAt ? toLocalDatetimeValue(initial.deleteScheduledAt) : "");
-  const [deleteScheduledEnabled, setDeleteScheduledEnabled] = useState<boolean>(!!initial?.deleteScheduledAt);
+  const [deleteOnSecondStageFlag, setDeleteOnSecondStageFlag] = useState<boolean>(!!(initial as any)?.deleteOnSecondStage);
   const [deleteParentAfterFlag, setDeleteParentAfterFlag] = useState<boolean>(false);
   // 投稿時間範囲（HH:MM）
   const [timeStart, setTimeStart] = useState<string>("00:00");
@@ -295,13 +294,7 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
     if (mode === "add") {
       if (userSettings) {
         if (typeof userSettings.parentDelete !== 'undefined') setDeleteParentAfterFlag(!!userSettings.parentDelete);
-        if (typeof userSettings.doublePostDelete !== 'undefined') setDeleteScheduledEnabled(!!userSettings.doublePostDelete);
-        const delayMin = Number(userSettings?.doublePostDeleteDelay || 0);
-        if (delayMin > 0 && scheduledAtLocal) {
-          const base = new Date(scheduledAtLocal);
-          base.setMinutes(base.getMinutes() + delayMin);
-          setDeleteScheduledLocal(formatDateToLocal(base));
-        }
+        if (typeof userSettings.doublePostDelete !== 'undefined') setDeleteOnSecondStageFlag(!!userSettings.doublePostDelete);
       }
       // スロットの二段階投稿既定を反映
       if (autoType && groupItems && groupItems.length >= autoType) {
@@ -427,8 +420,7 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
       setContent(initial.content || "");
       setScheduledAtLocal(toLocalDatetimeValueAny(initial.scheduledAt)); // [FIX]
       setSecondStageWantedFlag(!!initial.secondStageWanted);
-      setDeleteScheduledLocal(initial?.deleteScheduledAt ? toLocalDatetimeValue(initial.deleteScheduledAt) : "");
-      setDeleteScheduledEnabled(!!initial?.deleteScheduledAt);
+      setDeleteOnSecondStageFlag(!!(initial as any).deleteOnSecondStage);
       setDeleteParentAfterFlag(!!(initial as any).deleteParentAfter);
       // [MOD] 種別/グループは initial.autoPostGroupId 側で復元するためここではクリア
       setAutoType(null);
@@ -447,15 +439,7 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
     if (userSettings) {
       if (typeof userSettings.parentDelete !== 'undefined') setDeleteParentAfterFlag(!!userSettings.parentDelete);
       if (typeof userSettings.doublePostDelete !== 'undefined') {
-        // if doublePostDelete true, enable deleteScheduled checkbox
-        setDeleteScheduledEnabled(!!userSettings.doublePostDelete);
-        // if there is a configured delay, prefill deleteScheduledLocal as scheduledAtLocal + delay
-        const delayMin = Number(userSettings.doublePostDeleteDelay || 0);
-        if (delayMin > 0 && scheduledAtLocal) {
-          const base = new Date(scheduledAtLocal);
-          base.setMinutes(base.getMinutes() + delayMin);
-          setDeleteScheduledLocal(formatDateToLocal(base));
-        }
+        setDeleteOnSecondStageFlag(!!userSettings.doublePostDelete);
       }
     }
   };
@@ -482,7 +466,7 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
       timeRange: `${timeStart}-${timeEnd}`,
       // 二段階投稿/削除予定/親削除フラグ
       secondStageWanted: !!secondStageWantedFlag,
-      deleteScheduledAt: deleteScheduledEnabled && deleteScheduledLocal ? datetimeLocalToEpochSec(deleteScheduledLocal) : undefined,
+      deleteScheduledAt: deleteOnSecondStageFlag && scheduledAtLocal ? datetimeLocalToEpochSec(scheduledAtLocal) : undefined,
       // note: deleteParentAfterFlag will be sent from editor if true
     };
 
@@ -702,7 +686,7 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
           <div>
             <label className="block text-sm font-medium">二段階投稿削除予定</label>
             <div className="flex items-center gap-2 mt-2">
-              <input type="checkbox" checked={deleteScheduledEnabled} onChange={(e) => { setDeleteScheduledEnabled(e.target.checked); if (!e.target.checked) setDeleteScheduledLocal(""); }} />
+              <input type="checkbox" checked={deleteOnSecondStageFlag} onChange={(e) => { setDeleteOnSecondStageFlag(e.target.checked); if (!e.target.checked) setScheduledAtLocal(""); }} />
               <span className="text-xs text-gray-500">チェックすると二段階投稿の削除予定を有効化します（遅延は設定に従います）</span>
             </div>
           </div>

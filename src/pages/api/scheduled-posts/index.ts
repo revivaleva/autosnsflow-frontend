@@ -211,16 +211,13 @@ export default async function handler(
         timeRange: { S: body.timeRange ?? "" },
         // 二段階投稿希望フラグを保存（デフォルト false）
         secondStageWanted: { BOOL: !!(body as any).secondStageWanted },
+        // スロット/予約単位で二段階削除を有効化するフラグ（日時は保存しない）
+        deleteOnSecondStage: { BOOL: !!(body as any).deleteOnSecondStage },
         // 削除種別フラグ（デフォルト false）
         deleteParentAfter: { BOOL: !!(body as any).deleteParentAfter },
       };
 
-      // deleteScheduledAt は存在時のみ追加（数値または日時文字列を受け付ける）
-      if (typeof (body as any).deleteScheduledAt !== 'undefined' && (body as any).deleteScheduledAt !== null && (body as any).deleteScheduledAt !== '') {
-        const v = (body as any).deleteScheduledAt;
-        const sec = typeof v === 'number' ? v : Math.floor(new Date(String(v)).getTime() / 1000);
-        item.deleteScheduledAt = { N: String(sec) };
-      }
+      // no deleteScheduledAt: we store only boolean deleteOnSecondStage and compute timing at runtime
 
       // Put with a looser type to avoid TypeScript complaining about optional/undefined union
       await ddb.send(new PutItemCommand({ TableName: TBL_SCHEDULED, Item: item as any }));
@@ -294,11 +291,9 @@ export default async function handler(
         expr.push("secondStageWanted = :ssw");
         values[":ssw"] = { BOOL: !!body.secondStageWanted };
       }
-      if (typeof body.deleteScheduledAt !== "undefined") {
-        // body.deleteScheduledAt は数値または日付文字列を受け付ける
-        const sec = typeof body.deleteScheduledAt === 'number' ? body.deleteScheduledAt : Math.floor(new Date(String(body.deleteScheduledAt)).getTime() / 1000);
-        expr.push("deleteScheduledAt = :dsa");
-        values[":dsa"] = { N: String(sec) };
+      if (typeof body.deleteOnSecondStage !== "undefined") {
+        expr.push("deleteOnSecondStage = :doss");
+        values[":doss"] = { BOOL: !!body.deleteOnSecondStage };
       }
       if (typeof body.deleteParentAfter !== "undefined") {
         expr.push("deleteParentAfter = :dpa");

@@ -405,6 +405,8 @@ export default function ScheduledPostsTable() {
               <th className="border p-1">投稿日時</th>
               <th className="border p-1">投稿ID</th>
               <th className="border p-1">二段階投稿</th>
+              <th className="border p-1">二段階投稿削除</th>
+              <th className="border p-1">投稿削除</th>
               <th className="border p-1">リプ状況</th>
               <th className="border p-1">アクション</th>
             </tr>
@@ -508,6 +510,10 @@ export default function ScheduledPostsTable() {
                     {(() => {
                       const secondWanted = (post as any).secondStageWanted;
                       if (post.status === "posted" && post.doublePostStatus) {
+                        // If reservation explicitly set secondStageWanted === false, keep showing '投稿無し'
+                        if (secondWanted === false) {
+                          return <div className="text-xs">投稿無し</div>;
+                        }
                         if (post.doublePostStatus === "done") {
                           return (
                             <div className="text-xs">
@@ -548,13 +554,9 @@ export default function ScheduledPostsTable() {
                       return <div className="text-xs text-gray-500">未設定</div>;
                     })()}
                   </td>
-                  <td className="border p-1 text-xs">
-                    {/* 二段階削除: deleteScheduledAt があれば日時、無ければ無 */}
-                    {(post as any).deleteScheduledAt
-                      ? typeof (post as any).deleteScheduledAt === 'number'
-                        ? new Date((post as any).deleteScheduledAt * 1000).toLocaleString()
-                        : String((post as any).deleteScheduledAt)
-                      : <span className="text-gray-500">無</span>}
+                  <td className="border p-1 text-center">
+                    {/* 二段階投稿削除フラグ（日時ではなく設定による有無） */}
+                    {(post as any).deleteOnSecondStage ? <span className="text-green-600 font-medium">有</span> : <span className="text-gray-500">無</span>}
                   </td>
                   <td className="border p-1 text-center">
                     {/* 親投稿削除フラグ */}
