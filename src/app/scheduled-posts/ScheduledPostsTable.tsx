@@ -126,26 +126,31 @@ export default function ScheduledPostsTable() {
 
   // [MOD] 編集保存（既存PATCH）
   const handleEditSave = async (edited: ScheduledPostType) => {
+    // Send full editable fields so server saves secondStageWanted/deleteScheduledAt/deleteParentAfter
+    const payload: any = {
+      scheduledPostId: edited.scheduledPostId,
+      content: edited.content,
+      scheduledAt: edited.scheduledAt,
+    };
+    if (typeof (edited as any).secondStageWanted !== 'undefined') payload.secondStageWanted = !!(edited as any).secondStageWanted;
+    if (typeof (edited as any).deleteScheduledAt !== 'undefined') payload.deleteScheduledAt = (edited as any).deleteScheduledAt;
+    if (typeof (edited as any).deleteParentAfter !== 'undefined') payload.deleteParentAfter = !!(edited as any).deleteParentAfter;
+
     const resp = await fetch(`/api/scheduled-posts`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({
-        scheduledPostId: edited.scheduledPostId,
-        content: edited.content,
-        scheduledAt: edited.scheduledAt,
-      }),
+      body: JSON.stringify(payload),
     });
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok || !data?.ok) {
       alert(`更新に失敗しました: ${data?.error || resp.statusText}`);
       return;
     }
-    setPosts((prev) =>
-      prev.map((p) =>
-        p.scheduledPostId === edited.scheduledPostId ? { ...p, ...edited } : p
-      )
-    );
+
+    // Prefer authoritative server response if available
+    const updated = data.post || edited;
+    setPosts((prev) => prev.map((p) => (p.scheduledPostId === edited.scheduledPostId ? { ...p, ...updated } : p)));
   };
 
   // 削除（既存）
