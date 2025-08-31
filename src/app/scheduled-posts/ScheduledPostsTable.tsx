@@ -407,21 +407,21 @@ export default function ScheduledPostsTable() {
 
       <div className="overflow-x-auto">
         <table className="min-w-full bg-white dark:bg-gray-900 border">
-          <thead className="dark:bg-gray-800">
+          <thead className="dark:bg-gray-800" style={{ position: 'sticky', top: 112, zIndex: 45, background: 'white' }}>
             <tr>
-              <th className="border p-1" style={{ width: 40, position: 'sticky', top: 112, background: 'white', zIndex: 45 }}><input type="checkbox" checked={selectedIds.length === sortedPosts.length && sortedPosts.length > 0} onChange={(e) => e.target.checked ? selectAllVisible() : clearSelection()} /></th>
-              <th className="border p-1" style={{ width: 180, position: 'sticky', top: 112, background: 'white', zIndex: 45 }}>アカウント</th>
-              <th className="border p-1" style={{ width: 160, position: 'sticky', top: 112, background: 'white', zIndex: 45 }}>予約投稿日時</th>
-              <th className="border p-1" style={{ width: 140, position: 'sticky', top: 112, background: 'white', zIndex: 45 }}>自動投稿</th>
-              <th className="border p-1" style={{ width: 200, position: 'sticky', top: 112, background: 'white', zIndex: 45 }}>生成テーマ</th>
-              <th className="border p-1" style={{ width: 360, position: 'sticky', top: 112, background: 'white', zIndex: 45 }}>本文テキスト</th>
-              <th className="border p-1" style={{ width: 160, position: 'sticky', top: 112, background: 'white', zIndex: 45 }}>投稿日時</th>
-              <th className="border p-1" style={{ width: 140, position: 'sticky', top: 112, background: 'white', zIndex: 45 }}>投稿ID</th>
-              <th className="border p-1" style={{ width: 140, position: 'sticky', top: 112, background: 'white', zIndex: 45 }}>二段階投稿</th>
-              <th className="border p-1" style={{ width: 120, position: 'sticky', top: 112, background: 'white', zIndex: 45 }}>二段階投稿削除</th>
-              <th className="border p-1" style={{ width: 120, position: 'sticky', top: 112, background: 'white', zIndex: 45 }}>投稿削除</th>
-              <th className="border p-1" style={{ width: 90, position: 'sticky', top: 112, background: 'white', zIndex: 45 }}>リプ状況</th>
-              <th className="border p-1" style={{ width: 180, position: 'sticky', top: 112, background: 'white', zIndex: 45 }}>アクション</th>
+              <th className="border p-1" style={{ width: 40 }}><input type="checkbox" checked={selectedIds.length === sortedPosts.length && sortedPosts.length > 0} onChange={(e) => e.target.checked ? selectAllVisible() : clearSelection()} /></th>
+              <th className="border p-1" style={{ width: 180 }}>アカウント</th>
+              <th className="border p-1" style={{ width: 160 }}>予約投稿日時</th>
+              <th className="border p-1" style={{ width: 140 }}>自動投稿</th>
+              <th className="border p-1" style={{ width: 200 }}>生成テーマ</th>
+              <th className="border p-1" style={{ width: 360 }}>本文テキスト</th>
+              <th className="border p-1" style={{ width: 160 }}>投稿日時</th>
+              <th className="border p-1" style={{ width: 140 }}>投稿ID</th>
+              <th className="border p-1" style={{ width: 140 }}>二段階投稿</th>
+              <th className="border p-1" style={{ width: 120 }}>二段階投稿削除</th>
+              <th className="border p-1" style={{ width: 120 }}>投稿削除</th>
+              <th className="border p-1" style={{ width: 90 }}>リプ状況</th>
+              <th className="border p-1" style={{ width: 180 }}>アクション</th>
             </tr>
           </thead>
           <tbody>

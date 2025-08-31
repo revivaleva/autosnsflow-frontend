@@ -1565,10 +1565,17 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
     }
 
     // 予約作成 → 本文生成
+    // overrideTheme may contain comma-separated themes; pick one randomly like the editor does
+    let slotTheme = String(slot.theme || "");
+    if (slotTheme.includes(",")) {
+      const parts = slotTheme.split(",").map((s: any) => String(s).trim()).filter(Boolean);
+      if (parts.length > 0) slotTheme = parts[Math.floor(Math.random() * parts.length)];
+    }
+
     const { id, themeStr } = await createScheduledPost(userId, {
       acct, group, type: idx, whenJst: when,
       // テーマ/時間帯：スロットに設定があればそれを優先
-      overrideTheme: String(slot.theme || ""),
+      overrideTheme: slotTheme,
       overrideTimeRange: String(slot.timeRange || ""),
       // スロット単位の二段階投稿指定を予約データへ伝搬
       secondStageWanted: !!slot.secondStageWanted,
