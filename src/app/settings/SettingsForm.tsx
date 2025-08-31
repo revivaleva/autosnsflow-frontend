@@ -14,6 +14,12 @@ type Settings = {
   // [MOD] autoPost: boolean（既定 false）
   autoPost: boolean;
   doublePostDelay: string; // minutes as string
+  // 二段階投稿削除を有効化するか
+  doublePostDelete: boolean;
+  // 二段階投稿削除の遅延（分）
+  doublePostDeleteDelay: string;
+  // 親投稿も削除するか
+  parentDelete: boolean;
 };
 
 const DEFAULTS: Settings = {
@@ -25,6 +31,9 @@ const DEFAULTS: Settings = {
   replyPrompt: "",
   autoPost: false,
   doublePostDelay: "5",
+  doublePostDelete: false,
+  doublePostDeleteDelay: "60",
+  parentDelete: false,
 };
 
 export default function SettingsForm() {
