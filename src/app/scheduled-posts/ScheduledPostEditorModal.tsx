@@ -202,6 +202,7 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
   // 二段階投稿チェック/削除予定/親削除フラグ
   const [secondStageWantedFlag, setSecondStageWantedFlag] = useState<boolean>(!!initial?.secondStageWanted);
   const [deleteScheduledLocal, setDeleteScheduledLocal] = useState<string>(initial?.deleteScheduledAt ? toLocalDatetimeValue(initial.deleteScheduledAt) : "");
+  const [deleteScheduledEnabled, setDeleteScheduledEnabled] = useState<boolean>(!!initial?.deleteScheduledAt);
   const [deleteParentAfterFlag, setDeleteParentAfterFlag] = useState<boolean>(false);
   // 投稿時間範囲（HH:MM）
   const [timeStart, setTimeStart] = useState<string>("00:00");
@@ -403,6 +404,7 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
       setScheduledAtLocal(toLocalDatetimeValueAny(initial.scheduledAt)); // [FIX]
       setSecondStageWantedFlag(!!initial.secondStageWanted);
       setDeleteScheduledLocal(initial?.deleteScheduledAt ? toLocalDatetimeValue(initial.deleteScheduledAt) : "");
+      setDeleteScheduledEnabled(!!initial?.deleteScheduledAt);
       setDeleteParentAfterFlag(!!(initial as any).deleteParentAfter);
       // [MOD] 種別/グループは initial.autoPostGroupId 側で復元するためここではクリア
       setAutoType(null);
@@ -432,7 +434,7 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
       timeRange: `${timeStart}-${timeEnd}`,
       // 二段階投稿/削除予定/親削除フラグ
       secondStageWanted: !!secondStageWantedFlag,
-      deleteScheduledAt: deleteScheduledLocal ? datetimeLocalToEpochSec(deleteScheduledLocal) : undefined,
+      deleteScheduledAt: deleteScheduledEnabled && deleteScheduledLocal ? datetimeLocalToEpochSec(deleteScheduledLocal) : undefined,
       // note: deleteParentAfterFlag will be sent from editor if true
     };
 
@@ -648,7 +650,10 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
           </div>
           <div>
             <label className="block text-sm font-medium">二段階投稿削除予定</label>
-            <input type="datetime-local" className="mt-1 w-full border rounded-md px-3 py-2" value={deleteScheduledLocal} onChange={(e) => setDeleteScheduledLocal(e.target.value)} />
+            <div className="flex items-center gap-2">
+              <input type="checkbox" checked={deleteScheduledEnabled} onChange={(e) => { setDeleteScheduledEnabled(e.target.checked); if (!e.target.checked) setDeleteScheduledLocal(""); }} />
+              <input type="datetime-local" disabled={!deleteScheduledEnabled} className="mt-1 w-full border rounded-md px-3 py-2" value={deleteScheduledLocal} onChange={(e) => setDeleteScheduledLocal(e.target.value)} />
+            </div>
           </div>
           <div>
             <label className="block text-sm font-medium">親投稿も削除</label>
