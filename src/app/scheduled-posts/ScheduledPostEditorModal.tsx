@@ -291,6 +291,25 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
       );
     }
 
+    // モーダル開時にユーザー設定から二段階削除・親削除の既定値を反映（追加モード時）
+    if (mode === "add") {
+      if (userSettings) {
+        if (typeof userSettings.parentDelete !== 'undefined') setDeleteParentAfterFlag(!!userSettings.parentDelete);
+        if (typeof userSettings.doublePostDelete !== 'undefined') setDeleteScheduledEnabled(!!userSettings.doublePostDelete);
+        const delayMin = Number(userSettings?.doublePostDeleteDelay || 0);
+        if (delayMin > 0 && scheduledAtLocal) {
+          const base = new Date(scheduledAtLocal);
+          base.setMinutes(base.getMinutes() + delayMin);
+          setDeleteScheduledLocal(formatDateToLocal(base));
+        }
+      }
+      // スロットの二段階投稿既定を反映
+      if (autoType && groupItems && groupItems.length >= autoType) {
+        const slot = groupItems[autoType - 1];
+        if (typeof slot.secondStageWanted !== 'undefined') setSecondStageWantedFlag(!!slot.secondStageWanted);
+      }
+    }
+
     // 初期 timeRange（編集時）
     if (mode === "edit") {
       const tr = initial?.timeRange || "";
