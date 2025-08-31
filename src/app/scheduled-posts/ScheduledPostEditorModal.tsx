@@ -58,6 +58,8 @@ type AutoPostGroupItem = {
   timeRange: string;
   theme: string;
   enabled?: boolean;
+  // スロットで二段階投稿を指定できる
+  secondStageWanted?: boolean;
 };
 
 type Props = {
@@ -187,6 +189,7 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
   const [accounts, setAccounts] = useState<AccountItem[]>([]);
   const [groups, setGroups] = useState<AutoPostGroup[]>([]);
   const [masterPrompt, setMasterPrompt] = useState<string>(""); // [ADD]
+  const [userSettings, setUserSettings] = useState<any>(null);
 
   const [accountId, setAccountId] = useState(initial?.accountId || "");
   const [accountName, setAccountName] = useState(initial?.accountName || "");
@@ -271,6 +274,7 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
           const j = await r.json();
           const s = j?.settings || j;
           setMasterPrompt(s?.masterPrompt || "");
+          setUserSettings(s || null);
         }
       } catch (e) {
         console.log("settings load error:", e);
@@ -346,6 +350,7 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
           timeRange: String(it.timeRange || ""),
           theme: String(it.theme || ""),
           enabled: it.enabled !== false,
+          secondStageWanted: !!it.secondStageWanted,
         }));
         const enabledSorted = items
           .filter((x) => x.enabled)
@@ -411,6 +416,30 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
       setGroupId("");
     }
   }, [open, mode, initial]);
+
+  // AI生成時に自動投稿グループやユーザー設定からチェック状態を反映するユーティリティ
+  const applyDefaultsFromGroupAndSettings = () => {
+    // 自動投稿グループのスロット設定を参照
+    if (autoType && groupItems && groupItems.length >= autoType) {
+      const slot = groupItems[autoType - 1];
+      if (typeof slot.secondStageWanted !== 'undefined') setSecondStageWantedFlag(!!slot.secondStageWanted);
+    }
+    // ユーザー設定から親削除・二段階削除の既定値を参照
+    if (userSettings) {
+      if (typeof userSettings.parentDelete !== 'undefined') setDeleteParentAfterFlag(!!userSettings.parentDelete);
+      if (typeof userSettings.doublePostDelete !== 'undefined') {
+        // if doublePostDelete true, enable deleteScheduled checkbox
+        setDeleteScheduledEnabled(!!userSettings.doublePostDelete);
+        // if there is a configured delay, prefill deleteScheduledLocal as scheduledAtLocal + delay
+        const delayMin = Number(userSettings.doublePostDeleteDelay || 0);
+        if (delayMin > 0 && scheduledAtLocal) {
+          const base = new Date(scheduledAtLocal);
+          base.setMinutes(base.getMinutes() + delayMin);
+          setDeleteScheduledLocal(formatDateToLocal(base));
+        }
+      }
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -507,6 +536,9 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
     ]
       .filter(Boolean)
       .join("\n\n");
+
+    // AI生成直前にデフォルトのチェック状態を適用
+    applyDefaultsFromGroupAndSettings();
 
     try {
       setIsGenerating(true);
