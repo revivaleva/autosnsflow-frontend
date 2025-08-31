@@ -444,7 +444,7 @@ export default function ScheduledPostsTable() {
                           : (post.postedAt as any)
                         : ""
                     ) : deleted ? (
-                      post.deletedAt ? new Date(post.deletedAt * 1000).toLocaleString() : "削除予定"
+                      (post as any).deletedAt ? new Date((post as any).deletedAt * 1000).toLocaleString() : "削除予定"
                     ) : (
                       // 未投稿かつ自動投稿グループ使用時は timeRange を表示
                       <span className="text-xs text-gray-600">

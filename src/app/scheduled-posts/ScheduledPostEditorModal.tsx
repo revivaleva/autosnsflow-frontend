@@ -19,7 +19,13 @@ export type ScheduledPostType = {
   numericPostId?: string; // 数字の投稿ID（リプライ取得用）
   postUrl?: string; // 投稿URL
   isDeleted?: boolean;
+  // 削除日時（予約が削除された/削除予定のタイムスタンプ秒）
+  deletedAt?: number;
+  // 削除予定時刻（投稿後に設定される可能性がある）
+  deleteScheduledAt?: number;
   replyCount?: number;
+  // 予約側に保存される二段階投稿希望フラグ
+  secondStageWanted?: boolean;
   // リプライ状況
   replyStatus?: {
     replied: number;
