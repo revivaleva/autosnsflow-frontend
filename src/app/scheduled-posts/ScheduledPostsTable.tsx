@@ -409,20 +409,19 @@ export default function ScheduledPostsTable() {
         <table className="min-w-full bg-white dark:bg-gray-900 border">
           <thead className="dark:bg-gray-800">
             <tr>
-              <th className="border p-1"><input type="checkbox" checked={selectedIds.length === sortedPosts.length && sortedPosts.length > 0} onChange={(e) => e.target.checked ? selectAllVisible() : clearSelection()} /></th>
-              <th className="border p-1">アカウント名</th>
-              <th className="border p-1">アカウントID</th>
-              <th className="border p-1">予約投稿日時</th>
-              <th className="border p-1">自動投稿</th>
-              <th className="border p-1">生成テーマ</th>
-              <th className="border p-1">本文テキスト</th>
-              <th className="border p-1">投稿日時</th>
-              <th className="border p-1">投稿ID</th>
-              <th className="border p-1">二段階投稿</th>
-              <th className="border p-1">二段階投稿削除</th>
-              <th className="border p-1">投稿削除</th>
-              <th className="border p-1">リプ状況</th>
-              <th className="border p-1">アクション</th>
+              <th className="border p-1" style={{ width: 40 }}><input type="checkbox" checked={selectedIds.length === sortedPosts.length && sortedPosts.length > 0} onChange={(e) => e.target.checked ? selectAllVisible() : clearSelection()} /></th>
+              <th className="border p-1" style={{ width: 180 }}>アカウント</th>
+              <th className="border p-1" style={{ width: 160 }}>予約投稿日時</th>
+              <th className="border p-1" style={{ width: 140 }}>自動投稿</th>
+              <th className="border p-1" style={{ width: 200 }}>生成テーマ</th>
+              <th className="border p-1" style={{ width: 360 }}>本文テキスト</th>
+              <th className="border p-1" style={{ width: 160 }}>投稿日時</th>
+              <th className="border p-1" style={{ width: 140 }}>投稿ID</th>
+              <th className="border p-1" style={{ width: 140 }}>二段階投稿</th>
+              <th className="border p-1" style={{ width: 120 }}>二段階投稿削除</th>
+              <th className="border p-1" style={{ width: 120 }}>投稿削除</th>
+              <th className="border p-1" style={{ width: 90 }}>リプ状況</th>
+              <th className="border p-1" style={{ width: 180 }}>アクション</th>
             </tr>
           </thead>
           <tbody>
@@ -444,8 +443,10 @@ export default function ScheduledPostsTable() {
               return (
                 <tr key={post.scheduledPostId} className={deleted ? 'bg-gray-100 text-gray-500' : ''}>
                   <td className="border p-1">{!deleted && <input type="checkbox" checked={selectedIds.includes(post.scheduledPostId)} onChange={() => toggleSelect(post.scheduledPostId)} />}</td>
-                  <td className="border p-1">{post.accountName}</td>
-                  <td className="border p-1">{post.accountId}</td>
+                  <td className="border p-1">
+                    <div className="text-sm font-medium">{post.accountName}</div>
+                    <div className="text-xs text-gray-500 break-words">{post.accountId}</div>
+                  </td>
                   <td className="border p-1">
                     {post.scheduledAt
                       ? typeof post.scheduledAt === "number"
@@ -454,14 +455,11 @@ export default function ScheduledPostsTable() {
                       : ""}
                   </td>
                   <td className="border p-1">{autoPostLabel}</td>
-                  <td className="border p-1">{post.theme}</td>
                   <td className="border p-1">
-                    <div 
-                      className="truncate max-w-xs" 
-                      title={post.content}
-                    >
-                      {post.content}
-                    </div>
+                    <div className="text-sm" style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'normal', maxHeight: '3rem' }} title={post.theme}>{post.theme}</div>
+                  </td>
+                  <td className="border p-1">
+                    <div className="text-sm text-[13px] leading-tight" style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'normal', maxHeight: '4.2rem' }} title={post.content}>{post.content}</div>
                   </td>
                   <td className="border p-1">
                     {post.status === "posted" ? (
