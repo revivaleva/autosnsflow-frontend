@@ -25,6 +25,8 @@ export default function ScheduledPostsTable() {
   const [sortKey, setSortKey] = useState<"scheduledAt" | "status">("scheduledAt");
   const [sortAsc, setSortAsc] = useState<boolean>(true);
   const [filterStatus, setFilterStatus] = useState<ScheduledPostStatus>("");
+  const [accountFilter, setAccountFilter] = useState<string>("");
+  const [accountIds, setAccountIds] = useState<string[]>([]);
 
   // [MOD] 新モーダルの管理
   const [editorOpen, setEditorOpen] = useState(false);
@@ -126,6 +128,21 @@ export default function ScheduledPostsTable() {
     };
     window.addEventListener("userSettingsUpdated", handler as EventListener);
     return () => window.removeEventListener("userSettingsUpdated", handler as EventListener);
+  }, []);
+
+  // アカウント一覧を取得してフィルタ用に保持
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch('/api/threads-accounts', { credentials: 'include' });
+        const data = await res.json().catch(() => ({}));
+        const list = (data.accounts || data.items || []) as any[];
+        const ids = Array.from(new Set(list.map(a => a.accountId).filter(Boolean)));
+        setAccountIds(ids);
+      } catch (e) {
+        // ignore
+      }
+    })();
   }, []);
 
   // [MOD] 追加
@@ -299,6 +316,8 @@ export default function ScheduledPostsTable() {
 
   const sortedPosts = posts
     .filter((post) => {
+      // アカウントフィルタ
+      if (accountFilter && post.accountId !== accountFilter) return false;
       // デフォルト（filterStatusが空）は論理削除されたものを除外
       if (!filterStatus) return !post.isDeleted;
       // 削除済フィルタが選択された場合は isDeleted=true のみ表示

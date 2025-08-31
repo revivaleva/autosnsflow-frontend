@@ -249,13 +249,15 @@ export default function SNSAccountsTable() {
                   : "—"}
               </td>
               <td className="py-2 px-3">
-                <button
-                  className="bg-indigo-500 text-white rounded px-3 py-1 hover:bg-indigo-600"
-                  onClick={() => handleOpenInApp(acc)}
-                  title="アプリで開く"
-                >
-                  アプリで開く
-                </button>
+                <div className="flex items-center justify-center">
+                  <button
+                    className="bg-indigo-500 text-white rounded px-3 py-1 hover:bg-indigo-600"
+                    onClick={() => handleOpenInApp(acc)}
+                    title="アプリで開く"
+                  >
+                    アプリで開く
+                  </button>
+                </div>
               </td>
               {/* [DEL] 一覧の編集/削除ボタンは廃止 */}
             </tr>
