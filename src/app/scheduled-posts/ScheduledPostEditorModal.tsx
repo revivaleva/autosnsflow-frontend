@@ -682,9 +682,9 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
           </div>
           <div>
             <label className="block text-sm font-medium">二段階投稿削除予定</label>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 mt-2">
               <input type="checkbox" checked={deleteScheduledEnabled} onChange={(e) => { setDeleteScheduledEnabled(e.target.checked); if (!e.target.checked) setDeleteScheduledLocal(""); }} />
-              <input type="datetime-local" disabled={!deleteScheduledEnabled} className="mt-1 w-full border rounded-md px-3 py-2" value={deleteScheduledLocal} onChange={(e) => setDeleteScheduledLocal(e.target.value)} />
+              <span className="text-xs text-gray-500">チェックすると二段階投稿の削除予定を有効化します（遅延は設定に従います）</span>
             </div>
           </div>
           <div>
