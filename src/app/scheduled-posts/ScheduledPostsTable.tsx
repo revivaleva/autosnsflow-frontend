@@ -90,6 +90,12 @@ export default function ScheduledPostsTable() {
 
   useEffect(() => {
     loadPosts();
+    // リモート設定が変わったら一覧を再読み込み
+    const handler = (e: any) => {
+      loadPosts();
+    };
+    window.addEventListener("userSettingsUpdated", handler as EventListener);
+    return () => window.removeEventListener("userSettingsUpdated", handler as EventListener);
   }, []);
 
   // [MOD] 追加
