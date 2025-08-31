@@ -154,12 +154,12 @@ export default function RepliesList() {
       if (!resp.ok) throw new Error(data?.error || `HTTP ${resp.status}`);
 
       // API の結果に基づいて UI を更新
-      const results: any[] = data.results || data.results || [];
+      const results: any[] = data.results || [];
       setReplies(prev => prev.filter(r => {
         const res = results.find((x: any) => x.id === r.id);
         if (!res) return true; // 影響なし
-        if (res.ok && res.deleted) return false; // 物理削除されたものは一覧から除外
-        if (res.ok && !res.deleted) return { ...r, status: 'deleted' } ? false : false; // 論理削除は除外（非表示）
+        // 成功した削除（物理/論理いずれも）については一覧から除外する
+        if (res.ok) return false;
         return true;
       }));
 
