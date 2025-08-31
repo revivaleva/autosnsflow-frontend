@@ -277,6 +277,22 @@ export default async function handler(
         values[":sa"] = { N: String(sec) };
       }
 
+      // 追加: 二段階投稿/削除予定/親削除の PATCH 更新対応
+      if (typeof body.secondStageWanted !== "undefined") {
+        expr.push("secondStageWanted = :ssw");
+        values[":ssw"] = { BOOL: !!body.secondStageWanted };
+      }
+      if (typeof body.deleteScheduledAt !== "undefined") {
+        // body.deleteScheduledAt は数値または日付文字列を受け付ける
+        const sec = typeof body.deleteScheduledAt === 'number' ? body.deleteScheduledAt : Math.floor(new Date(String(body.deleteScheduledAt)).getTime() / 1000);
+        expr.push("deleteScheduledAt = :dsa");
+        values[":dsa"] = { N: String(sec) };
+      }
+      if (typeof body.deleteParentAfter !== "undefined") {
+        expr.push("deleteParentAfter = :dpa");
+        values[":dpa"] = { BOOL: !!body.deleteParentAfter };
+      }
+
       if (typeof body.timeRange === "string") {
         expr.push("timeRange = :tr");
         values[":tr"] = { S: body.timeRange };

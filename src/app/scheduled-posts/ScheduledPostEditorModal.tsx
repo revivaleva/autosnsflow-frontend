@@ -199,6 +199,10 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
   const [scheduledAtLocal, setScheduledAtLocal] = useState(
     mode === "edit" ? toLocalDatetimeValueAny(initial?.scheduledAt) : "" // [FIX] Any対応
   );
+  // 二段階投稿チェック/削除予定/親削除フラグ
+  const [secondStageWantedFlag, setSecondStageWantedFlag] = useState<boolean>(!!initial?.secondStageWanted);
+  const [deleteScheduledLocal, setDeleteScheduledLocal] = useState<string>(initial?.deleteScheduledAt ? toLocalDatetimeValue(initial.deleteScheduledAt) : "");
+  const [deleteParentAfterFlag, setDeleteParentAfterFlag] = useState<boolean>(false);
   // 投稿時間範囲（HH:MM）
   const [timeStart, setTimeStart] = useState<string>("00:00");
   const [timeEnd, setTimeEnd] = useState<string>("23:59");
@@ -397,6 +401,9 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
       setTheme(initial.theme || "");
       setContent(initial.content || "");
       setScheduledAtLocal(toLocalDatetimeValueAny(initial.scheduledAt)); // [FIX]
+      setSecondStageWantedFlag(!!initial.secondStageWanted);
+      setDeleteScheduledLocal(initial?.deleteScheduledAt ? toLocalDatetimeValue(initial.deleteScheduledAt) : "");
+      setDeleteParentAfterFlag(!!(initial as any).deleteParentAfter);
       // [MOD] 種別/グループは initial.autoPostGroupId 側で復元するためここではクリア
       setAutoType(null);
       setGroupId("");
@@ -423,9 +430,17 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
       theme,
       autoPostGroupId,
       timeRange: `${timeStart}-${timeEnd}`,
+      // 二段階投稿/削除予定/親削除フラグ
+      secondStageWanted: !!secondStageWantedFlag,
+      deleteScheduledAt: deleteScheduledLocal ? datetimeLocalToEpochSec(deleteScheduledLocal) : undefined,
+      // note: deleteParentAfterFlag will be sent from editor if true
     };
 
-    await onSave(payload);
+    // attach deleteParentAfter only if true to avoid adding undefined to some Put flows
+    const outPayload = { ...payload } as any;
+    if (deleteParentAfterFlag) outPayload.deleteParentAfter = true;
+
+    await onSave(outPayload);
     onClose();
   };
 
@@ -623,6 +638,22 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
             />
           </div>
           <p className="text-xs text-gray-500 mt-1">グループ未選択時は 00:00～23:59 が既定になります</p>
+        </div>
+
+        {/* 二段階投稿・削除設定 */}
+        <div className="mt-4 grid grid-cols-3 gap-3 items-center">
+          <div>
+            <label className="block text-sm font-medium">二段階投稿</label>
+            <input type="checkbox" className="mt-2" checked={secondStageWantedFlag} onChange={(e) => setSecondStageWantedFlag(e.target.checked)} />
+          </div>
+          <div>
+            <label className="block text-sm font-medium">二段階投稿削除予定</label>
+            <input type="datetime-local" className="mt-1 w-full border rounded-md px-3 py-2" value={deleteScheduledLocal} onChange={(e) => setDeleteScheduledLocal(e.target.value)} />
+          </div>
+          <div>
+            <label className="block text-sm font-medium">親投稿も削除</label>
+            <input type="checkbox" className="mt-2" checked={deleteParentAfterFlag} onChange={(e) => setDeleteParentAfterFlag(e.target.checked)} />
+          </div>
         </div>
 
         <div className="mt-4">
