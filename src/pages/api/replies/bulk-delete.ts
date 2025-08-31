@@ -36,29 +36,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           continue;
         }
 
-        // 返信済: Threads 側削除 + 論理削除
-        const postId = item.responsePostId?.S || item.postId?.S;
-        const accountId = item.accountId?.S;
-        if (!postId || !accountId) {
-          // 情報不足で実API削除できない -> 論理削除のみ
-          const now = Math.floor(Date.now() / 1000);
-          await ddb.send(new UpdateItemCommand({ TableName: TBL_REPLIES, Key: { PK: { S: `USER#${userId}` }, SK: { S: `REPLY#${id}` } }, UpdateExpression: 'SET isDeleted = :d, deletedAt = :ts', ExpressionAttributeValues: { ':d': { BOOL: true }, ':ts': { N: String(now) } } }));
-          results.push({ id, ok: true, deleted: false, reason: 'missing_post_or_account' });
-          continue;
-        }
-
-        try {
-          const { deleteThreadsPost } = await Promise.resolve(require('@/lib/threads-delete'));
-          await deleteThreadsPost({ postId, accountId, userId });
-        } catch (e: any) {
-          console.error('bulk replies threads delete failed', e);
-          // 削除失敗はログ化しつつ論理削除
-          await ddb.send(new UpdateItemCommand({ TableName: TBL_REPLIES, Key: { PK: { S: `USER#${userId}` }, SK: { S: `REPLY#${id}` } }, UpdateExpression: 'SET deleteAttemptFailed = :t', ExpressionAttributeValues: { ':t': { BOOL: true } } }));
-          results.push({ id, ok: false, error: 'threads_delete_failed' });
-          continue;
-        }
-
-        // Threads 側削除成功 → 論理削除
+        // 返信済: Threads 側の実投稿削除は行わず、即時に論理削除する
         const now2 = Math.floor(Date.now() / 1000);
         await ddb.send(new UpdateItemCommand({ TableName: TBL_REPLIES, Key: { PK: { S: `USER#${userId}` }, SK: { S: `REPLY#${id}` } }, UpdateExpression: 'SET isDeleted = :d, deletedAt = :ts', ExpressionAttributeValues: { ':d': { BOOL: true }, ':ts': { N: String(now2) } } }));
         results.push({ id, ok: true, deleted: false });
