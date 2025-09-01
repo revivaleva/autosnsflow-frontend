@@ -145,6 +145,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const typeIndex = si + 1;
         const groupTypeStr = `${groupName}-自動投稿${typeIndex}`;
 
+        // periodic と同様の判定: 同一の autoPostGroupId（groupTypeStr）で当日の予約が既にあるかを確認し、あればスキップ
+        try {
+          const slotEx = await ddb.send(new QueryCommand({
+            TableName: TBL_SCHEDULED,
+            KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
+            ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'SCHEDULEDPOST#' }, ':acc': { S: acct.accountId }, ':grp': { S: groupTypeStr }, ':t0': { N: String(t0) }, ':t1': { N: String(t1) } },
+            FilterExpression: 'accountId = :acc AND autoPostGroupId = :grp AND scheduledAt BETWEEN :t0 AND :t1',
+            ProjectionExpression: 'PK, SK',
+          }));
+          if ((slotEx.Items || []).length > 0) continue; // 既に当日分があるためスキップ
+        } catch (e) {
+          console.log('[warn] slot existence check failed, continuing with create:', e);
+        }
+
         // 選ばれたテーマ（カンマ区切りなら抽選）を先に決定してDBに保存する
         let themeForAI = slot.theme || '';
         if (typeof themeForAI === 'string' && themeForAI.includes(',')) {
