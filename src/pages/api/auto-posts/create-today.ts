@@ -96,6 +96,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (existCount > 0) continue; // 既に作成済みならスキップ
 
       // 4) スロット分だけ新規予約を作成（スロットの timeRange も利用できるがここでは scheduledAt をスロットに依らず JST のランダム時間に設定）
+      console.log(`[create-today] account=${acct.accountId} slots=${slots.length} groupName=${groupName}`);
       for (let si = 0; si < slots.length; si++) {
         const slot = slots[si];
         const id = crypto.randomUUID();
@@ -152,11 +153,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
             ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'SCHEDULEDPOST#' }, ':acc': { S: acct.accountId }, ':grp': { S: groupTypeStr }, ':t0': { N: String(t0) }, ':t1': { N: String(t1) } },
             FilterExpression: 'accountId = :acc AND autoPostGroupId = :grp AND scheduledAt BETWEEN :t0 AND :t1',
-            ProjectionExpression: 'PK, SK',
+            ProjectionExpression: 'PK, SK, content, postedAt, status, createdAt, autoPostGroupId',
           }));
-          if ((slotEx.Items || []).length > 0) continue; // 既に当日分があるためスキップ
+          const found = (slotEx.Items || []);
+          console.log(`[create-today] check slot ${groupTypeStr} found=${found.length}`);
+          if (found.length > 0) {
+            console.log('[create-today] existing items sample:', found.slice(0,3).map(x => ({ SK: x.SK?.S, content: x.content?.S, postedAt: x.postedAt?.N, status: x.status?.S, createdAt: x.createdAt?.N, autoPostGroupId: x.autoPostGroupId?.S })));
+            continue; // 既に当日分があるためスキップ
+          }
         } catch (e) {
-          console.log('[warn] slot existence check failed, continuing with create:', e);
+          console.log('[warn] slot existence check failed, continuing with create:', String(e).substring(0,300));
         }
 
         // 選ばれたテーマ（カンマ区切りなら抽選）を先に決定してDBに保存する
