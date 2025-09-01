@@ -54,8 +54,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const { t0, t1 } = todayRangeJst();
     let created = 0;
     const aiResults: any[] = [];
+    const debug: any[] = [];
 
     for (const acct of accounts) {
+      const acctDebug: any = { accountId: acct.accountId, slots: 0, skippedSlots: 0, createdSlots: 0, notes: [] };
       // 2) そのアカウントの自動投稿グループのスロットを取得
       const gq = await ddb.send(new QueryCommand({
         TableName: TBL_GROUPS,
@@ -97,6 +99,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       // 4) スロット分だけ新規予約を作成（スロットの timeRange も利用できるがここでは scheduledAt をスロットに依らず JST のランダム時間に設定）
       console.log(`[create-today] account=${acct.accountId} slots=${slots.length} groupName=${groupName}`);
+      acctDebug.slots = slots.length;
       for (let si = 0; si < slots.length; si++) {
         const slot = slots[si];
         const id = crypto.randomUUID();
@@ -157,7 +160,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           }));
           const found = (slotEx.Items || []);
           console.log(`[create-today] check slot ${groupTypeStr} found=${found.length}`);
+          acctDebug.notes.push({ slot: groupTypeStr, found: found.length });
           if (found.length > 0) {
+            acctDebug.skippedSlots += 1;
             console.log('[create-today] existing items sample:', found.slice(0,3).map(x => ({ SK: x.SK?.S, content: x.content?.S, postedAt: x.postedAt?.N, status: x.status?.S, createdAt: x.createdAt?.N, autoPostGroupId: x.autoPostGroupId?.S })));
             continue; // 既に当日分があるためスキップ
           }
@@ -192,13 +197,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         };
         await ddb.send(new PutItemCommand({ TableName: TBL_SCHEDULED, Item: item }));
         created++;
+        acctDebug.createdSlots += 1;
 
         // 5) 本文生成は同期実行しない（短期対応）：ここでは DB に予約レコードのみ作成する
         //    生成は定期処理（Lambda）の processPendingGenerationsForAccount で段階的に行います。
       }
+      debug.push(acctDebug);
     }
 
-    return res.status(200).json({ ok: true, created, aiResults });
+    return res.status(200).json({ ok: true, created, aiResults, debug });
   } catch (e: any) {
     console.error('create-today error', e);
     return res.status(500).json({ error: String(e) });
