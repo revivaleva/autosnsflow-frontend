@@ -55,7 +55,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     let created = 0;
     const aiResults: any[] = [];
     const debug: any[] = [];
-    const debug: any[] = [];
 
     // debug: record which accounts are considered
     const accountsSummary = { requestedIds, accountsFound: accounts.map(a => a.accountId), count: accounts.length };
