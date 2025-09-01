@@ -1583,7 +1583,8 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
       // スロット単位の二段階投稿指定を予約データへ伝搬
       secondStageWanted: !!slot.secondStageWanted,
     });
-    await generateAndAttachContent(userId, acct, id, themeStr, settings);
+    // 短期対応: 本文生成は同期で行わず、時間ごとの処理で段階的に生成する
+    // generateAndAttachContent はここでは呼ばない
 
     created++;
     debug.push({
@@ -2201,6 +2202,14 @@ async function runHourlyJobForUser(userId: any) {
     } catch (e) {
       await putLog({ userId, type: "reply-fetch", accountId: acct.accountId, status: "error", message: "返信取得失敗", detail: { error: String(e) } });
     }
+
+    // 短期対応: アカウントごとに少数ずつ本文生成を行う（ロック付き・limit=1）
+    try {
+      const genRes = await processPendingGenerationsForAccount(userId, acct, 1);
+      if (genRes && genRes.generated) createdCount += genRes.generated;
+    } catch (e) {
+      console.log('[warn] processPendingGenerationsForAccount failed:', e);
+    }
   }
 
   const urls = await getDiscordWebhooks(userId);
@@ -2213,6 +2222,88 @@ async function runHourlyJobForUser(userId: any) {
   ]);
   await postDiscordLog({ userId, content: `**[定期実行レポート] ${now} (hourly)**\n${metrics}` });
   return { userId, createdCount, fetchedReplies, replyDrafts, skippedAccounts };
+}
+
+// === 予約レコードの本文生成をアカウント単位で段階的に処理する（短期対応） ===
+async function processPendingGenerationsForAccount(userId: any, acct: any, limit = 1) {
+  if (!acct.autoGenerate) return { generated: 0, skipped: true };
+  const now = nowSec();
+  let generated = 0;
+
+  // GSI: accountId + scheduledAt を利用して候補を取得（content が空、または nextGenerateAt <= now）
+  try {
+    const q = await ddb.send(new QueryCommand({
+      TableName: TBL_SCHEDULED,
+      IndexName: GSI_SCH_BY_ACC_TIME,
+      KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
+      ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
+      ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts",
+      ScanIndexForward: true,
+      Limit: 50
+    }));
+
+    const items = (q.Items || []);
+    for (const it of items) {
+      if (generated >= limit) break;
+      const pk = it.PK.S; const sk = it.SK.S;
+      const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } } }));
+      const rec = unmarshall(full.Item || {});
+      const contentEmpty = !rec.content || String(rec.content || '').trim() === '';
+      const nextGen = Number(rec.nextGenerateAt || 0);
+      if (!contentEmpty && nextGen > now) continue;
+
+      // 条件付きでロックを取得して二重生成を防ぐ
+      const lockKey = 'generateLock';
+      const lockExpireSec = 60 * 10; // ロック10分
+      const expiresAt = now + lockExpireSec;
+      try {
+        await ddb.send(new UpdateItemCommand({
+          TableName: TBL_SCHEDULED,
+          Key: { PK: { S: pk }, SK: { S: sk } },
+          UpdateExpression: "SET #lock = :id, generateLockedAt = :ts",
+          ConditionExpression: "attribute_not_exists(#lock) OR generateLockedAt < :now",
+          ExpressionAttributeNames: { "#lock": lockKey },
+          ExpressionAttributeValues: {
+            ":id": { S: `worker:${process.env.AWS_LAMBDA_LOG_STREAM_NAME || 'lambda'}:${now}` },
+            ":ts": { N: String(expiresAt) },
+            ":now": { N: String(now) }
+          }
+        }));
+      } catch (e) {
+        // ロック取得失敗 -> 他プロセスで処理中
+        continue;
+      }
+
+      // 生成処理（既存の generateAndAttachContent と同等の処理を呼ぶ）
+      try {
+        await generateAndAttachContent(userId, acct, sk.replace(/^SCHEDULEDPOST#/, ''), rec.theme || '', await getUserSettings(userId));
+        generated++;
+      } catch (e) {
+        // 失敗したらリトライタイミングを後ろにずらす
+        const backoff = Math.min(3600, ((rec.generateAttempts || 0) + 1) * 60);
+        await ddb.send(new UpdateItemCommand({
+          TableName: TBL_SCHEDULED,
+          Key: { PK: { S: pk }, SK: { S: sk } },
+          UpdateExpression: "SET nextGenerateAt = :next, generateAttempts = if_not_exists(generateAttempts, :zero) + :inc REMOVE generateLock, generateLockedAt",
+          ExpressionAttributeValues: { ":next": { N: String(now + backoff) }, ":inc": { N: "1" }, ":zero": { N: "0" } }
+        }));
+      }
+
+      // 正常終了または失敗後にロックをクリア（成功時は generateAndAttachContent 内で content を更新しているはず）
+      try {
+        await ddb.send(new UpdateItemCommand({
+          TableName: TBL_SCHEDULED,
+          Key: { PK: { S: pk }, SK: { S: sk } },
+          UpdateExpression: "REMOVE generateLock, generateLockedAt",
+        }));
+      } catch (e) { }
+    }
+  } catch (e) {
+    console.log('[warn] processPendingGenerationsForAccount query failed:', e);
+  }
+
+  if (generated > 0) await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'ok', message: `本文生成 ${generated} 件` });
+  return { generated };
 }
 
 async function runFiveMinJobForUser(userId: any) {
@@ -2229,6 +2320,16 @@ async function runFiveMinJobForUser(userId: any) {
     const a = await runAutoPostForAccount(acct, userId, settings);
     const r = await runRepliesForAccount(acct, userId, settings);
     const t = await runSecondStageForAccount(acct, userId, settings, true);
+
+    // 短期対応: 5分ジョブでも本文生成を少数処理する（安全策）
+    try {
+      const genRes = await processPendingGenerationsForAccount(userId, acct, 1);
+      if (genRes && genRes.generated) {
+        // 生成は投稿には直結しないため totalAuto には加えないが、観測ログ用に記録
+      }
+    } catch (e) {
+      console.log('[warn] processPendingGenerationsForAccount failed (5min):', e);
+    }
 
     totalAuto += a.posted || 0;
     totalReply += r.replied || 0;
