@@ -215,7 +215,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             const gatewayUrl = (process.env.NEXTAUTH_URL || process.env.NEXT_PUBLIC_BASE_URL || '') + '/api/ai-gateway';
             const gwResp = await fetch(gatewayUrl, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: { 'Content-Type': 'application/json', 'x-user-id': String(userId) },
               body: JSON.stringify({ purpose: 'post-generate', input: { accountId: acct.accountId, theme: themeForAI, prompt, personaModeUsed: '' }, userId }),
             });
             rawResp = await gwResp.json().catch(() => ({}));
