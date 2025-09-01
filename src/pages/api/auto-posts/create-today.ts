@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { QueryCommand, PutItemCommand, GetItemCommand, UpdateItemCommand } from '@aws-sdk/client-dynamodb';
+import { QueryCommand, PutItemCommand, GetItemCommand } from '@aws-sdk/client-dynamodb';
 import { createDynamoClient } from '@/lib/ddb';
 import { verifyUserFromRequest } from '@/lib/auth';
 import crypto from 'crypto';
@@ -22,6 +22,7 @@ function todayRangeJst() {
   return { t0, t1 };
 }
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
@@ -163,75 +164,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           postedAt: { N: '0' },
           status: { S: 'scheduled' },
           isDeleted: { BOOL: false },
+          // マーカー: こちらで作成された新規自動投稿のみを段階生成対象とする
+          isNewAutoPost: { BOOL: true },
           createdAt: { N: String(Math.floor(Date.now() / 1000)) },
           timeRange: { S: slot.timeRange || '' },
         };
         await ddb.send(new PutItemCommand({ TableName: TBL_SCHEDULED, Item: item }));
         created++;
 
-        // 5) その場で AI 生成して content を更新（非同期でもよいがここでは同期実行）
-        try {
-          // call internal AI API to generate post text
-          // If theme contains commas, pick one randomly server-side
-          let themeForAI = slot.theme || '';
-          if (typeof themeForAI === 'string' && themeForAI.includes(',')) {
-            const parts = themeForAI.split(',').map(s => s.trim()).filter(Boolean);
-            if (parts.length > 0) themeForAI = parts[Math.floor(Math.random() * parts.length)];
-          }
-          // Build a richer prompt to avoid AI echoing back the theme only
-          const aiPrompt = `# テーマ\n${themeForAI}\n\n# 指示\n以下のテーマをもとに、Threads投稿用の短い本文（日本語、約80-140文字）を1つ作成してください。\n- アカウントのペルソナに合わせた自然な口調で\n- 絵文字を適度に使用して親しみやすく\n- 返信を促す要素を1つ含める\n出力は本文のテキストのみとしてください。`;
-
-          // Directly call OpenAI here to avoid internal HTTP to ai-gateway (server-side)
-          let text = '';
-          let rawResp: any = null;
-          try {
-            // fetch user settings for API key / masterPrompt
-            const us = await ddb.send(new GetItemCommand({ TableName: 'UserSettings', Key: { PK: { S: `USER#${userId}` }, SK: { S: 'SETTINGS' } }, ProjectionExpression: '#k, #mp', ExpressionAttributeNames: { '#k': 'openaiApiKey', '#mp': 'masterPrompt' } }));
-            const openaiApiKey = us.Item?.openaiApiKey?.S || process.env.OPENAI_API_KEY || '';
-            const masterPrompt = us.Item?.masterPrompt?.S || '';
-
-            // account persona
-            let personaText = '';
-            try {
-              const accItem = await ddb.send(new GetItemCommand({ TableName: TBL_ACCOUNTS, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${acct.accountId}` } }, ProjectionExpression: '#pm, #ps, #pd', ExpressionAttributeNames: { '#pm': 'personaMode', '#ps': 'personaSimple', '#pd': 'personaDetail' } }));
-              const mode = (accItem.Item?.personaMode?.S || '').toLowerCase();
-              const simple = accItem.Item?.personaSimple?.S || '';
-              const detail = accItem.Item?.personaDetail?.S || '';
-              if (mode === 'detail') personaText = detail ? `【詳細ペルソナ(JSON）】\n${detail}` : '';
-              else if (mode === 'simple') personaText = simple ? `【簡易ペルソナ】${simple}` : '';
-            } catch (e) {
-              personaText = '';
-            }
-
-            const systemPrompt = 'あなたはSNS運用代行のプロです。' + (masterPrompt ? `\n【運用方針（masterPrompt）】\n${masterPrompt}` : '');
-            const userPrompt = aiPrompt + (personaText ? `\n\n${personaText}` : '');
-
-            if (!openaiApiKey) throw new Error('OpenAI APIキーが設定されていません');
-
-            // Build the same prompt used by editor modal
-            const prompt = [masterPrompt?.trim() ? masterPrompt.trim() : '', personaText ? `# ペルソナ\n${personaText}` : '', `# テーマ\n${themeForAI}`].filter(Boolean).join('\n\n');
-
-            // Call internal ai-gateway to reuse same processing as editor modal
-            const gatewayUrl = (process.env.NEXTAUTH_URL || process.env.NEXT_PUBLIC_BASE_URL || '') + '/api/ai-gateway';
-            const gwResp = await fetch(gatewayUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'x-user-id': String(userId) },
-              body: JSON.stringify({ purpose: 'post-generate', input: { accountId: acct.accountId, theme: themeForAI, prompt, personaModeUsed: '' }, userId }),
-            });
-            rawResp = await gwResp.json().catch(() => ({}));
-            text = rawResp?.text || rawResp?.raw?.choices?.[0]?.message?.content || '';
-          } catch (err) {
-            console.log('direct openai call failed:', err);
-            text = themeForAI || '（自動生成に失敗しました）';
-          }
-
-          if (!text) text = themeForAI || '（自動生成に失敗しました）';
-          await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${id}` } }, UpdateExpression: 'SET content = :c', ExpressionAttributeValues: { ':c': { S: String(text) } } }));
-          aiResults.push({ scheduledPostId: id, accountId: acct.accountId, text, raw: rawResp });
-        } catch (e) {
-          // ignore per-account generation errors
-          console.log('ai generate failed for', acct.accountId, e);
-        }
+        // 5) 本文生成は同期実行しない（短期対応）：ここでは DB に予約レコードのみ作成する
+        //    生成は定期処理（Lambda）の processPendingGenerationsForAccount で段階的に行います。
       }
     }
 

@@ -2229,6 +2229,13 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
   if (!acct.autoGenerate) return { generated: 0, skipped: true };
   const now = nowSec();
   let generated = 0;
+  // compute JST start of today to avoid generating for old reservations
+  const nowDate = new Date();
+  const utc = nowDate.getTime() + nowDate.getTimezoneOffset() * 60000;
+  const jstOffset = 9 * 60; // minutes
+  const jstMid = new Date(utc + jstOffset * 60000);
+  jstMid.setHours(0,0,0,0);
+  const todayStartSec = Math.floor(jstMid.getTime() / 1000);
 
   // GSI: accountId + scheduledAt を利用して候補を取得（content が空、または nextGenerateAt <= now）
   try {
@@ -2249,8 +2256,11 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
       const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } } }));
       const rec = unmarshall(full.Item || {});
       const contentEmpty = !rec.content || String(rec.content || '').trim() === '';
+      // 定期実行は「本文が空のデータ」のみに対して生成を行う
+      if (!contentEmpty) continue;
       const nextGen = Number(rec.nextGenerateAt || 0);
-      if (!contentEmpty && nextGen > now) continue;
+      // nextGenerateAt が将来に設定されていればスキップ（バックオフ等）
+      if (nextGen > now) continue;
 
       // 条件付きでロックを取得して二重生成を防ぐ
       const lockKey = 'generateLock';
