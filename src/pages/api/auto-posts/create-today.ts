@@ -52,6 +52,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const { t0, t1 } = todayRangeJst();
     let created = 0;
+    const aiResults: any[] = [];
 
     for (const acct of accounts) {
       // 2) そのアカウントの自動投稿グループのスロットを取得
@@ -183,6 +184,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           if (!text) text = themeForAI || '（自動生成に失敗しました）';
           // Update item with generated content
           await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${id}` } }, UpdateExpression: 'SET content = :c', ExpressionAttributeValues: { ':c': { S: String(text) } } }));
+          // collect ai raw for debugging
+          aiResults.push({ scheduledPostId: id, accountId: acct.accountId, text, raw: aiData });
         } catch (e) {
           // ignore per-account generation errors
           console.log('ai generate failed for', acct.accountId, e);
@@ -190,7 +193,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     }
 
-    return res.status(200).json({ ok: true, created });
+    return res.status(200).json({ ok: true, created, aiResults });
   } catch (e: any) {
     console.error('create-today error', e);
     return res.status(500).json({ error: String(e) });
