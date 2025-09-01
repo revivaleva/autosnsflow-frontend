@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { QueryCommand, PutItemCommand } from '@aws-sdk/client-dynamodb';
+import { QueryCommand, PutItemCommand, GetItemCommand, UpdateItemCommand } from '@aws-sdk/client-dynamodb';
 import { createDynamoClient } from '@/lib/ddb';
 import { verifyUserFromRequest } from '@/lib/auth';
 import crypto from 'crypto';
@@ -69,6 +69,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       if (!slots.length) continue;
 
+      // fetch group metadata to get groupName for display (groupKey -> groupName mapping)
+      let groupName = acct.autoPostGroupId || '';
+      try {
+        const gItem = await ddb.send(new GetItemCommand({ TableName: TBL_GROUPS, Key: { PK: { S: `USER#${userId}` }, SK: { S: acct.autoPostGroupId } }, ProjectionExpression: 'groupName' }));
+        if (gItem.Item?.groupName?.S) groupName = gItem.Item.groupName.S;
+      } catch (e) {
+        // ignore, keep groupName as is
+      }
+
       // 3) 当日の既存自動投稿の有無をチェック（accountId + autoPostGroupId + scheduledAt の範囲）
       // 簡易的に scheduledAt BETWEEN t0..t1 AND accountId = acct.accountId AND begins_with(autoPostGroupId, acct.autoPostGroupId)
       // Use Query + FilterExpression
@@ -84,7 +93,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (existCount > 0) continue; // 既に作成済みならスキップ
 
       // 4) スロット分だけ新規予約を作成（スロットの timeRange も利用できるがここでは scheduledAt をスロットに依らず JST のランダム時間に設定）
-      for (const slot of slots) {
+      for (let si = 0; si < slots.length; si++) {
+        const slot = slots[si];
         const id = crypto.randomUUID();
         // scheduledAt をスロットの timeRange に基づいて割り当てる
         // timeRange 形式: "HH:MM-HH:MM" 例: "05:00-08:00"
@@ -129,13 +139,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           jst.setHours(12,0,0,0);
           scheduledAt = Math.floor(jst.getTime() / 1000);
         }
+        const typeIndex = si + 1;
+        const groupTypeStr = `${groupName}-自動投稿${typeIndex}`;
+
         const item: any = {
           PK: { S: `USER#${userId}` },
           SK: { S: `SCHEDULEDPOST#${id}` },
           scheduledPostId: { S: id },
           accountId: { S: acct.accountId },
           accountName: { S: acct.accountName || '' },
-          autoPostGroupId: { S: acct.autoPostGroupId },
+          autoPostGroupId: { S: groupTypeStr },
           theme: { S: slot.theme || '' },
           content: { S: '' },
           scheduledAt: { N: String(scheduledAt) },
@@ -157,11 +170,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             body: JSON.stringify({ purpose: 'post-generate', input: { accountId: acct.accountId, theme: slot.theme || '' } }),
           });
           const aiData = await aiResp.json().catch(() => ({}));
-          const text = aiData.text || aiData?.raw?.choices?.[0]?.message?.content || '';
-          if (text) {
-            // Update item with generated content
-            await ddb.send(new PutItemCommand({ TableName: TBL_SCHEDULED, Item: { ...item, content: { S: text } } }));
-          }
+          let text = aiData.text || aiData?.raw?.choices?.[0]?.message?.content || '';
+          if (!text) text = slot.theme || '（自動生成に失敗しました）';
+          // Update item with generated content
+          await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${id}` } }, UpdateExpression: 'SET content = :c', ExpressionAttributeValues: { ':c': { S: String(text) } } }));
         } catch (e) {
           // ignore per-account generation errors
           console.log('ai generate failed for', acct.accountId, e);
