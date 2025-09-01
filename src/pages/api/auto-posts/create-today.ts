@@ -174,18 +174,58 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           // Build a richer prompt to avoid AI echoing back the theme only
           const aiPrompt = `# テーマ\n${themeForAI}\n\n# 指示\n以下のテーマをもとに、Threads投稿用の短い本文（日本語、約80-140文字）を1つ作成してください。\n- アカウントのペルソナに合わせた自然な口調で\n- 絵文字を適度に使用して親しみやすく\n- 返信を促す要素を1つ含める\n出力は本文のテキストのみとしてください。`;
 
-          const aiResp = await fetch(`${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/ai-gateway`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ purpose: 'post-generate', input: { accountId: acct.accountId, theme: themeForAI, prompt: aiPrompt } }),
-          });
-          const aiData = await aiResp.json().catch(() => ({}));
-          let text = aiData.text || aiData?.raw?.choices?.[0]?.message?.content || '';
+          // Directly call OpenAI here to avoid internal HTTP to ai-gateway (server-side)
+          let text = '';
+          let rawResp: any = null;
+          try {
+            // fetch user settings for API key / masterPrompt
+            const us = await ddb.send(new GetItemCommand({ TableName: 'UserSettings', Key: { PK: { S: `USER#${userId}` }, SK: { S: 'SETTINGS' } }, ProjectionExpression: '#k, #mp', ExpressionAttributeNames: { '#k': 'openaiApiKey', '#mp': 'masterPrompt' } }));
+            const openaiApiKey = us.Item?.openaiApiKey?.S || process.env.OPENAI_API_KEY || '';
+            const masterPrompt = us.Item?.masterPrompt?.S || '';
+
+            // account persona
+            let personaText = '';
+            try {
+              const accItem = await ddb.send(new GetItemCommand({ TableName: TBL_ACCOUNTS, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${acct.accountId}` } }, ProjectionExpression: '#pm, #ps, #pd', ExpressionAttributeNames: { '#pm': 'personaMode', '#ps': 'personaSimple', '#pd': 'personaDetail' } }));
+              const mode = (accItem.Item?.personaMode?.S || '').toLowerCase();
+              const simple = accItem.Item?.personaSimple?.S || '';
+              const detail = accItem.Item?.personaDetail?.S || '';
+              if (mode === 'detail') personaText = detail ? `【詳細ペルソナ(JSON）】\n${detail}` : '';
+              else if (mode === 'simple') personaText = simple ? `【簡易ペルソナ】${simple}` : '';
+            } catch (e) {
+              personaText = '';
+            }
+
+            const systemPrompt = 'あなたはSNS運用代行のプロです。' + (masterPrompt ? `\n【運用方針（masterPrompt）】\n${masterPrompt}` : '');
+            const userPrompt = aiPrompt + (personaText ? `\n\n${personaText}` : '');
+
+            if (!openaiApiKey) throw new Error('OpenAI APIキーが設定されていません');
+
+            const openReq = {
+              model: 'gpt-5-mini',
+              messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: userPrompt },
+              ],
+              temperature: 0.7,
+              max_tokens: 300,
+            };
+
+            const openRes = await fetch('https://api.openai.com/v1/chat/completions', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${openaiApiKey}` },
+              body: JSON.stringify(openReq),
+            });
+            rawResp = await openRes.json().catch(() => ({}));
+            text = rawResp?.choices?.[0]?.message?.content || '';
+          } catch (err) {
+            console.log('direct openai call failed:', err);
+            text = themeForAI || '（自動生成に失敗しました）';
+          }
+
           if (!text) text = themeForAI || '（自動生成に失敗しました）';
-          // Update item with generated content
           await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${id}` } }, UpdateExpression: 'SET content = :c', ExpressionAttributeValues: { ':c': { S: String(text) } } }));
-          // collect ai raw for debugging
-          aiResults.push({ scheduledPostId: id, accountId: acct.accountId, text, raw: aiData });
+          aiResults.push({ scheduledPostId: id, accountId: acct.accountId, text, raw: rawResp });
         } catch (e) {
           // ignore per-account generation errors
           console.log('ai generate failed for', acct.accountId, e);
