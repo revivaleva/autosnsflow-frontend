@@ -86,7 +86,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const existed = await ddb.send(new QueryCommand({
         TableName: TBL_SCHEDULED,
         KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
-        ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'SCHEDULEDPOST#' }, ':acc': { S: acct.accountId }, ':grp': { S: acct.autoPostGroupId }, ':t0': { N: String(t0) }, ':t1': { N: String(t1) } },
+        // use groupName prefix because stored autoPostGroupId in scheduled posts is "${groupName}-自動投稿{n}"
+        ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'SCHEDULEDPOST#' }, ':acc': { S: acct.accountId }, ':grp': { S: groupName }, ':t0': { N: String(t0) }, ':t1': { N: String(t1) } },
         FilterExpression: 'accountId = :acc AND begins_with(autoPostGroupId, :grp) AND scheduledAt BETWEEN :t0 AND :t1',
         ProjectionExpression: 'PK, SK',
       }));
