@@ -170,10 +170,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             const parts = themeForAI.split(',').map(s => s.trim()).filter(Boolean);
             if (parts.length > 0) themeForAI = parts[Math.floor(Math.random() * parts.length)];
           }
+          // Build a richer prompt to avoid AI echoing back the theme only
+          const aiPrompt = `# テーマ\n${themeForAI}\n\n# 指示\n以下のテーマをもとに、Threads投稿用の短い本文（日本語、約80-140文字）を1つ作成してください。\n- アカウントのペルソナに合わせた自然な口調で\n- 絵文字を適度に使用して親しみやすく\n- 返信を促す要素を1つ含める\n出力は本文のテキストのみとしてください。`;
+
           const aiResp = await fetch(`${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/ai-gateway`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ purpose: 'post-generate', input: { accountId: acct.accountId, theme: themeForAI } }),
+            body: JSON.stringify({ purpose: 'post-generate', input: { accountId: acct.accountId, theme: themeForAI, prompt: aiPrompt } }),
           });
           const aiData = await aiResp.json().catch(() => ({}));
           let text = aiData.text || aiData?.raw?.choices?.[0]?.message?.content || '';
