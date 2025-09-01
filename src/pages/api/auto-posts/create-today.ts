@@ -201,23 +201,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
             if (!openaiApiKey) throw new Error('OpenAI APIキーが設定されていません');
 
-            const openReq = {
-              model: 'gpt-5-mini',
-              messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: userPrompt },
-              ],
-              temperature: 0.7,
-              max_tokens: 300,
-            };
+            // Build the same prompt used by editor modal
+            const prompt = [masterPrompt?.trim() ? masterPrompt.trim() : '', personaText ? `# ペルソナ\n${personaText}` : '', `# テーマ\n${themeForAI}`].filter(Boolean).join('\n\n');
 
-            const openRes = await fetch('https://api.openai.com/v1/chat/completions', {
+            // Call internal ai-gateway to reuse same processing as editor modal
+            const gatewayUrl = (process.env.NEXTAUTH_URL || process.env.NEXT_PUBLIC_BASE_URL || '') + '/api/ai-gateway';
+            const gwResp = await fetch(gatewayUrl, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${openaiApiKey}` },
-              body: JSON.stringify(openReq),
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ purpose: 'post-generate', input: { accountId: acct.accountId, theme: themeForAI, prompt, personaModeUsed: '' } }),
             });
-            rawResp = await openRes.json().catch(() => ({}));
-            text = rawResp?.choices?.[0]?.message?.content || '';
+            rawResp = await gwResp.json().catch(() => ({}));
+            text = rawResp?.text || rawResp?.raw?.choices?.[0]?.message?.content || '';
           } catch (err) {
             console.log('direct openai call failed:', err);
             text = themeForAI || '（自動生成に失敗しました）';
