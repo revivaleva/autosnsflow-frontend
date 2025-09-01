@@ -164,14 +164,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         // 5) その場で AI 生成して content を更新（非同期でもよいがここでは同期実行）
         try {
           // call internal AI API to generate post text
+          // If theme contains commas, pick one randomly server-side
+          let themeForAI = slot.theme || '';
+          if (typeof themeForAI === 'string' && themeForAI.includes(',')) {
+            const parts = themeForAI.split(',').map(s => s.trim()).filter(Boolean);
+            if (parts.length > 0) themeForAI = parts[Math.floor(Math.random() * parts.length)];
+          }
           const aiResp = await fetch(`${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/ai-gateway`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ purpose: 'post-generate', input: { accountId: acct.accountId, theme: slot.theme || '' } }),
+            body: JSON.stringify({ purpose: 'post-generate', input: { accountId: acct.accountId, theme: themeForAI } }),
           });
           const aiData = await aiResp.json().catch(() => ({}));
           let text = aiData.text || aiData?.raw?.choices?.[0]?.message?.content || '';
-          if (!text) text = slot.theme || '（自動生成に失敗しました）';
+          if (!text) text = themeForAI || '（自動生成に失敗しました）';
           // Update item with generated content
           await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${id}` } }, UpdateExpression: 'SET content = :c', ExpressionAttributeValues: { ':c': { S: String(text) } } }));
         } catch (e) {

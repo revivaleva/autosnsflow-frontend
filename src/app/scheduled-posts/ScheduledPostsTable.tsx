@@ -575,7 +575,11 @@ export default function ScheduledPostsTable() {
               const deleted = !!post.isDeleted;
               return (
                 <tr key={post.scheduledPostId} className={deleted ? 'bg-gray-100 text-gray-500' : ''}>
-                  <td className="border p-1">{!deleted && <input type="checkbox" checked={selectedIds.includes(post.scheduledPostId)} onChange={() => toggleSelect(post.scheduledPostId)} />}</td>
+                  <td className="border p-1" onClick={() => { if (!deleted) toggleSelect(post.scheduledPostId); }} style={{ cursor: deleted ? 'default' : 'pointer' }}>
+                    {!deleted && (
+                      <input type="checkbox" checked={selectedIds.includes(post.scheduledPostId)} onChange={(e) => { e.stopPropagation(); toggleSelect(post.scheduledPostId); }} />
+                    )}
+                  </td>
                   <td className="border p-1">
                     <div className="text-sm font-medium">{post.accountName}</div>
                     <div className="text-xs text-gray-500 break-words">{post.accountId}</div>
