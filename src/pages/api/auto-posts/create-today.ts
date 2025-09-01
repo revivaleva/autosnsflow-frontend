@@ -87,20 +87,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         // ignore, keep groupName as is
       }
 
-      // 3) 当日の既存自動投稿の有無をチェック（accountId + autoPostGroupId + scheduledAt の範囲）
-      // 簡易的に scheduledAt BETWEEN t0..t1 AND accountId = acct.accountId AND begins_with(autoPostGroupId, acct.autoPostGroupId)
-      // Use Query + FilterExpression
-      const existed = await ddb.send(new QueryCommand({
-        TableName: TBL_SCHEDULED,
-        KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
-        // use groupName prefix because stored autoPostGroupId in scheduled posts is "${groupName}-自動投稿{n}"
-        ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'SCHEDULEDPOST#' }, ':acc': { S: acct.accountId }, ':grp': { S: groupName }, ':t0': { N: String(t0) }, ':t1': { N: String(t1) } },
-        FilterExpression: 'accountId = :acc AND begins_with(autoPostGroupId, :grp) AND scheduledAt BETWEEN :t0 AND :t1',
-        ProjectionExpression: 'PK, SK',
-      }));
-
-      const existCount = (existed.Items || []).length;
-      if (existCount > 0) continue; // 既に作成済みならスキップ
+      // 3) 当日の既存自動投稿チェックは各スロット（groupTypeStr）単位で行うため
+      //     ここでの早期アカウント全体スキップは行わない（詳しくは各スロットの判定へ）
 
       // 4) スロット分だけ新規予約を作成（スロットの timeRange も利用できるがここでは scheduledAt をスロットに依らず JST のランダム時間に設定）
       console.log(`[create-today] account=${acct.accountId} slots=${slots.length} groupName=${groupName}`);
