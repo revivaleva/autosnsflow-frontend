@@ -143,6 +143,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const typeIndex = si + 1;
         const groupTypeStr = `${groupName}-自動投稿${typeIndex}`;
 
+        // 選ばれたテーマ（カンマ区切りなら抽選）を先に決定してDBに保存する
+        let themeForAI = slot.theme || '';
+        if (typeof themeForAI === 'string' && themeForAI.includes(',')) {
+          const parts = themeForAI.split(',').map(s => s.trim()).filter(Boolean);
+          if (parts.length > 0) themeForAI = parts[Math.floor(Math.random() * parts.length)];
+        }
+
         const item: any = {
           PK: { S: `USER#${userId}` },
           SK: { S: `SCHEDULEDPOST#${id}` },
@@ -150,7 +157,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           accountId: { S: acct.accountId },
           accountName: { S: acct.accountName || '' },
           autoPostGroupId: { S: groupTypeStr },
-          theme: { S: slot.theme || '' },
+          theme: { S: themeForAI || '' },
           content: { S: '' },
           scheduledAt: { N: String(scheduledAt) },
           postedAt: { N: '0' },
@@ -209,7 +216,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             const gwResp = await fetch(gatewayUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ purpose: 'post-generate', input: { accountId: acct.accountId, theme: themeForAI, prompt, personaModeUsed: '' } }),
+              body: JSON.stringify({ purpose: 'post-generate', input: { accountId: acct.accountId, theme: themeForAI, prompt, personaModeUsed: '' }, userId }),
             });
             rawResp = await gwResp.json().catch(() => ({}));
             text = rawResp?.text || rawResp?.raw?.choices?.[0]?.message?.content || '';
