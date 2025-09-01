@@ -211,7 +211,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       debug.push(acctDebug);
     }
 
-    return res.status(200).json({ ok: true, created, aiResults, debug });
+    // include the accounts considered for easier debugging in staging
+    const accountsConsidered = accounts.map(a => ({ accountId: a.accountId, accountName: a.accountName, autoPostGroupId: a.autoPostGroupId, autoGenerate: a.autoGenerate }));
+    return res.status(200).json({ ok: true, created, aiResults, debug, accounts: accountsConsidered });
   } catch (e: any) {
     console.error('create-today error', e);
     return res.status(500).json({ error: String(e) });
