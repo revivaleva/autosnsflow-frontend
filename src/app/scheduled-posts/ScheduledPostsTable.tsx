@@ -3,6 +3,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import LoadingOverlay from "@/components/LoadingOverlay";
 import ScheduledPostEditorModal, {
   ScheduledPostType,
 } from "./ScheduledPostEditorModal";
@@ -106,6 +107,8 @@ export default function ScheduledPostsTable() {
   const [debugData, setDebugData] = useState<any>(null);
   const [bulkDeleting, setBulkDeleting] = useState<boolean>(false);
   const [creatingToday, setCreatingToday] = useState<boolean>(false);
+  const [selectAccountsModalOpen, setSelectAccountsModalOpen] = useState<boolean>(false);
+  const [selectedAccountsForCreate, setSelectedAccountsForCreate] = useState<string[]>([]);
 
   // 一覧取得（既存API）
   const loadPosts = async () => {
@@ -315,10 +318,16 @@ export default function ScheduledPostsTable() {
 
   // 当日の自動投稿を一括作成する
   const handleCreateTodayAutoPosts = async () => {
-    if (!confirm('当日の未作成の自動投稿をすべて生成します。よろしいですか？')) return;
+    // ダイアログでアカウント選択を開く
+    setSelectAccountsModalOpen(true);
+  };
+
+  const executeCreateForSelectedAccounts = async () => {
+    if (selectedAccountsForCreate.length === 0) return alert('アカウントを選択してください');
+    setSelectAccountsModalOpen(false);
     setCreatingToday(true);
     try {
-      const res = await fetch('/api/auto-posts/create-today', { method: 'POST', credentials: 'include' });
+      const res = await fetch('/api/auto-posts/create-today', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accountIds: selectedAccountsForCreate }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || data?.message || `HTTP ${res.status}`);
       alert(`作成完了: ${data.created || 0} 件`);
@@ -327,6 +336,7 @@ export default function ScheduledPostsTable() {
       alert(`作成に失敗しました: ${e.message || String(e)}`);
     } finally {
       setCreatingToday(false);
+      setSelectedAccountsForCreate([]);
     }
   };
 
@@ -460,6 +470,39 @@ export default function ScheduledPostsTable() {
           </button>
         </div>
       </div>
+
+      {/* アカウント選択モーダル */}
+      {selectAccountsModalOpen && (
+        <div className="fixed inset-0 z-50">
+          <div className="absolute inset-0 bg-black/30" onClick={() => setSelectAccountsModalOpen(false)} />
+          <div className="absolute left-1/2 top-1/2 w-[95vw] max-w-2xl -translate-x-1/2 -translate-y-1/2 rounded-xl bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 p-4 shadow-xl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-semibold">当日自動作成 - 対象アカウント選択</h3>
+              <button className="rounded-md p-1 hover:bg-gray-100 dark:hover:bg-gray-800" onClick={() => setSelectAccountsModalOpen(false)} aria-label="close">✕</button>
+            </div>
+            <div className="mt-3 max-h-72 overflow-y-auto">
+              <div className="grid grid-cols-2 gap-2">
+                {accountIds.map(id => (
+                  <label key={id} className="flex items-center gap-2 p-2 border rounded cursor-pointer">
+                    <input type="checkbox" checked={selectedAccountsForCreate.includes(id)} onChange={(e) => {
+                      setSelectedAccountsForCreate(prev => e.target.checked ? [...prev, id] : prev.filter(x => x !== id));
+                    }} />
+                    <span className="text-sm">{id}</span>
+                  </label>
+                ))}
+                {accountIds.length === 0 && <div className="text-center text-gray-500 p-4">アカウントがありません</div>}
+              </div>
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <button className="px-3 py-1 rounded bg-gray-200" onClick={() => setSelectAccountsModalOpen(false)}>キャンセル</button>
+              <button className="px-3 py-1 rounded bg-purple-500 text-white" onClick={executeCreateForSelectedAccounts}>実行</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 共通ロードオーバーレイ */}
+      <LoadingOverlay open={creatingToday || bulkDeleting} message={creatingToday ? '当日自動投稿を作成中です…' : '処理中…'} />
 
       <div className="flex space-x-2 mb-2" style={{ paddingTop: 6, paddingBottom: 6 }}>
         <select

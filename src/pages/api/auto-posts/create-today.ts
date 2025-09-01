@@ -29,18 +29,26 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const userId = user.sub;
 
     // 1) 取得すべきアカウント一覧（自動投稿が有効なアカウント）
+    // オプションでリクエストボディに accountIds が含まれていたらそれを優先
+    const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+    const requestedIds: string[] = Array.isArray(body?.accountIds) ? body.accountIds.map(String) : [];
+
     const accs = await ddb.send(new QueryCommand({
       TableName: TBL_ACCOUNTS,
       KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
       ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'ACCOUNT#' } },
     }));
 
-    const accounts = (accs.Items || []).map((it: any) => ({
+    let accounts = (accs.Items || []).map((it: any) => ({
       accountId: it.SK?.S?.replace(/^ACCOUNT#/, '') || '',
       accountName: it.displayName?.S || '',
       autoPostGroupId: it.autoPostGroupId?.S || '',
       autoGenerate: it.autoGenerate?.BOOL === true,
     })).filter(a => a.autoGenerate && a.autoPostGroupId);
+
+    if (requestedIds.length) {
+      accounts = accounts.filter(a => requestedIds.includes(a.accountId));
+    }
 
     const { t0, t1 } = todayRangeJst();
     let created = 0;
