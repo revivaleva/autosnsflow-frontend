@@ -2418,7 +2418,8 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
       KeyConditionExpression: "accountId = :acc AND postedAt <= :th",
       ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":th": { N: String(now) } },
       // include secondStageAt and deleteOnSecondStage flag (we no longer rely on fixed deleteScheduledAt)
-      ProjectionExpression: "PK, SK, postId, secondStagePostId, secondStageAt, deleteOnSecondStage, deleteParentAfter, status"
+      ProjectionExpression: "PK, SK, postId, secondStagePostId, secondStageAt, deleteOnSecondStage, deleteParentAfter, #st",
+      ExpressionAttributeNames: { "#st": "status" }
     }));
 
     for (const it of (q.Items || [])) {
