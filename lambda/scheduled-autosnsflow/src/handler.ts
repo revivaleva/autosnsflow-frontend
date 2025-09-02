@@ -1851,16 +1851,43 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
   const range = (cand as any).timeRange || "";
   const scheduledAtSec = Number((cand as any).scheduledAt || 0);
 
-  // 本文が空ならスキップ（次回リトライ）
+  // 本文が空なら一度だけ同期生成を試みる（それでも空ならスキップ）
   if (!text) {
-    await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "skip", message: "本文が未生成のためスキップ" });
-    if (debugMode) {
-      debugInfo.reason = 'no_content';
-      debugInfo.scheduledAt = scheduledAtSec;
-      debugInfo.textLength = text ? text.length : 0;
-      return { posted: 0, debug: debugInfo };
+    await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "info", message: "本文未生成:同期生成を試行" });
+    try {
+      // 呼び出し側の設定を取得して生成を試みる
+      const settingsForGen = await getUserSettings(userId);
+      const scheduledIdOnly = String(sk || "").replace(/^SCHEDULEDPOST#/, "");
+      await generateAndAttachContent(userId, acct, scheduledIdOnly, (cand as any).theme || '', settingsForGen);
+      // 生成後に再取得
+      const fresh = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } } }));
+      const freshRec = unmarshall(fresh.Item || {});
+      const newText = freshRec.content || "";
+      if (newText && String(newText).trim()) {
+        // 生成成功していれば投稿処理を継続するため text を更新
+        // NOTE: local variable text is used later; reassign
+        // eslint-disable-next-line require-atomic-updates
+        (cand as any).content = newText;
+        // continue to posting below
+      } else {
+        await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "skip", message: "同期生成後も本文未生成のためスキップ" });
+        if (debugMode) {
+          debugInfo.reason = 'no_content_after_generate';
+          debugInfo.scheduledAt = scheduledAtSec;
+          debugInfo.textLength = 0;
+          return { posted: 0, debug: debugInfo };
+        }
+        return { posted: 0 };
+      }
+    } catch (e) {
+      await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "同期生成に失敗", detail: { error: String(e) } });
+      if (debugMode) {
+        debugInfo.reason = 'generate_error';
+        debugInfo.scheduledAt = scheduledAtSec;
+        return { posted: 0, debug: debugInfo };
+      }
+      return { posted: 0 };
     }
-    return { posted: 0 };
   }
 
   // 予約の時刻範囲を超過していたら失効
