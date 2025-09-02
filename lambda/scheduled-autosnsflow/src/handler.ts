@@ -1790,6 +1790,13 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
       ExpressionAttributeNames: { "#st": "status" }
     }));
     const x = unmarshall(full.Item || {});
+    // 詳細デバッグ: 対象アカウントだったらフルアイテムとパース後オブジェクトを出力
+    if (acct.accountId === 'remigiozarcorb618' || userId === 'b7b44a38-e051-70fa-2001-0260ae388816') {
+      try {
+        console.log('[DEBUG-CAND] raw full.Item:', JSON.stringify(full.Item || {}));
+      } catch (e) { console.log('[DEBUG-CAND] failed stringify full.Item'); }
+      try { console.log('[DEBUG-CAND] unmarshalled x:', JSON.stringify(x || {})); } catch(e) { console.log('[DEBUG-CAND] failed stringify x'); }
+    }
     const postedZero = !x.postedAt || x.postedAt === 0 || x.postedAt === "0";
     const stOK = (x.status || "") === "scheduled";
 
