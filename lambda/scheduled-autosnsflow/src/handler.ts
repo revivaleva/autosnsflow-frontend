@@ -34,6 +34,10 @@ const USER_ID = "c7e43ae8-0031-70c5-a8ec-0f7962ee250f";
 const region = process.env.AWS_REGION || "ap-northeast-1";
 const ddb = new DynamoDBClient({ region });
 
+// Helpers to safely read DynamoDB attribute shapes
+const getS = (a: any) => (a && typeof a.S !== 'undefined') ? a.S : undefined;
+const getN = (a: any) => (a && typeof a.N !== 'undefined') ? a.N : undefined;
+
 /// ========== 共通ユーティリティ ==========
 const TZ = "Asia/Tokyo";
 const nowSec = () => Math.floor(Date.now() / 1000);
@@ -1998,7 +2002,7 @@ async function runRepliesForAccount(acct: any, userId = USER_ID, settings: any =
       const externalReplyId = (it.SK?.S || "").startsWith("REPLY#")
         ? it.SK.S.substring("REPLY#".length)
         : "";
-      const parentId = externalReplyId || (it.postId?.S || "");
+      const parentId = externalReplyId || (getS(it.postId) || "");
 
       try {
         const { postId: respId } = await postToThreads({
@@ -2009,7 +2013,7 @@ async function runRepliesForAccount(acct: any, userId = USER_ID, settings: any =
         });
         await ddb.send(new UpdateItemCommand({
           TableName: TBL_REPLIES,
-          Key: { PK: { S: it.PK.S }, SK: { S: it.SK.S } },
+          Key: { PK: { S: getS(it.PK) || '' }, SK: { S: getS(it.SK) || '' } },
           UpdateExpression: "SET #st = :replied, replyAt = :ts, responseContent = :resp",
           ConditionExpression: "#st = :unreplied",
           ExpressionAttributeNames: { "#st": "status" },
@@ -2101,7 +2105,7 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
   let found: any = null;
   const debugTried: any[] = [];
   for (const it of (q.Items || [])) {
-    const kpk = it.PK.S, ksk = it.SK.S;
+    const kpk = getS(it.PK) || '', ksk = getS(it.SK) || '';
     const full = await ddb.send(new GetItemCommand({
       TableName: TBL_SCHEDULED,
       Key: { PK: { S: kpk }, SK: { S: ksk } },
@@ -2109,12 +2113,12 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
       ExpressionAttributeNames: { "#st": "status" }
     }));
     const f = full.Item || {};
-    const st = f.status?.S || "";
-    const dp = f.doublePostStatus?.S || "";
-    const apg = f.autoPostGroupId?.S || "";
-    const pid = f.postId?.S || "";
-    const nid = f.numericPostId?.S || "";
-    const pat = f.postedAt?.N || "";
+    const st = getS(f.status) || "";
+    const dp = getS(f.doublePostStatus) || "";
+    const apg = getS(f.autoPostGroupId) || "";
+    const pid = getS(f.postId) || "";
+    const nid = getS(f.numericPostId) || "";
+    const pat = getN(f.postedAt) || "";
     // secondStageWanted を尊重：存在すれば true のもののみ対象、未指定なら従来通り
     const ssw = (typeof f.secondStageWanted !== 'undefined') ? (f.secondStageWanted?.BOOL === true || String(f.secondStageWanted?.S || '').toLowerCase() === 'true') : undefined;
     const ok = st === "posted" && pid && (!dp || dp !== "done") && apg.includes("自動投稿") && Number(pat || 0) <= threshold && (ssw === undefined || ssw === true);
@@ -2257,7 +2261,7 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
     const items = (q.Items || []);
     for (const it of items) {
       if (generated >= limit) break;
-      const pk = it.PK.S; const sk = it.SK.S;
+      const pk = getS(it.PK) || ''; const sk = getS(it.SK) || '';
       const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } } }));
       const rec = unmarshall(full.Item || {});
       const contentEmpty = !rec.content || String(rec.content || '').trim() === '';
@@ -2397,7 +2401,7 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
     }));
 
     for (const it of (q.Items || [])) {
-      const secondAt = Number(it.secondStageAt?.N || 0);
+      const secondAt = Number(getN(it.secondStageAt) || 0);
       if (!secondAt) continue; // nothing to base delete timing on
       // determine whether deletion is enabled for this reservation
       const resDeleteFlag = it.deleteOnSecondStage?.BOOL === true;
@@ -2409,7 +2413,7 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
       else if (globalDeleteFlag) flagSource = 'userSetting';
       // If not enabled explicitly, try to infer from auto-post-group slot settings (match by timeRange)
       if (!effectiveDeleteFlag) {
-        const timeRange = it.timeRange?.S || "";
+        const timeRange = getS(it.timeRange) || "";
         if (timeRange) {
           try {
             const slotsQ = await ddb.send(new QueryCommand({
@@ -2419,7 +2423,7 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
               ProjectionExpression: "timeRange, secondStageWanted"
             }));
             for (const s of (slotsQ.Items || [])) {
-              const slotTr = s.timeRange?.S || "";
+              const slotTr = getS(s.timeRange) || "";
               const slotSecond = s.secondStageWanted?.BOOL === true;
               if (slotSecond && slotTr === timeRange) {
                 effectiveDeleteFlag = true;
@@ -2440,9 +2444,9 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
       const delayMin = Number(settings?.doublePostDeleteDelay || process.env.DOUBLE_POST_DELETE_DELAY || 0);
       const threshold = secondAt + Math.floor(delayMin * 60);
       if (threshold > now) continue;
-      const pk = it.PK.S, sk = it.SK.S;
-      const postId = it.postId?.S || "";
-      const secondId = it.secondStagePostId?.S || "";
+      const pk = getS(it.PK) || '', sk = getS(it.SK) || '';
+      const postId = getS(it.postId) || "";
+      const secondId = getS(it.secondStagePostId) || "";
       const deleteParent = it.deleteParentAfter?.BOOL === true;
 
       // 削除対象を判定してThreads APIで削除を試みる（共通ユーティリティ経由、詳細ログ追加）
