@@ -825,6 +825,11 @@ export const handler = async (event: any = {}) => {
     for (const acct of accounts) {
       if (!acct) continue; // nullチェック追加
       try {
+        // Enhanced test logging for target account
+        if (userId === 'b7b44a38-e051-70fa-2001-0260ae388816' || acct.accountId === 'remigiozarcorb618') {
+          console.log('[TEST-LOG] running test for userId=', userId, 'accountId=', acct.accountId);
+          try { console.log('[TEST-LOG] acct=', JSON.stringify(acct)); } catch(e) { console.log('[TEST-LOG] acct stringify failed'); }
+        }
         switch (action) {
           case "ensureNextDay": {
             const r = await ensureNextDayAutoPosts(userId, acct);
