@@ -37,6 +37,27 @@ const ddb = new DynamoDBClient({ region });
 // Helpers to safely read DynamoDB attribute shapes
 const getS = (a: any) => (a && typeof a.S !== 'undefined') ? a.S : undefined;
 const getN = (a: any) => (a && typeof a.N !== 'undefined') ? a.N : undefined;
+// Remove undefined values from DynamoDB Item before PutItemCommand
+const sanitizeItem = (it: any) => {
+  const out: any = {};
+  for (const k of Object.keys(it || {})) {
+    const v = it[k];
+    if (typeof v === 'undefined') continue;
+    out[k] = v;
+  }
+  return out;
+};
+
+const isValidUrl = (s: any) => {
+  try {
+    if (!s || typeof s !== 'string') return false;
+    // allow only http(s)
+    const u = new URL(s);
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  } catch (e) {
+    return false;
+  }
+};
 
 /// ========== 共通ユーティリティ ==========
 const TZ = "Asia/Tokyo";
@@ -246,8 +267,8 @@ async function getDiscordWebhooks(userId = USER_ID) {
       ProjectionExpression: "discordWebhook"
     })
   );
-  const single = out.Item?.discordWebhook?.S;
-  const urls = single ? [single] : [];
+  const single = getS(out.Item?.discordWebhook);
+  const urls = single && isValidUrl(single) ? [single] : [];
   return urls;
 }
 
@@ -266,10 +287,10 @@ async function getDiscordWebhookSets(userId = USER_ID) {
       ProjectionExpression: "discordWebhook, errorDiscordWebhook",
     })
   );
-  const nSingle = out.Item?.discordWebhook?.S;
-  const eSingle = out.Item?.errorDiscordWebhook?.S;
-  const normal = nSingle ? [nSingle] : [];
-  const error = eSingle ? [eSingle] : [];
+  const nSingle = getS(out.Item?.discordWebhook);
+  const eSingle = getS(out.Item?.errorDiscordWebhook);
+  const normal = nSingle && isValidUrl(nSingle) ? [nSingle] : [];
+  const error = eSingle && isValidUrl(eSingle) ? [eSingle] : [];
   return { normal, error };
 }
 
@@ -633,7 +654,7 @@ async function createScheduledPost(userId: any, { acct, group, type, whenJst, ov
     deleteScheduledAt: (typeof overrideTheme === 'object' && overrideTheme?.deleteScheduledAt) ? { N: String(Math.floor(new Date(String(overrideTheme.deleteScheduledAt)).getTime() / 1000)) } : undefined,
     deleteParentAfter: (typeof overrideTheme === 'object' && typeof overrideTheme?.deleteParentAfter !== 'undefined') ? { BOOL: !!overrideTheme.deleteParentAfter } : undefined,
   };
-  await ddb.send(new PutItemCommand({ TableName: TBL_SCHEDULED, Item: item }));
+  await ddb.send(new PutItemCommand({ TableName: TBL_SCHEDULED, Item: sanitizeItem(item) }));
   return { id, groupTypeStr, themeStr };
 }
 
