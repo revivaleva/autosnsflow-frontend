@@ -598,11 +598,16 @@ async function deleteUnpostedAutoPosts(userId: any, acct: any, groupTypeStr: any
   return deletedCount;
 }
 
-async function createScheduledPost(userId: any, { acct, group, type, whenJst, overrideTheme = "", overrideTimeRange = "" }: any) {
+async function createScheduledPost(userId: any, { acct, group, type, whenJst, overrideTheme = "", overrideTimeRange = "", secondStageWanted = undefined }: any) {
   const themeStr = (overrideTheme || ((type === 1 ? group.theme1 : type === 2 ? group.theme2 : group.theme3) || ""));
   const groupTypeStr = `${group.groupName}-自動投稿${type}`;
   const timeRange = (overrideTimeRange || (type === 1 ? (group.time1 || "05:00-08:00") : type === 2 ? (group.time2 || "12:00-13:00") : (group.time3 || "20:00-23:00")) || "");
   const id = crypto.randomUUID();
+  // determine secondStageWanted boolean: prefer explicit argument, fallback to overrideTheme.object or default false
+  const secondStageFlag = typeof secondStageWanted !== 'undefined'
+    ? !!secondStageWanted
+    : !!(overrideTheme && (typeof overrideTheme === 'object' ? overrideTheme.secondStageWanted : false)) || false;
+
   const item = {
     PK: { S: `USER#${userId}` },
     SK: { S: `SCHEDULEDPOST#${id}` },
@@ -618,8 +623,8 @@ async function createScheduledPost(userId: any, { acct, group, type, whenJst, ov
     createdAt: { N: String(nowSec()) },
     isDeleted: { BOOL: false },
     timeRange: { S: timeRange },
-    // スロットに二段階投稿指定があれば予約レコードに保存
-    secondStageWanted: { BOOL: !!(overrideTheme && (typeof overrideTheme === 'object' ? overrideTheme.secondStageWanted : false)) || false },
+    // スロットに二段階投稿指定があれば予約レコードに保存（呼び出し元で明示可能）
+    secondStageWanted: { BOOL: !!secondStageFlag },
     // 削除予約フィールド（Lambda 経由での予約作成時に渡されれば保存する）
     deleteScheduledAt: (typeof overrideTheme === 'object' && overrideTheme?.deleteScheduledAt) ? { N: String(Math.floor(new Date(String(overrideTheme.deleteScheduledAt)).getTime() / 1000)) } : undefined,
     deleteParentAfter: (typeof overrideTheme === 'object' && typeof overrideTheme?.deleteParentAfter !== 'undefined') ? { BOOL: !!overrideTheme.deleteParentAfter } : undefined,
