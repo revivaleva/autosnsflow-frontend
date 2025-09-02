@@ -2256,6 +2256,16 @@ async function runHourlyJobForUser(userId: any) {
 
   const urls = await getDiscordWebhooks(userId);
   const now = new Date().toISOString();
+  // DEBUG: log raw totals used for master report
+  try {
+    console.log('[MASTER-DEBUG] totals', { createdCount, fetchedReplies, replyDrafts, skippedAccounts });
+    console.log('[MASTER-DEBUG] posts array', [
+      { label: "予約投稿作成", value: createdCount, suffix: " 件" },
+      { label: "返信取得", value: fetchedReplies, suffix: " 件" },
+      { label: "返信下書き", value: replyDrafts, suffix: " 件" },
+      { label: "スキップ", value: skippedAccounts },
+    ]);
+  } catch (e) { /* ignore logging errors */ }
   const metrics = formatNonZeroLine([
     { label: "予約投稿作成", value: createdCount, suffix: " 件" },
     { label: "返信取得", value: fetchedReplies, suffix: " 件" },
