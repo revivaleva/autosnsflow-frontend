@@ -1,0 +1,58 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+	  {
+		"type": "npm",
+		"script": "build",
+		"group": "build",
+		"problemMatcher": [],
+		"label": "npm: build",
+		"detail": "next build"
+	  },
+	  {
+		"label": "Build (WSL, timeout 30m, log to /tmp)",
+		"type": "shell",
+		"command": "wsl.exe -d Ubuntu bash -lc \"ts=\\$(date +%Y%m%d_%H%M%S); log=\\\"/tmp/build_\\$ts.log\\\"; ( set -o pipefail; timeout -k 10s 1800s bash -lc 'npm run build' >\\\"\\$log\\\" 2>&1; echo \\$? >\\\"\\$log.ec\\\" ) & wpid=\\$!; tail -n 200 -f --pid=\\$wpid \\\"\\$log\\\"; wait \\$wpid; ec=\\$(cat \\\"\\$log.ec\\\" 2>/dev/null || echo 124); echo \\\"[exit:\\$ec] full log: \\$log\\\"; exit \\$ec\"",
+		"options": { "cwd": "${workspaceFolder}" },
+		"presentation": { "reveal": "always", "panel": "new", "clear": true },
+		"problemMatcher": []
+	  },
+	  {
+		"label": "Run in WSL with timeout (generic)",
+		"type": "shell",
+		"command": "wsl.exe -d Ubuntu bash -lc \"ts=\\$(date +%Y%m%d_%H%M%S); name=\\\"${input:jobName}\\\"; to=${input:timeoutSec}; log=\\\"/tmp/\\${name}_\\$ts.log\\\"; ( set -o pipefail; timeout -k 10s \\${to}s bash -lc '${input:cmd}' >\\\"\\$log\\\" 2>&1; echo \\$? >\\\"\\$log.ec\\\" ) & wpid=\\$!; tail -n 200 -f --pid=\\$wpid \\\"\\$log\\\"; wait \\$wpid; ec=\\$(cat \\\"\\$log.ec\\\" 2>/dev/null || echo 124); echo \\\"[exit:\\$ec] job=\\${name} full log: \\$log\\\"; exit \\$ec\"",
+		"options": { "cwd": "${workspaceFolder}" },
+		"presentation": { "reveal": "always", "panel": "new", "clear": true },
+		"problemMatcher": []
+	  },
+	  {
+		"label": "Tail last build log (WSL)",
+		"type": "shell",
+		"command": "wsl.exe -d Ubuntu bash -lc \"ls -1t /tmp/build_*.log 2>/dev/null | head -n1 | xargs -r -I{} sh -c 'echo viewing {}; tail -n 200 -f {}'\"",
+		"options": { "cwd": "${workspaceFolder}" },
+		"presentation": { "reveal": "always", "panel": "shared", "clear": false },
+		"problemMatcher": []
+	  }
+	],
+	"inputs": [
+	  {
+		"id": "timeoutSec",
+		"type": "promptString",
+		"description": "Timeout in seconds",
+		"default": "100"
+	  },
+	  {
+		"id": "jobName",
+		"type": "promptString",
+		"description": "Job name for log file (/tmp/<job>_YYYYMMDD_HHMMSS.log)",
+		"default": "job"
+	  },
+	  {
+		"id": "cmd",
+		"type": "promptString",
+		"description": "Command to run inside WSL (e.g., npm run build)",
+		"default": "npm run build"
+	  }
+	]
+  }
+  

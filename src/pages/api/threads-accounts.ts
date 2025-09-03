@@ -57,7 +57,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         updatedAt: it.updatedAt,
 
         accessToken: it.accessToken, // [KEEP]
-        providerUserId: it.providerUserId, // [ADD] リプライ取得に必要
+        // providerUserId may not be present on the declared type from backend-core
+        // so access it defensively to avoid TypeScript build errors.
+        providerUserId: (it as any).providerUserId || (it as any).provider_user_id || "", // [ADD] リプライ取得に必要
 
         autoPost: it.autoPost,
         autoGenerate: it.autoGenerate,

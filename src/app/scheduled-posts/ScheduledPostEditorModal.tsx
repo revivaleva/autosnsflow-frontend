@@ -455,6 +455,10 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
       autoPostGroupId = `${selectedGroup.groupName}-自動投稿${autoType}`;
     }
 
+    // Ensure timeRange is persisted from inputs even if empty
+    const normalizedTimeStart = (timeStart || "00:00").slice(0,5);
+    const normalizedTimeEnd = (timeEnd || "23:59").slice(0,5);
+
     const payload: ScheduledPostType = {
       scheduledPostId,
       accountName,
@@ -463,7 +467,7 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
       content,
       theme,
       autoPostGroupId,
-      timeRange: `${timeStart}-${timeEnd}`,
+      timeRange: `${normalizedTimeStart}-${normalizedTimeEnd}`,
       // 二段階投稿/削除予定/親削除フラグ
       secondStageWanted: !!secondStageWantedFlag,
       deleteScheduledAt: deleteOnSecondStageFlag && scheduledAtLocal ? datetimeLocalToEpochSec(scheduledAtLocal) : undefined,

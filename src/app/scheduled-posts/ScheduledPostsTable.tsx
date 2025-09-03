@@ -189,6 +189,8 @@ export default function ScheduledPostsTable() {
       scheduledPostId: edited.scheduledPostId,
       content: edited.content,
       scheduledAt: edited.scheduledAt,
+      // include timeRange so edits to the time range are persisted
+      timeRange: (edited as any).timeRange,
     };
     if (typeof (edited as any).secondStageWanted !== 'undefined') payload.secondStageWanted = !!(edited as any).secondStageWanted;
     if (typeof (edited as any).deleteScheduledAt !== 'undefined') payload.deleteScheduledAt = (edited as any).deleteScheduledAt;

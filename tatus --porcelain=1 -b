@@ -1,0 +1,11 @@
+[33m750545c[m[33m ([m[1;36mHEAD -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m)[m fix(second-stage): preserve slot-level secondStageWanted when creating scheduled post
+[33mbc972c5[m[33m ([m[1;31morigin/staging[m[33m)[m fix(create-today): remove early account-level existence skip; rely on per-slot check
+[33m31968fd[m fix(debug): remove duplicate debug declaration in create-today
+[33m70edad8[m debug(create-today): return accounts considered in response for diagnostics
+[33m08a166e[m debug(create-today): log accounts considered + return debug
+[33med383c8[m debug(create-today): return per-account debug to diagnose skips
+[33m5b60093[m debug(create-today): add logs for slot existence check to diagnose over-skip
+[33mf93f362[m fix(create-today): use same per-slot group existence check as periodic job; skip if groupTypeStr exists for today
+[33m6dffbf6[m fix(create-today): use groupName prefix when checking existing auto posts; mark new records
+[33m7206015[m[33m ([m[1;31morigin/lambda[m[33m)[m fix(auto-post): process only empty content for periodic generation; mark create-today records
+[33m414b12f[m chore(lambda): move sync generation to hourly processor; add per-account generation with lock/backoff
