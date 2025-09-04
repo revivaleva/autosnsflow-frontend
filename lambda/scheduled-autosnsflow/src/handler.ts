@@ -1059,8 +1059,61 @@ export const handler = async (event: any = {}) => {
             // テスト用: 本文が空の予約に対して本文生成を行う
             try {
               const limit = Number(event.limit ?? 1);
+
+              // 事前に候補を詳細に取得して原因を可視化する
+              const now = nowSec();
+              let q;
+              try {
+                q = await ddb.send(new QueryCommand({
+                  TableName: TBL_SCHEDULED,
+                  IndexName: GSI_NEEDS_BY_NEXTGEN,
+                  KeyConditionExpression: "needsContentAccount = :acc AND nextGenerateAt <= :now",
+                  ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
+                  ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, generateLock, generateLockedAt",
+                  ScanIndexForward: true,
+                  Limit: 100
+                }));
+              } catch (e) {
+                if (!isGsiMissing(e)) throw e;
+                q = await ddb.send(new QueryCommand({
+                  TableName: TBL_SCHEDULED,
+                  IndexName: GSI_SCH_BY_ACC_TIME,
+                  KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
+                  ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
+                  ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, generateLock, generateLockedAt",
+                  ScanIndexForward: true,
+                  Limit: 100
+                }));
+              }
+
+              const items = (q.Items || []);
+              const detailed: any[] = [];
+              for (const it of items) {
+                const pk = getS(it.PK) || '';
+                const sk = getS(it.SK) || '';
+                try {
+                  const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } } }));
+                  const rec = unmarshall(full.Item || {});
+                  const contentEmpty = !rec.content || String(rec.content || '').trim() === '';
+                  const nextGen = Number(rec.nextGenerateAt || 0);
+                  const attempts = Number(rec.generateAttempts || 0);
+                  const lock = rec.generateLock || undefined;
+                  const lockedAt = Number(rec.generateLockedAt || 0);
+                  const lockActive = !!lock && lockedAt > now;
+                  const reasons: string[] = [];
+                  if (!contentEmpty) reasons.push('has_content');
+                  if (nextGen > now) reasons.push(`nextGenerateAt=${nextGen}`);
+                  if (lockActive) reasons.push(`locked_until=${lockedAt}`);
+                  detailed.push({ PK: pk, SK: sk, scheduledAt: rec.scheduledAt || null, contentEmpty, nextGenerateAt: nextGen, generateAttempts: attempts, lock: lock ? String(lock) : null, generateLockedAt: lockedAt || null, lockActive, reasons });
+                } catch (e) {
+                  detailed.push({ PK: pk, SK: sk, error: String(e) });
+                }
+              }
+
+              // 実際に生成処理を実行
               const genRes = await processPendingGenerationsForAccount(userId, acct, limit);
-              results.push({ accountId: acct.accountId, runGenerate: genRes });
+
+              results.push({ accountId: acct.accountId, runGenerate: { generated: genRes.generated || 0, candidates: { now, count: items.length, items: detailed.slice(0, 100) } } });
             } catch (e) {
               results.push({ accountId: acct.accountId, runGenerate: { error: String(e) } });
             }
