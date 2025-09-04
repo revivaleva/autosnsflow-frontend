@@ -50,25 +50,89 @@ exports.handler = async function (event) {
           continue;
         }
 
-        // mark as posted (simulate real post) and set doublePostStatus if account has secondStageContent
         // fetch account item
         const acct = await ddb.send(new GetItemCommand({ TableName: TBL_THREADS, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } } }));
+        const accessToken = acct.Item?.accessToken?.S || "";
+        const providerUserId = acct.Item?.providerUserId?.S || "";
         const secondStageContent = acct.Item?.secondStageContent?.S || "";
         const reservationSecondWanted = it.secondStageWanted?.BOOL;
 
-        const nowTs = Math.floor(Date.now() / 1000);
-        const names = { "#st": "status" };
-        const values = { ":posted": { S: "posted" }, ":ts": { N: String(nowTs) }, ":pid": { S: `lambda-test-${crypto.randomUUID()}` }, ":f": { BOOL: false } };
-        const sets = ["#st = :posted", "postedAt = :ts", "postId = :pid"];
+        // Log retrieved data
+        console.log('[DEBUG] scheduled item:', {
+          scheduledPostId,
+          accountId: it.accountId?.S || accountId,
+          scheduledAt: it.scheduledAt?.N || it.scheduledAt,
+          status: it.status?.S || null,
+          secondStageWanted: it.secondStageWanted?.BOOL,
+        });
 
-        if (secondStageContent && String(secondStageContent).trim() && reservationSecondWanted !== false) {
-          values[":waiting"] = { S: "waiting" };
-          sets.push("doublePostStatus = :waiting");
+        if (!accessToken) {
+          const reason = 'missing accessToken';
+          console.log(`[INFO] skip posting ${scheduledPostId}: ${reason}`);
+          results.push({ scheduledPostId, ok: false, reason });
+          continue;
         }
 
-        await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${scheduledPostId}` } }, UpdateExpression: `SET ${sets.join(", ")}`, ExpressionAttributeNames: names, ExpressionAttributeValues: values }));
+        const content = it.content?.S || "";
+        if (!content || !String(content).trim()) {
+          const reason = 'empty content';
+          console.log(`[INFO] skip posting ${scheduledPostId}: ${reason}`);
+          results.push({ scheduledPostId, ok: false, reason });
+          continue;
+        }
 
-        results.push({ scheduledPostId, ok: true });
+        // Perform actual Threads post (create + publish)
+        try {
+          const base = process.env.THREADS_GRAPH_BASE || 'https://graph.threads.net/v1.0';
+          // Create
+          const createBody = { media_type: 'TEXT', text: content, access_token: accessToken };
+          const createRes = await fetch(`${base}/me/threads`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(createBody) });
+          const createText = await createRes.text();
+          if (!createRes.ok) throw new Error(`create_failed ${createRes.status} ${createText}`);
+          const createJson = JSON.parse(createText || '{}');
+          const creationId = createJson?.id;
+          if (!creationId) throw new Error('creation_id missing');
+
+          // Publish
+          const publishEndpoint = providerUserId ? `${base}/${encodeURIComponent(providerUserId)}/threads_publish` : `${base}/me/threads_publish`;
+          const publishBody = { creation_id: creationId, access_token: accessToken };
+          const pubRes = await fetch(publishEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(publishBody) });
+          const pubText = await pubRes.text();
+          if (!pubRes.ok) throw new Error(`publish_failed ${pubRes.status} ${pubText}`);
+          const pubJson = JSON.parse(pubText || '{}');
+          const postId = pubJson?.id;
+          if (!postId) throw new Error('postId missing after publish');
+
+          // get permalink
+          let permalink = null;
+          try {
+            const permRes = await fetch(`${base}/${encodeURIComponent(postId)}?fields=permalink&access_token=${encodeURIComponent(accessToken)}`);
+            if (permRes.ok) {
+              const permJson = await permRes.json();
+              if (permJson?.permalink) permalink = permJson.permalink;
+            }
+          } catch (e) {
+            console.log('[WARN] permalink fetch failed', e?.message || e);
+          }
+
+          const nowTs = Math.floor(Date.now() / 1000);
+          const names = { '#st': 'status' };
+          const values = { ':posted': { S: 'posted' }, ':ts': { N: String(nowTs) }, ':pid': { S: postId }, ':f': { BOOL: false } };
+          const sets = ['#st = :posted', 'postedAt = :ts', 'postId = :pid'];
+          if (permalink) { values[':purl'] = { S: permalink }; sets.push('postUrl = :purl'); }
+          if (secondStageContent && String(secondStageContent).trim() && reservationSecondWanted !== false) {
+            values[':waiting'] = { S: 'waiting' };
+            sets.push('doublePostStatus = :waiting');
+          }
+
+          await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${scheduledPostId}` } }, UpdateExpression: `SET ${sets.join(', ')}`, ExpressionAttributeNames: names, ExpressionAttributeValues: values }));
+
+          console.log(`[INFO] posted scheduledPostId=${scheduledPostId} postId=${postId} permalink=${permalink || ''}`);
+          results.push({ scheduledPostId, ok: true, postId, permalink: permalink || null });
+        } catch (e) {
+          console.log(`[ERROR] posting failed for ${scheduledPostId}: ${String(e?.message || e)}`);
+          results.push({ scheduledPostId, ok: false, error: String(e?.message || e) });
+        }
       } catch (e) {
         results.push({ scheduledPostId, ok: false, error: String(e) });
       }
