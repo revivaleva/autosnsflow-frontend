@@ -990,6 +990,61 @@ export const handler = async (event: any = {}) => {
             results.push({ accountId: acct.accountId, account: acct });
             break;
           }
+          case "debugAll": {
+            // GSIクエリとPKフォールバックを両方実行して観測性を高めるテスト用アクション
+            try {
+              const now = nowSec();
+              const gsiRes = await ddb.send(new QueryCommand({
+                TableName: TBL_SCHEDULED,
+                IndexName: GSI_SCH_BY_ACC_TIME,
+                KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
+                ExpressionAttributeValues: {
+                  ":acc": { S: acct.accountId },
+                  ":now": { N: String(now) }
+                },
+                ProjectionExpression: "PK, SK, scheduledAt, postedAt, #st, timeRange, content",
+                ExpressionAttributeNames: { "#st": "status" },
+                ScanIndexForward: true,
+                Limit: 50
+              }));
+
+              const gsiItems = (gsiRes.Items || []).slice(0, 6);
+
+              // PK フォールバッククエリ
+              let fallbackItems: any[] = [];
+              let fallbackCount = 0;
+              try {
+                const fb = await ddb.send(new QueryCommand({
+                  TableName: TBL_SCHEDULED,
+                  KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+                  ExpressionAttributeValues: {
+                    ":pk": { S: `USER#${userId}` },
+                    ":pfx": { S: "SCHEDULEDPOST#" },
+                    ":acc": { S: acct.accountId },
+                  },
+                  FilterExpression: "accountId = :acc",
+                  ProjectionExpression: "PK, SK, scheduledAt, postedAt, #st, timeRange, content, accountId",
+                  ExpressionAttributeNames: { "#st": "status" },
+                  ScanIndexForward: true,
+                  Limit: 50
+                }));
+                fallbackCount = (fb.Items || []).length;
+                fallbackItems = (fb.Items || []).slice(0, 6);
+              } catch (e) {
+                fallbackItems = [{ error: String(e).slice(0, 500) }];
+              }
+
+              const payload = {
+                gsi: { count: (gsiRes.Items || []).length, items: gsiItems },
+                fallback: { count: fallbackCount, items: fallbackItems }
+              };
+              try { console.log('[TEST-DEBUGALL] ', acct.accountId, JSON.stringify(payload, null, 2)); } catch (e) {}
+              results.push({ accountId: acct.accountId, debugAll: payload });
+            } catch (e) {
+              results.push({ accountId: acct.accountId, debugAll: { error: String(e) } });
+            }
+            break;
+          }
           default:
             results.push({ accountId: acct?.accountId || "-", error: "unknown action" });
         }
@@ -1835,6 +1890,44 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
   }));
   // debug: capture raw q items if requested
   const debugInfo: any = debugMode ? { qItemsCount: (q.Items || []).length, items: [] as any[] } : undefined;
+
+  // If GSI returned no items, try a PK-based fallback query for observability
+  if (debugMode && (!q.Items || q.Items.length === 0)) {
+    try {
+      const fallback = await ddb.send(new QueryCommand({
+        TableName: TBL_SCHEDULED,
+        // PK fallback: USER#userId + begins_with SK
+        KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+        ExpressionAttributeValues: {
+          ":pk": { S: `USER#${userId}` },
+          ":pfx": { S: "SCHEDULEDPOST#" },
+          ":acc": { S: acct.accountId },
+        },
+        FilterExpression: "accountId = :acc",
+        ProjectionExpression: "PK, SK, scheduledAt, postedAt, #st, timeRange, content, accountId",
+        ExpressionAttributeNames: { "#st": "status" },
+        ScanIndexForward: true,
+        Limit: 50
+      }));
+      (debugInfo as any).fallbackCount = (fallback.Items || []).length;
+      (debugInfo as any).fallbackSample = (fallback.Items || []).slice(0, 6).map(it => {
+        try {
+          return {
+            PK: it.PK?.S,
+            SK: it.SK?.S,
+            scheduledAt: it.scheduledAt?.N,
+            postedAt: it.postedAt?.N,
+            status: it.status?.S || it["#st"]?.S || null,
+            timeRange: it.timeRange?.S,
+            contentEmpty: !(it.content && it.content.S && String(it.content.S).trim().length > 0),
+            accountId: it.accountId?.S,
+          };
+        } catch (e) { return { err: String(e) }; }
+      });
+    } catch (e) {
+      try { (debugInfo as any).fallbackError = String(e).slice(0, 500); } catch (_) { }
+    }
+  }
 
   let cand = null;
   let iterIndex = 0;
