@@ -1218,8 +1218,8 @@ export const handler = async (event: any = {}) => {
                     ":acc": { S: acct.accountId },
                     ":now": { N: String(now) }
                   },
-                  ProjectionExpression: "PK, SK, scheduledAt, postedAt, #st, timeRange, content",
-                  ExpressionAttributeNames: { "#st": "status" },
+                  // PendingByAccTime GSI may not project 'status' — avoid requesting it here
+                  ProjectionExpression: "PK, SK, scheduledAt, postedAt, timeRange, content",
                   ScanIndexForward: true,
                   Limit: 50
                 }));
