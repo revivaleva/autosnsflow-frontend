@@ -988,6 +988,29 @@ export const handler = async (event: any = {}) => {
             results.push({ accountId: acct.accountId, createOneOff: r });
             break;
           }
+          case "fullFlowTest": {
+            // end-to-end test: create one-off (no content) -> generate -> post
+            try {
+              const minutesFromNow = Number(event.minutesFromNow ?? 0);
+              const windowMinutes = Number(event.windowMinutes ?? 60);
+              const theme = event.theme || "テスト投稿";
+
+              // create reservation without content
+              const createRes = await createOneOffForTest({ userId, acct, minutesFromNow, windowMinutes, theme, content: "" });
+
+              // run generation (limit configurable)
+              const genLimit = Number(event.limit ?? 1);
+              const genRes = await processPendingGenerationsForAccount(userId, acct, genLimit);
+
+              // run auto-post (debugMode true to return debug)
+              const postRes = await runAutoPostForAccount(acct, userId, settings, true);
+
+              results.push({ accountId: acct.accountId, fullFlow: { created: createRes, generated: genRes, posted: postRes } });
+            } catch (e) {
+              results.push({ accountId: acct.accountId, fullFlow: { error: String(e) } });
+            }
+            break;
+          }
           case "runGenerate": {
             // テスト用: 本文が空の予約に対して本文生成を行う
             try {
