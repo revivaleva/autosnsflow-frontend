@@ -1,0 +1,23 @@
+{
+  "Run Generate (1)": {
+    "job": "test",
+    "action": "runGenerate",
+    "userId": "c7e43ae8-0031-70c5-a8ec-0f7962ee250f",
+    "accountId": "remigiozarcorb618",
+    "limit": 1
+  },
+  "Run AutoPost (single account)": {
+    "job": "test",
+    "action": "runAutoPost",
+    "userId": "c7e43ae8-0031-70c5-a8ec-0f7962ee250f",
+    "accountId": "remigiozarcorb618"
+  },
+  "Debug Query Detailed": {
+    "job": "test",
+    "action": "debugQueryDetailed",
+    "userId": "c7e43ae8-0031-70c5-a8ec-0f7962ee250f",
+    "accountId": "remigiozarcorb618"
+  }
+}
+
+
