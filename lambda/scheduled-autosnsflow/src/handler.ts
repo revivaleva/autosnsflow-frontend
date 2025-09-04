@@ -985,6 +985,17 @@ export const handler = async (event: any = {}) => {
             results.push({ accountId: acct.accountId, createOneOff: r });
             break;
           }
+          case "runGenerate": {
+            // テスト用: 本文が空の予約に対して本文生成を行う
+            try {
+              const limit = Number(event.limit ?? 1);
+              const genRes = await processPendingGenerationsForAccount(userId, acct, limit);
+              results.push({ accountId: acct.accountId, runGenerate: genRes });
+            } catch (e) {
+              results.push({ accountId: acct.accountId, runGenerate: { error: String(e) } });
+            }
+            break;
+          }
           case "getAccount": {
             // 取得済み acct をそのまま返す（accountId を指定すれば1件、無指定なら全件ループで返る）
             results.push({ accountId: acct.accountId, account: acct });
