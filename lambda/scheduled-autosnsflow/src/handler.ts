@@ -642,10 +642,8 @@ async function createScheduledPost(userId: any, { acct, group, type, whenJst, ov
     autoPostGroupId: { S: groupTypeStr },
     theme: { S: themeStr },
     content: { S: "" },
-    // 新: 未投稿かつ本文があるものを GSI に入れるためのフラグ
-    pendingForAutoPost: { BOOL: false },
-    // 新: 本文が未生成のものを示すフラグ（生成対象）
-    needsContent: { BOOL: true },
+    // スパースGSI用の属性（候補のみインデックスされるよう、候補時に文字列で accountId を保存）
+    needsContentAccount: { S: acct.accountId },
     scheduledAt: { N: String(toEpochSec(whenJst)) },
     postedAt: { N: "0" },
     status: { S: "scheduled" },
@@ -763,9 +761,9 @@ ${themeStr}
         await ddb.send(new UpdateItemCommand({
           TableName: TBL_SCHEDULED,
           Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${scheduledPostId}` } },
-          // 保存時に本文が入ったので生成フラグを消し、自動投稿候補フラグを立てる
-          UpdateExpression: "SET content = :c, pendingForAutoPost = :pf, needsContent = :nc",
-          ExpressionAttributeValues: { ":c": { S: cleanText }, ":pf": { BOOL: true }, ":nc": { BOOL: false } },
+          // 保存時に本文が入ったため needsContentAccount を削除し、pendingForAutoPostAccount をセット
+          UpdateExpression: "SET content = :c, pendingForAutoPostAccount = :acc REMOVE needsContentAccount",
+          ExpressionAttributeValues: { ":c": { S: cleanText }, ":acc": { S: acct.accountId } },
         }));
         await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "ok", message: "本文生成を完了" });
       } else {
