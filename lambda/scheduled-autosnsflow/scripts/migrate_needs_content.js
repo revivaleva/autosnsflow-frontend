@@ -2,13 +2,14 @@
 // Usage: node migrate_needs_content.js [--accountId ACCOUNT_ID] [--table TABLE]
 // This script scans ScheduledPosts and for items with empty or missing `content` sets `needsContentAccount = accountId`.
 
-const { DynamoDBClient, ScanCommand, UpdateItemCommand } = require("@aws-sdk/client-dynamodb");
-const { unmarshall } = require("@aws-sdk/util-dynamodb");
+import { DynamoDBClient, ScanCommand, UpdateItemCommand } from "@aws-sdk/client-dynamodb";
+import { unmarshall } from "@aws-sdk/util-dynamodb";
+import minimist from 'minimist';
 
 const region = process.env.AWS_REGION || 'ap-northeast-1';
 const TABLE = process.env.SCHEDULED_POSTS_TABLE || 'ScheduledPosts';
 
-const argv = require('minimist')(process.argv.slice(2));
+const argv = minimist(process.argv.slice(2));
 const accountFilter = argv.accountId || argv.account || null;
 
 const ddb = new DynamoDBClient({ region });
