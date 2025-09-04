@@ -1929,20 +1929,19 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
 
   // まず "未投稿・時刻到来" の予約を1件取得（GSI→PKフォールバック）
   // 方式B: GSIはキーだけを取得（Filterしない）→ 本体をGetItemで精査
+  // Query only by GSI keys (accountId + scheduledAt) and avoid server-side FilterExpression
+  // so that we don't consume the Limit with filtered-out items. We'll refine candidates
+  // locally (GetItem + checks) to decide the actual posting target.
   const q = await ddb.send(new QueryCommand({
     TableName: TBL_SCHEDULED,
     IndexName: GSI_SCH_BY_ACC_TIME,
     KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
-    FilterExpression: "#st = :scheduled AND postedAt = :zero",
-    ExpressionAttributeNames: { "#st": "status" },
     ExpressionAttributeValues: {
       ":acc": { S: acct.accountId },
       ":now": { N: String(nowSec()) },
-      ":scheduled": { S: "scheduled" },
-      ":zero": { N: "0" },
     },
     // Keys only でも動くように PK/SK と scheduledAt だけ取得
-    ProjectionExpression: "PK, SK, scheduledAt, postedAt, #st",
+    ProjectionExpression: "PK, SK, scheduledAt, postedAt, status",
     ScanIndexForward: true, // 古い順に見る
     Limit: 50               // 上限を増やして取りこぼしを回避
   }));
