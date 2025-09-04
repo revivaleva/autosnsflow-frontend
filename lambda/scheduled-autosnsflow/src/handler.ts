@@ -1056,6 +1056,53 @@ export const handler = async (event: any = {}) => {
             }
             break;
           }
+        case "debugQueryDetailed": {
+          // GSIで取得したキー群を個別にGetItemして、
+          // runAutoPost のフィルタ条件ごとに除外理由を付与して返す（観測性向上）
+          try {
+            const now = nowSec();
+            const q = await ddb.send(new QueryCommand({
+              TableName: TBL_SCHEDULED,
+              IndexName: GSI_SCH_BY_ACC_TIME,
+              KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
+              ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
+              ProjectionExpression: "PK, SK, scheduledAt, postedAt, #st",
+              ExpressionAttributeNames: { "#st": "status" },
+              ScanIndexForward: true,
+              Limit: 100
+            }));
+
+            const items = (q.Items || []);
+            const detailed: any[] = [];
+            for (const it of items) {
+              const pk = getS(it.PK) || ''; const sk = getS(it.SK) || '';
+              let reason = [] as string[];
+              try {
+                const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } } }));
+                const f = unmarshall(full.Item || {});
+                // check runAutoPost filters
+                if ((f.status || '') !== 'scheduled') reason.push(`status=${f.status || '(missing)'}`);
+                if (f.postedAt && Number(f.postedAt || 0) !== 0) reason.push(`postedAt=${f.postedAt}`);
+                // timeRange expiry check
+                if (f.timeRange) {
+                  const endJst = rangeEndOfDayJst(f.timeRange, jstFromEpoch(Number(f.scheduledAt || 0)));
+                  if (endJst && nowSec() > toEpochSec(endJst)) reason.push(`timeRange_expired:${f.timeRange}`);
+                }
+                // content empty
+                if (!f.content || String(f.content || '').trim() === '') reason.push('no_content');
+
+                detailed.push({ PK: pk, SK: sk, scheduledAt: f.scheduledAt, postedAt: f.postedAt, status: f.status, timeRange: f.timeRange, contentEmpty: !f.content, reasons: reason });
+              } catch (e) {
+                detailed.push({ PK: pk, SK: sk, error: String(e) });
+              }
+            }
+
+            results.push({ accountId: acct.accountId, debugQueryDetailed: { now: nowSec(), count: items.length, items: detailed.slice(0, 50) } });
+          } catch (e) {
+            results.push({ accountId: acct.accountId, debugQueryDetailed: { error: String(e) } });
+          }
+          break;
+        }
           default:
             results.push({ accountId: acct?.accountId || "-", error: "unknown action" });
         }
