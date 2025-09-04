@@ -1150,6 +1150,67 @@ export const handler = async (event: any = {}) => {
             }
             break;
           }
+          case "runGenerateFromGsi": {
+            // Test action: query GSI for candidates and attempt generation for each
+            try {
+              const now = nowSec();
+              const limit = Number(event.limit ?? 50);
+              const force = !!event.force;
+              let q;
+              try {
+                q = await ddb.send(new QueryCommand({
+                  TableName: TBL_SCHEDULED,
+                  IndexName: GSI_NEEDS_BY_NEXTGEN,
+                  KeyConditionExpression: "needsContentAccount = :acc AND nextGenerateAt <= :now",
+                  ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
+                  ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, generateLockedAt",
+                  ScanIndexForward: true,
+                  Limit: limit
+                }));
+              } catch (e) {
+                if (!isGsiMissing(e)) throw e;
+                q = await ddb.send(new QueryCommand({
+                  TableName: TBL_SCHEDULED,
+                  IndexName: GSI_SCH_BY_ACC_TIME,
+                  KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
+                  ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
+                  ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, generateLockedAt",
+                  ScanIndexForward: true,
+                  Limit: limit
+                }));
+              }
+
+              const items = (q.Items || []);
+              const outcomes: any[] = [];
+              for (const it of items) {
+                const pk = getS(it.PK) || '';
+                const sk = getS(it.SK) || '';
+                try {
+                  const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } } }));
+                  const rec = unmarshall(full.Item || {});
+                  const contentEmpty = !rec.content || String(rec.content || '').trim() === '';
+                  if (!contentEmpty && !force) {
+                    outcomes.push({ PK: pk, SK: sk, skipped: 'has_content' });
+                    continue;
+                  }
+
+                  try {
+                    await generateAndAttachContent(userId, acct, sk.replace(/^SCHEDULEDPOST#/, ''), rec.theme || '', await getUserSettings(userId));
+                    outcomes.push({ PK: pk, SK: sk, ok: true });
+                  } catch (e) {
+                    outcomes.push({ PK: pk, SK: sk, ok: false, error: String(e) });
+                  }
+                } catch (e) {
+                  outcomes.push({ PK: getS(it.PK) || '', SK: getS(it.SK) || '', error: String(e) });
+                }
+              }
+
+              results.push({ accountId: acct.accountId, runGenerateFromGsi: { count: items.length, outcomes, gsiRaw: q.Items || [] } });
+            } catch (e) {
+              results.push({ accountId: acct.accountId, runGenerateFromGsi: { error: String(e) } });
+            }
+            break;
+          }
           case "debugGenerateCandidates": {
             // テスト用: 本文未生成の候補に関する詳細（nextGenerateAt, generateAttempts, locks）を返す
             try {
