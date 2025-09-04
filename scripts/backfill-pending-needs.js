@@ -12,7 +12,8 @@ const TABLE = process.env.TABLE_NAME || 'ScheduledPosts';
     const res = await ddb.send(new ScanCommand({
       TableName: TABLE,
       ExclusiveStartKey: lastKey,
-      ProjectionExpression: 'PK,SK,accountId,content,postedAt,status',
+      ProjectionExpression: 'PK,SK,accountId,content,postedAt,#st',
+      ExpressionAttributeNames: { '#st': 'status' },
       Limit: 100
     }));
 
@@ -27,12 +28,12 @@ const TABLE = process.env.TABLE_NAME || 'ScheduledPosts';
 
       try {
         if (!content || String(content).trim() === '') {
-          // needs content
+          // needs content: set needsContentAccount AND ensure nextGenerateAt exists (0)
           await ddb.send(new UpdateItemCommand({
             TableName: TABLE,
             Key: key,
-            UpdateExpression: 'SET needsContentAccount = :acc',
-            ExpressionAttributeValues: { ':acc': { S: accountId } }
+            UpdateExpression: 'SET needsContentAccount = :acc, nextGenerateAt = if_not_exists(nextGenerateAt, :zero)',
+            ExpressionAttributeValues: { ':acc': { S: accountId }, ':zero': { N: '0' } }
           }));
         } else if (postedAt === 0 && status === 'scheduled') {
           await ddb.send(new UpdateItemCommand({

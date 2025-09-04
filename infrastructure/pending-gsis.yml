@@ -1,0 +1,52 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Add PendingByAccTime and NeedsContentByNextGen GSIs to ScheduledPosts
+Resources:
+  # This template is intended to be merged into existing table resource or used to create GSIs via update-stack
+  PendingByAccTimeIndex:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ScheduledPosts
+      # NOTE: This is a helper template fragment. In many environments you should use aws dynamodb update-table instead.
+      AttributeDefinitions:
+        - AttributeName: pendingForAutoPostAccount
+          AttributeType: S
+        - AttributeName: needsContentAccount
+          AttributeType: S
+        - AttributeName: nextGenerateAt
+          AttributeType: N
+        - AttributeName: scheduledAt
+          AttributeType: N
+      GlobalSecondaryIndexes:
+        - IndexName: PendingByAccTime
+          KeySchema:
+            - AttributeName: pendingForAutoPostAccount
+              KeyType: HASH
+            - AttributeName: scheduledAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: INCLUDE
+            NonKeyAttributes:
+              - PK
+              - SK
+              - content
+              - timeRange
+              - postedAt
+              - autoPostGroupId
+              - secondStageWanted
+        - IndexName: NeedsContentByNextGen
+          KeySchema:
+            - AttributeName: needsContentAccount
+              KeyType: HASH
+            - AttributeName: nextGenerateAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: INCLUDE
+            NonKeyAttributes:
+              - PK
+              - SK
+              - content
+              - scheduledAt
+              - generateAttempts
+              - generateLockedAt
+
+
