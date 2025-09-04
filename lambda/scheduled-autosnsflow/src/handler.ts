@@ -1123,7 +1123,8 @@ async function createOneOffForTest({
   userId,
   acct,
   minutesFromNow = 1,
-  windowMinutes = 10,
+  // default window widened to 60 minutes to avoid too-narrow time ranges during tests
+  windowMinutes = 60,
   theme = "テスト投稿",
   content = "",
 }: any) {
@@ -1138,7 +1139,10 @@ async function createOneOffForTest({
   );
   const hhmm = (d: any) =>
     `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-  const range = `${hhmm(base)}-${hhmm(new Date(base.getTime() + windowMinutes * 60 * 1000))}`;
+  // Anchor the range around the scheduled time 'when' to produce a more sensible window
+  const rangeStart = new Date(when.getTime() - Math.floor(windowMinutes / 2) * 60 * 1000);
+  const rangeEnd = new Date(rangeStart.getTime() + windowMinutes * 60 * 1000);
+  const range = `${hhmm(rangeStart)}-${hhmm(rangeEnd)}`;
 
   const fakeGroup = {
     groupName: "テスト",
