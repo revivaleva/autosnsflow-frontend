@@ -996,6 +996,50 @@ export const handler = async (event: any = {}) => {
             }
             break;
           }
+          case "debugGenerateCandidates": {
+            // テスト用: 本文未生成の候補に関する詳細（nextGenerateAt, generateAttempts, locks）を返す
+            try {
+              const now = nowSec();
+              const q = await ddb.send(new QueryCommand({
+                TableName: TBL_SCHEDULED,
+                IndexName: GSI_SCH_BY_ACC_TIME,
+                KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
+                ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
+                ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, generateLock, generateLockedAt",
+                ScanIndexForward: true,
+                Limit: 100
+              }));
+
+              const items = (q.Items || []);
+              const detailed: any[] = [];
+              for (const it of items) {
+                const pk = getS(it.PK) || '';
+                const sk = getS(it.SK) || '';
+                try {
+                  const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } } }));
+                  const rec = unmarshall(full.Item || {});
+                  const contentEmpty = !rec.content || String(rec.content || '').trim() === '';
+                  const nextGen = Number(rec.nextGenerateAt || 0);
+                  const attempts = Number(rec.generateAttempts || 0);
+                  const lock = rec.generateLock || undefined;
+                  const lockedAt = Number(rec.generateLockedAt || 0);
+                  const lockActive = !!lock && lockedAt > now;
+                  const reasons: string[] = [];
+                  if (!contentEmpty) reasons.push('has_content');
+                  if (nextGen > now) reasons.push(`nextGenerateAt=${nextGen}`);
+                  if (lockActive) reasons.push(`locked_until=${lockedAt}`);
+                  detailed.push({ PK: pk, SK: sk, scheduledAt: rec.scheduledAt || null, contentEmpty, nextGenerateAt: nextGen, generateAttempts: attempts, lock: lock ? String(lock) : null, generateLockedAt: lockedAt || null, lockActive, reasons });
+                } catch (e) {
+                  detailed.push({ PK: pk, SK: sk, error: String(e) });
+                }
+              }
+
+              results.push({ accountId: acct.accountId, debugGenerateCandidates: { now: now, count: items.length, items: detailed.slice(0, 100) } });
+            } catch (e) {
+              results.push({ accountId: acct.accountId, debugGenerateCandidates: { error: String(e) } });
+            }
+            break;
+          }
           case "getAccount": {
             // 取得済み acct をそのまま返す（accountId を指定すれば1件、無指定なら全件ループで返る）
             results.push({ accountId: acct.accountId, account: acct });
