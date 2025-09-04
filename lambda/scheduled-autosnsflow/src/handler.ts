@@ -902,12 +902,12 @@ export const handler = async (event: any = {}) => {
                     TableName: TBL_SCHEDULED,
                     IndexName: GSI_PENDING_BY_ACC_TIME,
                     KeyConditionExpression: "pendingForAutoPostAccount = :acc AND scheduledAt <= :now",
-                    ExpressionAttributeNames: { "#st": "status" },
                     ExpressionAttributeValues: {
                       ":acc": { S: acct.accountId },
                       ":now": { N: String(nowSec()) },
                     },
-                    ProjectionExpression: "PK, SK, scheduledAt, postedAt, #st, content",
+                    // PendingByAccTime GSI may not project 'status' — avoid requesting it
+                    ProjectionExpression: "PK, SK, scheduledAt, postedAt, content",
                     ScanIndexForward: true,
                     Limit: 50
                   }));
