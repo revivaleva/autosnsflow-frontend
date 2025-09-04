@@ -2758,6 +2758,7 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
 
   // GSI: accountId + scheduledAt を利用して候補を取得（content が空、または nextGenerateAt <= now）
   try {
+    console.log('[gen] processPendingGenerationsForAccount start', { userId, accountId: acct.accountId, limit });
     const q = await ddb.send(new QueryCommand({
       TableName: TBL_SCHEDULED,
       IndexName: GSI_SCH_BY_ACC_TIME,
@@ -2769,23 +2770,33 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
     }));
 
     const items = (q.Items || []);
+    console.log('[gen] query returned candidate keys', { count: items.length });
     for (const it of items) {
       if (generated >= limit) break;
       const pk = getS(it.PK) || ''; const sk = getS(it.SK) || '';
+      console.log('[gen] evaluating candidate', { pk, sk });
       const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } } }));
       const rec = unmarshall(full.Item || {});
       const contentEmpty = !rec.content || String(rec.content || '').trim() === '';
+      console.log('[gen] candidate record', { pk, sk, scheduledAt: rec.scheduledAt || null, contentEmpty, nextGenerateAt: rec.nextGenerateAt || null, generateAttempts: rec.generateAttempts || 0, generateLock: rec.generateLock || null });
       // 定期実行は「本文が空のデータ」のみに対して生成を行う
-      if (!contentEmpty) continue;
+      if (!contentEmpty) {
+        console.log('[gen] skip candidate content present', { pk, sk });
+        continue;
+      }
       const nextGen = Number(rec.nextGenerateAt || 0);
       // nextGenerateAt が将来に設定されていればスキップ（バックオフ等）
-      if (nextGen > now) continue;
+      if (nextGen > now) {
+        console.log('[gen] skip candidate nextGenerateAt in future', { pk, sk, nextGen });
+        continue;
+      }
 
       // 条件付きでロックを取得して二重生成を防ぐ
       const lockKey = 'generateLock';
       const lockExpireSec = 60 * 10; // ロック10分
       const expiresAt = now + lockExpireSec;
       try {
+        console.log('[gen] attempting to acquire lock', { pk, sk, worker: `worker:${process.env.AWS_LAMBDA_LOG_STREAM_NAME || 'lambda'}:${now}`, expiresAt });
         await ddb.send(new UpdateItemCommand({
           TableName: TBL_SCHEDULED,
           Key: { PK: { S: pk }, SK: { S: sk } },
@@ -2798,8 +2809,10 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
             ":now": { N: String(now) }
           }
         }));
+        console.log('[gen] lock acquired', { pk, sk });
       } catch (e) {
         // ロック取得失敗 -> 他プロセスで処理中
+        console.log('[gen] lock acquire failed, skipping', { pk, sk, err: String(e) });
         continue;
       }
 
