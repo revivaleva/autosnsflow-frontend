@@ -1135,7 +1135,16 @@ export const handler = async (event: any = {}) => {
               // 実際に生成処理を実行
               const genRes = await processPendingGenerationsForAccount(userId, acct, limit);
 
-              results.push({ accountId: acct.accountId, runGenerate: { generated: genRes.generated || 0, candidates: { now, count: items.length, items: detailed.slice(0, 100) } } });
+              // Return both the processed candidate details and the raw GSI items
+              results.push({
+                accountId: acct.accountId,
+                runGenerate: {
+                  generated: genRes.generated || 0,
+                  candidates: { now, count: items.length, items: detailed.slice(0, 100) },
+                  // raw items as returned by the Query (DynamoDB attribute value shapes)
+                  gsiRaw: q.Items || []
+                }
+              });
             } catch (e) {
               results.push({ accountId: acct.accountId, runGenerate: { error: String(e) } });
             }
