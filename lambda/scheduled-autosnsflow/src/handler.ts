@@ -2029,7 +2029,8 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
       ":now": { N: String(nowSec()) },
     },
     // Keys only でも動くように PK/SK と scheduledAt だけ取得
-    ProjectionExpression: "PK, SK, scheduledAt, postedAt, status",
+    ProjectionExpression: "PK, SK, scheduledAt, postedAt, #st",
+    ExpressionAttributeNames: { "#st": "status" },
     ScanIndexForward: true, // 古い順に見る
     Limit: 50               // 上限を増やして取りこぼしを回避
   }));
