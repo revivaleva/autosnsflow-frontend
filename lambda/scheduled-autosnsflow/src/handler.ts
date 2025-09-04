@@ -1069,7 +1069,7 @@ export const handler = async (event: any = {}) => {
                   IndexName: GSI_NEEDS_BY_NEXTGEN,
                   KeyConditionExpression: "needsContentAccount = :acc AND nextGenerateAt <= :now",
                   ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
-                  ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, generateLock, generateLockedAt",
+                  ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, generateLockedAt",
                   ScanIndexForward: true,
                   Limit: 100
                 }));
@@ -1080,7 +1080,7 @@ export const handler = async (event: any = {}) => {
                   IndexName: GSI_SCH_BY_ACC_TIME,
                   KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
                   ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
-                  ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, generateLock, generateLockedAt",
+                  ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, generateLockedAt",
                   ScanIndexForward: true,
                   Limit: 100
                 }));
@@ -1130,7 +1130,7 @@ export const handler = async (event: any = {}) => {
                   IndexName: GSI_NEEDS_BY_NEXTGEN,
                   KeyConditionExpression: "needsContentAccount = :acc AND nextGenerateAt <= :now",
                   ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
-                  ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, generateLock, generateLockedAt",
+                  ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, generateLockedAt",
                   ScanIndexForward: true,
                   Limit: 100
                 }));
