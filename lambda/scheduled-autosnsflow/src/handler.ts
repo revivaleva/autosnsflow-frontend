@@ -752,13 +752,33 @@ ${themeStr}
     }
 
     // OpenAI 呼び出しは共通ヘルパーを使い、内部でリトライ／フォールバックする
-    const { text } = await callOpenAIText({
-      apiKey: settings.openaiApiKey,
-      model: settings.model || DEFAULT_OPENAI_MODEL,
-      temperature: settings.openAiTemperature ?? DEFAULT_OPENAI_TEMP,
-      max_tokens: settings.openAiMaxTokens ?? DEFAULT_OPENAI_MAXTOKENS,
-      prompt,
-    });
+    let text: any = undefined;
+    try {
+      // log call metadata (do not log API key)
+      try { console.log('[debug] OpenAI call start', { userId, accountId: acct.accountId, scheduledPostId, model: settings.model || DEFAULT_OPENAI_MODEL, temperature: settings.openAiTemperature, max_tokens: settings.openAiMaxTokens }); } catch (_) {}
+      // Log prompt snippet for debugging (truncate to avoid overly long logs)
+      try { console.log('[debug] prompt snippet', (prompt || '').slice(0, 2000)); } catch(_) {}
+
+      const openAiRes = await callOpenAIText({
+        apiKey: settings.openaiApiKey,
+        model: settings.model || DEFAULT_OPENAI_MODEL,
+        temperature: settings.openAiTemperature ?? DEFAULT_OPENAI_TEMP,
+        max_tokens: settings.openAiMaxTokens ?? DEFAULT_OPENAI_MAXTOKENS,
+        prompt,
+      });
+      text = openAiRes?.text;
+
+      // log full response (user requested verbose dump). Be aware of sensitive data in responses.
+      try { console.log('[debug] OpenAI returned length', text ? String(text).length : 0); } catch(_) {}
+      try { console.log('[debug] OpenAI returned text (full):', text); } catch(_) {}
+      // also persist a small trace to ExecutionLogs for easier post-mortem (no full text stored to DB)
+      try { await putLog({ userId, type: 'openai-call', accountId: acct.accountId, targetId: scheduledPostId, status: 'info', message: 'openai_call_complete', detail: { textLength: text ? String(text).length : 0 } }); } catch (_) {}
+    } catch (e) {
+      // record failure and rethrow to be handled by caller
+      try { console.log('[error] OpenAI call failed', String(e)); } catch(_) {}
+      try { await putLog({ userId, type: 'openai-call', accountId: acct.accountId, targetId: scheduledPostId, status: 'error', message: 'openai_call_failed', detail: { error: String(e) } }); } catch (_) {}
+      throw e;
+    }
 
     if (text) {
       // 編集モーダルと同様の処理：プロンプトの指示部分を除去
@@ -791,8 +811,10 @@ ${themeStr}
           UpdateExpression: "SET content = :c, pendingForAutoPostAccount = :acc REMOVE needsContentAccount",
           ExpressionAttributeValues: { ":c": { S: cleanText }, ":acc": { S: acct.accountId } },
         }));
+        try { console.log('[debug] saved generated content', { scheduledPostId, length: cleanText.length }); } catch(_) {}
         await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "ok", message: "本文生成を完了" });
       } else {
+        try { console.log('[warn] generated text invalid or too short', { scheduledPostId, originalLength: text ? String(text).length : 0, cleanedLength: cleanText ? cleanText.length : 0 }); } catch(_) {}
         await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "error", message: "生成されたテキストが不正です", detail: { originalText: text, cleanedText: cleanText } });
       }
     }
