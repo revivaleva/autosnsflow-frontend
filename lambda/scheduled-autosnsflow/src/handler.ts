@@ -34,6 +34,24 @@ const USER_ID = "c7e43ae8-0031-70c5-a8ec-0f7962ee250f";
 const region = process.env.AWS_REGION || "ap-northeast-1";
 const ddb = new DynamoDBClient({ region });
 
+// Wrap ddb.send to automatically alias reserved keyword 'status' in ProjectionExpression
+// This prevents ValidationException when 'status' is used as an attribute name in projections
+{
+  const origSend = ddb.send.bind(ddb);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (ddb as any).send = async function(cmd: any) {
+    try {
+      const input = cmd?.input || cmd;
+      if (input && typeof input.ProjectionExpression === 'string' && /\bstatus\b/.test(input.ProjectionExpression)) {
+        // Ensure ExpressionAttributeNames exists and maps '#st' to 'status'
+        input.ExpressionAttributeNames = Object.assign({}, input.ExpressionAttributeNames || {}, { '#st': 'status' });
+        input.ProjectionExpression = input.ProjectionExpression.replace(/\bstatus\b/g, '#st');
+      }
+    } catch (_) {}
+    return origSend(cmd);
+  };
+}
+
 // Helpers to safely read DynamoDB attribute shapes
 const getS = (a: any) => (a && typeof a.S !== 'undefined') ? a.S : undefined;
 const getN = (a: any) => (a && typeof a.N !== 'undefined') ? a.N : undefined;
