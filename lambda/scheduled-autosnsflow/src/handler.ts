@@ -838,7 +838,63 @@ export const handler = async (event: any = {}) => {
           }
           case "runAutoPost": {
             // テスト時は詳細デバッグ情報を返す
-            const r = await runAutoPostForAccount(acct, userId, settings, true);
+            // たとえ runAutoPostForAccount が早期に戻す場合でも、
+            // 取得した候補やスキップ理由が分かるように追加情報を付与する
+            let r: any = await runAutoPostForAccount(acct, userId, settings, true);
+
+            // runAutoPostForAccount が posted=0 で debug 情報が無ければ、
+            // 補助的にアカウント状況とクエリ結果を収集して debug を付与する
+            if (r && r.posted === 0 && (!r.debug || Object.keys(r.debug || {}).length === 0)) {
+              const assistDebug: any = {
+                acct: {
+                  accountId: acct.accountId,
+                  displayName: acct.displayName,
+                  autoPost: acct.autoPost,
+                  status: acct.status,
+                  providerUserId: acct.providerUserId || null,
+                  hasAccessToken: !!acct.accessToken,
+                  autoGenerate: acct.autoGenerate,
+                },
+                reasonHints: [] as any[],
+              };
+
+              // もし autoPost が無効ならヒントを追加
+              if (!acct.autoPost) assistDebug.reasonHints.push("acct.autoPost is falsy");
+              if (acct.status && acct.status !== "active") assistDebug.reasonHints.push(`account status=${acct.status}`);
+              if (!acct.providerUserId) assistDebug.reasonHints.push("providerUserId missing");
+              if (!acct.accessToken) assistDebug.reasonHints.push("accessToken missing");
+
+              // 予約テーブルのクエリを試みて、対象候補がそもそも存在するかを確認する
+              try {
+                const q2 = await ddb.send(new QueryCommand({
+                  TableName: TBL_SCHEDULED,
+                  IndexName: GSI_SCH_BY_ACC_TIME,
+                  KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
+                  ExpressionAttributeNames: { "#st": "status" },
+                  ExpressionAttributeValues: {
+                    ":acc": { S: acct.accountId },
+                    ":now": { N: String(nowSec()) },
+                  },
+                  ProjectionExpression: "PK, SK, scheduledAt, postedAt, #st, content",
+                  ScanIndexForward: true,
+                  Limit: 50
+                }));
+                assistDebug.qItemsCount = (q2.Items || []).length;
+                // 最初の few items の要約を含める（サイズ制限のためフルは避ける）
+                assistDebug.qItems = (q2.Items || []).slice(0, 6);
+              } catch (e) {
+                assistDebug.qError = String(e);
+              }
+
+              // マージして返却用 debug に突っ込む
+              r.debug = Object.assign(r.debug || {}, assistDebug);
+            }
+
+            // Console にも出力して Lambda の実行ログで確認しやすくする
+            try {
+              console.log('[TEST-OUTPUT] runAutoPost result for', acct.accountId, JSON.stringify(r.debug || r, null, 2));
+            } catch (e) { console.log('[TEST-OUTPUT] runAutoPost result (stringify failed)'); }
+
             results.push({ accountId: acct.accountId, runAutoPost: r });
             break;
           }
