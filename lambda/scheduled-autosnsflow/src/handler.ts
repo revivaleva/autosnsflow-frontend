@@ -642,6 +642,10 @@ async function createScheduledPost(userId: any, { acct, group, type, whenJst, ov
     autoPostGroupId: { S: groupTypeStr },
     theme: { S: themeStr },
     content: { S: "" },
+    // 新: 未投稿かつ本文があるものを GSI に入れるためのフラグ
+    pendingForAutoPost: { BOOL: false },
+    // 新: 本文が未生成のものを示すフラグ（生成対象）
+    needsContent: { BOOL: true },
     scheduledAt: { N: String(toEpochSec(whenJst)) },
     postedAt: { N: "0" },
     status: { S: "scheduled" },
@@ -759,8 +763,9 @@ ${themeStr}
         await ddb.send(new UpdateItemCommand({
           TableName: TBL_SCHEDULED,
           Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${scheduledPostId}` } },
-          UpdateExpression: "SET content = :c",
-          ExpressionAttributeValues: { ":c": { S: cleanText } },
+          // 保存時に本文が入ったので生成フラグを消し、自動投稿候補フラグを立てる
+          UpdateExpression: "SET content = :c, pendingForAutoPost = :pf, needsContent = :nc",
+          ExpressionAttributeValues: { ":c": { S: cleanText }, ":pf": { BOOL: true }, ":nc": { BOOL: false } },
         }));
         await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "ok", message: "本文生成を完了" });
       } else {
