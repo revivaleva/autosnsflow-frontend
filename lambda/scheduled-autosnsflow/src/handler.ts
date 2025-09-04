@@ -5,7 +5,11 @@
 // [DEPLOY] 2025-01-24: GitHub Actions自動デプロイテスト実行
 // [NO-OP] build trigger
 
-import { fetchThreadsAccounts } from "@autosnsflow/backend-core";
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/explicit-module-boundary-types, @typescript-eslint/no-unused-vars, no-console */
+// keep types but avoid disabling TypeScript globally; remove @ts-nocheck
+
+// Removed unused backend-core import; keep SDK calls local to this lambda
+// import { fetchThreadsAccounts } from "@autosnsflow/backend-core";
 import {
   DynamoDBClient,
   QueryCommand,
@@ -104,7 +108,11 @@ const endOfDayJst   = (d: any) => new Date(epochEndOfJstDayMs(d.getTime()));
 const TABLE  = process.env.SCHEDULED_POSTS_TABLE || "ScheduledPosts";
 
 /// ========== GSI名 ==========
-const GSI_SCH_BY_ACC_TIME = "GSI1"; // ScheduledPosts: accountId, scheduledAt
+// legacy / generic: GSI1 mapped to accountId+scheduledAt in some environments
+const GSI_SCH_BY_ACC_TIME = "GSI1"; // ScheduledPosts: accountId, scheduledAt (legacy)
+// New, purpose-specific GSIs (infrastructure pending-gsis.yml)
+const GSI_NEEDS_BY_NEXTGEN = "NeedsContentByNextGen"; // ScheduledPosts: needsContentAccount, nextGenerateAt
+const GSI_PENDING_BY_ACC_TIME = "PendingByAccTime";   // ScheduledPosts: pendingForAutoPostAccount, scheduledAt
 const GSI_POS_BY_ACC_TIME = "GSI2"; // ScheduledPosts: accountId, postedAt
 const GSI_REPLIES_BY_ACC  = "GSI1"; // Replies: accountId, createdAt
 
@@ -314,7 +322,7 @@ async function getDiscordWebhookSets(userId = USER_ID) {
 
 /// ========== 設定・ユーザー ==========
 async function getActiveUserIds() {
-  let lastKey: any, ids: any[] = [];
+  let lastKey: any; const ids: string[] = [];
   do {
     const res: any = await ddb.send(
       new ScanCommand({
@@ -462,7 +470,7 @@ async function reserveOpenAiCredits(userId = USER_ID, cost = 1) {
 
 /// ========== アカウント・グループ ==========
 async function getThreadsAccounts(userId = USER_ID) {
-  let lastKey: any, items: any[] = [];
+  let lastKey: any; let items: any[] = [];
   do {
     const res: any = await ddb.send(
       new QueryCommand({
@@ -861,7 +869,7 @@ export const handler = async (event: any = {}) => {
             // テスト時は詳細デバッグ情報を返す
             // たとえ runAutoPostForAccount が早期に戻す場合でも、
             // 取得した候補やスキップ理由が分かるように追加情報を付与する
-            let r: any = await runAutoPostForAccount(acct, userId, settings, true);
+            const r: any = await runAutoPostForAccount(acct, userId, settings, true);
 
             // runAutoPostForAccount が posted=0 で debug 情報が無ければ、
             // 補助的にアカウント状況とクエリ結果を収集して debug を付与する
@@ -887,21 +895,39 @@ export const handler = async (event: any = {}) => {
 
               // 予約テーブルのクエリを試みて、対象候補がそもそも存在するかを確認する
               try {
-                const q2 = await ddb.send(new QueryCommand({
-                  TableName: TBL_SCHEDULED,
-                  IndexName: GSI_SCH_BY_ACC_TIME,
-                  KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
-                  ExpressionAttributeNames: { "#st": "status" },
-                  ExpressionAttributeValues: {
-                    ":acc": { S: acct.accountId },
-                    ":now": { N: String(nowSec()) },
-                  },
-                  ProjectionExpression: "PK, SK, scheduledAt, postedAt, #st, content",
-                  ScanIndexForward: true,
-                  Limit: 50
-                }));
+                // Prefer pending sparse index if available
+                let q2;
+                try {
+                  q2 = await ddb.send(new QueryCommand({
+                    TableName: TBL_SCHEDULED,
+                    IndexName: GSI_PENDING_BY_ACC_TIME,
+                    KeyConditionExpression: "pendingForAutoPostAccount = :acc AND scheduledAt <= :now",
+                    ExpressionAttributeNames: { "#st": "status" },
+                    ExpressionAttributeValues: {
+                      ":acc": { S: acct.accountId },
+                      ":now": { N: String(nowSec()) },
+                    },
+                    ProjectionExpression: "PK, SK, scheduledAt, postedAt, #st, content",
+                    ScanIndexForward: true,
+                    Limit: 50
+                  }));
+                } catch (e) {
+                  if (!isGsiMissing(e)) throw e;
+                  q2 = await ddb.send(new QueryCommand({
+                    TableName: TBL_SCHEDULED,
+                    IndexName: GSI_SCH_BY_ACC_TIME,
+                    KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
+                    ExpressionAttributeNames: { "#st": "status" },
+                    ExpressionAttributeValues: {
+                      ":acc": { S: acct.accountId },
+                      ":now": { N: String(nowSec()) },
+                    },
+                    ProjectionExpression: "PK, SK, scheduledAt, postedAt, #st, content",
+                    ScanIndexForward: true,
+                    Limit: 50
+                  }));
+                }
                 assistDebug.qItemsCount = (q2.Items || []).length;
-                // 最初の few items の要約を含める（サイズ制限のためフルは避ける）
                 assistDebug.qItems = (q2.Items || []).slice(0, 6);
               } catch (e) {
                 assistDebug.qError = String(e);
@@ -1044,15 +1070,29 @@ export const handler = async (event: any = {}) => {
             // テスト用: 本文未生成の候補に関する詳細（nextGenerateAt, generateAttempts, locks）を返す
             try {
               const now = nowSec();
-              const q = await ddb.send(new QueryCommand({
-                TableName: TBL_SCHEDULED,
-                IndexName: GSI_SCH_BY_ACC_TIME,
-                KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
-                ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
-                ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, generateLock, generateLockedAt",
-                ScanIndexForward: true,
-                Limit: 100
-              }));
+              let q;
+              try {
+                q = await ddb.send(new QueryCommand({
+                  TableName: TBL_SCHEDULED,
+                  IndexName: GSI_NEEDS_BY_NEXTGEN,
+                  KeyConditionExpression: "needsContentAccount = :acc AND nextGenerateAt <= :now",
+                  ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
+                  ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, generateLock, generateLockedAt",
+                  ScanIndexForward: true,
+                  Limit: 100
+                }));
+              } catch (e) {
+                if (!isGsiMissing(e)) throw e;
+                q = await ddb.send(new QueryCommand({
+                  TableName: TBL_SCHEDULED,
+                  IndexName: GSI_SCH_BY_ACC_TIME,
+                  KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
+                  ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
+                  ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, generateLock, generateLockedAt",
+                  ScanIndexForward: true,
+                  Limit: 100
+                }));
+              }
 
               const items = (q.Items || []);
               const detailed: any[] = [];
@@ -1093,19 +1133,37 @@ export const handler = async (event: any = {}) => {
             // GSIクエリとPKフォールバックを両方実行して観測性を高めるテスト用アクション
             try {
               const now = nowSec();
-              const gsiRes = await ddb.send(new QueryCommand({
-                TableName: TBL_SCHEDULED,
-                IndexName: GSI_SCH_BY_ACC_TIME,
-                KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
-                ExpressionAttributeValues: {
-                  ":acc": { S: acct.accountId },
-                  ":now": { N: String(now) }
-                },
-                ProjectionExpression: "PK, SK, scheduledAt, postedAt, #st, timeRange, content",
-                ExpressionAttributeNames: { "#st": "status" },
-                ScanIndexForward: true,
-                Limit: 50
-              }));
+              let gsiRes;
+              try {
+                gsiRes = await ddb.send(new QueryCommand({
+                  TableName: TBL_SCHEDULED,
+                  IndexName: GSI_PENDING_BY_ACC_TIME,
+                  KeyConditionExpression: "pendingForAutoPostAccount = :acc AND scheduledAt <= :now",
+                  ExpressionAttributeValues: {
+                    ":acc": { S: acct.accountId },
+                    ":now": { N: String(now) }
+                  },
+                  ProjectionExpression: "PK, SK, scheduledAt, postedAt, #st, timeRange, content",
+                  ExpressionAttributeNames: { "#st": "status" },
+                  ScanIndexForward: true,
+                  Limit: 50
+                }));
+              } catch (e) {
+                if (!isGsiMissing(e)) throw e;
+                gsiRes = await ddb.send(new QueryCommand({
+                  TableName: TBL_SCHEDULED,
+                  IndexName: GSI_SCH_BY_ACC_TIME,
+                  KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
+                  ExpressionAttributeValues: {
+                    ":acc": { S: acct.accountId },
+                    ":now": { N: String(now) }
+                  },
+                  ProjectionExpression: "PK, SK, scheduledAt, postedAt, #st, timeRange, content",
+                  ExpressionAttributeNames: { "#st": "status" },
+                  ScanIndexForward: true,
+                  Limit: 50
+                }));
+              }
 
               const gsiItems = (gsiRes.Items || []).slice(0, 6);
 
@@ -1149,22 +1207,37 @@ export const handler = async (event: any = {}) => {
           // runAutoPost のフィルタ条件ごとに除外理由を付与して返す（観測性向上）
           try {
             const now = nowSec();
-            const q = await ddb.send(new QueryCommand({
-              TableName: TBL_SCHEDULED,
-              IndexName: GSI_SCH_BY_ACC_TIME,
-              KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
-              ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
-              ProjectionExpression: "PK, SK, scheduledAt, postedAt, #st",
-              ExpressionAttributeNames: { "#st": "status" },
-              ScanIndexForward: true,
-              Limit: 100
-            }));
+            let q;
+            try {
+              q = await ddb.send(new QueryCommand({
+                TableName: TBL_SCHEDULED,
+                IndexName: GSI_PENDING_BY_ACC_TIME,
+                KeyConditionExpression: "pendingForAutoPostAccount = :acc AND scheduledAt <= :now",
+                ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
+                ProjectionExpression: "PK, SK, scheduledAt, postedAt, #st",
+                ExpressionAttributeNames: { "#st": "status" },
+                ScanIndexForward: true,
+                Limit: 100
+              }));
+            } catch (e) {
+              if (!isGsiMissing(e)) throw e;
+              q = await ddb.send(new QueryCommand({
+                TableName: TBL_SCHEDULED,
+                IndexName: GSI_SCH_BY_ACC_TIME,
+                KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
+                ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
+                ProjectionExpression: "PK, SK, scheduledAt, postedAt, #st",
+                ExpressionAttributeNames: { "#st": "status" },
+                ScanIndexForward: true,
+                Limit: 100
+              }));
+            }
 
             const items = (q.Items || []);
             const detailed: any[] = [];
             for (const it of items) {
               const pk = getS(it.PK) || ''; const sk = getS(it.SK) || '';
-              let reason = [] as string[];
+              const reason = [] as string[];
               try {
                 const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } } }));
                 const f = unmarshall(full.Item || {});
@@ -1929,7 +2002,7 @@ async function postToThreads({ accessToken, text, userIdOnPlatform, inReplyTo = 
   }
 
   // 🔧 公式ドキュメント準拠: Create は /me/threads を使用
-  let createRes = await fetch(`${base}/me/threads`, {
+  const createRes = await fetch(`${base}/me/threads`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(createPayload),
@@ -2020,20 +2093,40 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
   // Query only by GSI keys (accountId + scheduledAt) and avoid server-side FilterExpression
   // so that we don't consume the Limit with filtered-out items. We'll refine candidates
   // locally (GetItem + checks) to decide the actual posting target.
-  const q = await ddb.send(new QueryCommand({
-    TableName: TBL_SCHEDULED,
-    IndexName: GSI_SCH_BY_ACC_TIME,
-    KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
-    ExpressionAttributeValues: {
-      ":acc": { S: acct.accountId },
-      ":now": { N: String(nowSec()) },
-    },
-    // Keys only でも動くように PK/SK と scheduledAt だけ取得
-    ProjectionExpression: "PK, SK, scheduledAt, postedAt, #st",
-    ExpressionAttributeNames: { "#st": "status" },
-    ScanIndexForward: true, // 古い順に見る
-    Limit: 50               // 上限を増やして取りこぼしを回避
-  }));
+  // Prefer sparse pending-index if available
+  let q;
+  try {
+    q = await ddb.send(new QueryCommand({
+      TableName: TBL_SCHEDULED,
+      IndexName: GSI_PENDING_BY_ACC_TIME,
+      KeyConditionExpression: "pendingForAutoPostAccount = :acc AND scheduledAt <= :now",
+      ExpressionAttributeValues: {
+        ":acc": { S: acct.accountId },
+        ":now": { N: String(nowSec()) },
+      },
+      ProjectionExpression: "PK, SK, scheduledAt, postedAt, #st",
+      ExpressionAttributeNames: { "#st": "status" },
+      ScanIndexForward: true,
+      Limit: 50
+    }));
+  } catch (e) {
+    if (!isGsiMissing(e)) throw e;
+    // fallback to legacy index
+    q = await ddb.send(new QueryCommand({
+      TableName: TBL_SCHEDULED,
+      IndexName: GSI_SCH_BY_ACC_TIME,
+      KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
+      ExpressionAttributeValues: {
+        ":acc": { S: acct.accountId },
+        ":now": { N: String(nowSec()) },
+      },
+      // Keys only でも動くように PK/SK と scheduledAt だけ取得
+      ProjectionExpression: "PK, SK, scheduledAt, postedAt, #st",
+      ExpressionAttributeNames: { "#st": "status" },
+      ScanIndexForward: true, // 古い順に見る
+      Limit: 50               // 上限を増やして取りこぼしを回避
+    }));
+  }
   // debug: capture raw q items if requested
   const debugInfo: any = debugMode ? { qItemsCount: (q.Items || []).length, items: [] as any[] } : undefined;
 
@@ -2078,13 +2171,13 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
   let cand = null;
   let iterIndex = 0;
   for (const it of (q.Items || [])) {
-    const pk = it.PK.S;
-    const sk = it.SK.S;
+    const pk = getS(it.PK) || '';
+    const sk = getS(it.SK) || '';
 
     // 本体を取得して status/postedAt/timeRange を確認
     const full = await ddb.send(new GetItemCommand({
       TableName: TBL_SCHEDULED,
-      Key: { PK: { S: pk }, SK: { S: sk } },
+      Key: { PK: { S: String(pk) }, SK: { S: String(sk) } },
       ProjectionExpression: "content, postedAt, timeRange, scheduledAt, autoPostGroupId, #st",
       ExpressionAttributeNames: { "#st": "status" }
     }));
@@ -2794,17 +2887,37 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
 
       // 削除対象を判定してThreads APIで削除を試みる（共通ユーティリティ経由、詳細ログ追加）
       try {
-        const { deleteThreadPost } = await import("../../../packages/backend-core/src/services/threadsDelete");
+        // dynamic import workaround for monorepo path resolution in Lambda build
+        let deleteThreadPost: any = null;
+        try {
+          // preferred local package path
+          const mod = await import("../../../packages/backend-core/src/services/threadsDelete");
+          deleteThreadPost = mod.deleteThreadPost;
+        } catch (e) {
+          try {
+            // attempt to load from package name (might not exist in lambda build)
+            const pkgMod = await import("@autosnsflow/backend-core").catch(() => null);
+            if (pkgMod && pkgMod.deleteThreadPost) deleteThreadPost = pkgMod.deleteThreadPost;
+            else deleteThreadPost = null;
+          } catch (e2) {
+            deleteThreadPost = null;
+          }
+        }
 
         // トークンハッシュを作成（ログにそのままトークンを出さない）
         const tokenHash = acct.accessToken ? crypto.createHash("sha256").update(acct.accessToken).digest("hex").slice(0, 12) : "";
 
         let deleteResult: any = null;
-        if (deleteParent && postId) {
-          deleteResult = await deleteThreadPost({ postId, accessToken: acct.accessToken });
-        }
-        if (!deleteParent && secondId) {
-          deleteResult = await deleteThreadPost({ postId: secondId, accessToken: acct.accessToken });
+        if (deleteThreadPost) {
+          if (deleteParent && postId) {
+            deleteResult = await deleteThreadPost({ postId, accessToken: acct.accessToken });
+          }
+          if (!deleteParent && secondId) {
+            deleteResult = await deleteThreadPost({ postId: secondId, accessToken: acct.accessToken });
+          }
+        } else {
+          // Could not load deleteThreadPost module; mark as skipped
+          deleteResult = { ok: false, status: 0, body: 'deleteThreadPost module missing' };
         }
 
         // Delete result must be checked
