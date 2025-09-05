@@ -1406,6 +1406,23 @@ export const handler = async (event: any = {}) => {
           }
           break;
         }
+        case "getScheduledPost": {
+          // Return full scheduled post item for given PK/SK or scheduledPostId (for debugging)
+          try {
+            const pk = event.pk || `USER#${userId}`;
+            const sk = event.sk || (event.scheduledPostId ? `SCHEDULEDPOST#${event.scheduledPostId}` : null);
+            if (!pk || !sk) {
+              results.push({ accountId: acct.accountId, getScheduledPost: { error: 'missing pk/sk or scheduledPostId' } });
+              break;
+            }
+            const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } } }));
+            const rec = unmarshall(full.Item || {});
+            results.push({ accountId: acct.accountId, getScheduledPost: { found: !!full.Item, item: rec } });
+          } catch (e) {
+            results.push({ accountId: acct.accountId, getScheduledPost: { error: String(e) } });
+          }
+          break;
+        }
           default:
             results.push({ accountId: acct?.accountId || "-", error: "unknown action" });
         }
