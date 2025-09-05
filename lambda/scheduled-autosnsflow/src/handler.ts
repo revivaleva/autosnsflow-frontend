@@ -1099,14 +1099,14 @@ export const handler = async (event: any = {}) => {
                 }));
               } catch (e) {
                 if (!isGsiMissing(e)) throw e;
+                // Fallback: scan user's PK-prefixed scheduled posts instead of relying on legacy GSI
                 q = await ddb.send(new QueryCommand({
                   TableName: TBL_SCHEDULED,
-                  IndexName: GSI_SCH_BY_ACC_TIME,
-                  KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
-                  ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
-                  ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, generateLockedAt",
+                  KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+                  ExpressionAttributeValues: { ":pk": { S: `USER#${userId}` }, ":pfx": { S: "SCHEDULEDPOST#" } },
+                  ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, needsContentAccount",
                   ScanIndexForward: true,
-                  Limit: 100
+                  Limit: 200
                 }));
               }
 
@@ -1171,14 +1171,14 @@ export const handler = async (event: any = {}) => {
                 }));
               } catch (e) {
                 if (!isGsiMissing(e)) throw e;
+                // Fallback: use PK query to enumerate user's scheduled posts
                 q = await ddb.send(new QueryCommand({
                   TableName: TBL_SCHEDULED,
-                  IndexName: GSI_SCH_BY_ACC_TIME,
-                  KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
-                  ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
-                  ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, generateLockedAt",
+                  KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+                  ExpressionAttributeValues: { ":pk": { S: `USER#${userId}` }, ":pfx": { S: "SCHEDULEDPOST#" } },
+                  ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, needsContentAccount",
                   ScanIndexForward: true,
-                  Limit: limit
+                  Limit: limit * 2
                 }));
               }
 
