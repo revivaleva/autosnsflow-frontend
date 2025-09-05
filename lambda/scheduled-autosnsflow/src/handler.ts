@@ -2870,12 +2870,28 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
 
     const items = (q.Items || []);
     console.log('[gen] query returned candidate keys', { count: items.length });
+
+    // Prefetch full items so we can sort by scheduledAt (oldest first)
+    const candidates: any[] = [];
     for (const it of items) {
+      const pk = getS(it.PK) || '';
+      const sk = getS(it.SK) || '';
+      try {
+        const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } } }));
+        const rec = unmarshall(full.Item || {});
+        candidates.push({ pk, sk, rec });
+      } catch (e) {
+        console.log('[gen] prefetch GetItem failed', { pk, sk, err: String(e) });
+      }
+    }
+
+    // Sort by scheduledAt ascending (oldest first)
+    candidates.sort((a, b) => Number(a.rec?.scheduledAt || 0) - Number(b.rec?.scheduledAt || 0));
+
+    for (const c of candidates) {
       if (generated >= limit) break;
-      const pk = getS(it.PK) || ''; const sk = getS(it.SK) || '';
+      const pk = c.pk; const sk = c.sk; const rec = c.rec || {};
       console.log('[gen] evaluating candidate', { pk, sk });
-      const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } } }));
-      const rec = unmarshall(full.Item || {});
       const contentEmpty = !rec.content || String(rec.content || '').trim() === '';
       console.log('[gen] candidate record', { pk, sk, scheduledAt: rec.scheduledAt || null, contentEmpty, nextGenerateAt: rec.nextGenerateAt || null, generateAttempts: rec.generateAttempts || 0, generateLock: rec.generateLock || null });
       // 定期実行は「本文が空のデータ」のみに対して生成を行う
@@ -2910,12 +2926,11 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
         }));
         console.log('[gen] lock acquired', { pk, sk });
       } catch (e) {
-        // ロック取得失敗 -> 他プロセスで処理中
         console.log('[gen] lock acquire failed, skipping', { pk, sk, err: String(e) });
         continue;
       }
 
-      // 生成処理（既存の generateAndAttachContent と同等の処理を呼ぶ）
+      // 生成処理
       try {
         await generateAndAttachContent(userId, acct, sk.replace(/^SCHEDULEDPOST#/, ''), rec.theme || '', await getUserSettings(userId));
         generated++;
@@ -2930,7 +2945,7 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
         }));
       }
 
-      // 正常終了または失敗後にロックをクリア（成功時は generateAndAttachContent 内で content を更新しているはず）
+      // 正常終了または失敗後にロックをクリア
       try {
         await ddb.send(new UpdateItemCommand({
           TableName: TBL_SCHEDULED,
