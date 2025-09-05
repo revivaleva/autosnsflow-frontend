@@ -670,6 +670,8 @@ async function createScheduledPost(userId: any, { acct, group, type, whenJst, ov
     content: { S: "" },
     // スパースGSI用の属性（候補のみインデックスされるよう、候補時に文字列で accountId を保存）
     needsContentAccount: { S: acct.accountId },
+    // nextGenerateAt を明示的に0にして GSI に入るようにする
+    nextGenerateAt: { N: "0" },
     scheduledAt: { N: String(toEpochSec(whenJst)) },
     postedAt: { N: "0" },
     status: { S: "scheduled" },
