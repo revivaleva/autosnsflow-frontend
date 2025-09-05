@@ -1441,7 +1441,11 @@ export const handler = async (event: any = {}) => {
     for (const uid of userIds) {
       try {
         const r = await runHourlyJobForUser(uid);
-        // ……合算……
+        // 合算: runHourlyJobForUser が返す集計を totals に反映
+        totals.createdCount += Number(r?.createdCount || 0);
+        totals.fetchedReplies += Number(r?.fetchedReplies || 0);
+        totals.replyDrafts += Number(r?.replyDrafts || 0);
+        totals.skippedAccounts += Number(r?.skippedAccounts || 0);
         userSucceeded++;
       } catch (e) {
         console.log("hourly error for", uid, e);
@@ -1477,7 +1481,11 @@ export const handler = async (event: any = {}) => {
   for (const uid of userIds) {
     try {
       const r = await runFiveMinJobForUser(uid);
-      // ……合算……
+      // 合算: runFiveMinJobForUser の結果を totals に反映
+      totals.totalAuto += Number(r?.totalAuto || 0);
+      totals.totalReply += Number(r?.totalReply || 0);
+      totals.totalTwo += Number(r?.totalTwo || 0);
+      totals.rateSkipped += Number(r?.rateSkipped || 0);
       userSucceeded++;
     } catch (e) {
       console.log("5min error for", uid, e);
