@@ -60,8 +60,9 @@ async function run() {
         await ddb.send(new UpdateItemCommand({
           TableName: TABLE,
           Key: { PK: { S: pk }, SK: { S: sk } },
-          UpdateExpression: 'SET needsContentAccount = :acc',
-          ExpressionAttributeValues: { ':acc': { S: String(accountId) } }
+          // set needsContentAccount and ensure nextGenerateAt exists (0) so item is indexed by NeedsContentByNextGen
+          UpdateExpression: 'SET needsContentAccount = :acc, nextGenerateAt = if_not_exists(nextGenerateAt, :zero)',
+          ExpressionAttributeValues: { ':acc': { S: String(accountId) }, ':zero': { N: '0' } }
         }));
         updated++;
         console.log('updated', { pk, sk, accountId });
