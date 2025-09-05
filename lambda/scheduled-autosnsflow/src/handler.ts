@@ -1303,8 +1303,7 @@ export const handler = async (event: any = {}) => {
                     ":acc": { S: acct.accountId },
                     ":now": { N: String(now) }
                   },
-                  ProjectionExpression: "PK, SK, scheduledAt, postedAt, #st, timeRange, content",
-                  ExpressionAttributeNames: { "#st": "status" },
+                  ProjectionExpression: "PK, SK, scheduledAt, postedAt, timeRange, content",
                   ScanIndexForward: true,
                   Limit: 50
                 }));
@@ -1359,8 +1358,7 @@ export const handler = async (event: any = {}) => {
                 IndexName: GSI_PENDING_BY_ACC_TIME,
                 KeyConditionExpression: "pendingForAutoPostAccount = :acc AND scheduledAt <= :now",
                 ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
-                ProjectionExpression: "PK, SK, scheduledAt, postedAt, #st",
-                ExpressionAttributeNames: { "#st": "status" },
+                ProjectionExpression: "PK, SK, scheduledAt, postedAt",
                 ScanIndexForward: true,
                 Limit: 100
               }));
@@ -1371,8 +1369,7 @@ export const handler = async (event: any = {}) => {
                 IndexName: GSI_SCH_BY_ACC_TIME,
                 KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
                 ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
-                ProjectionExpression: "PK, SK, scheduledAt, postedAt, #st",
-                ExpressionAttributeNames: { "#st": "status" },
+                ProjectionExpression: "PK, SK, scheduledAt, postedAt",
                 ScanIndexForward: true,
                 Limit: 100
               }));
