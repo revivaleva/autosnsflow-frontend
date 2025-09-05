@@ -62,6 +62,11 @@ export default function SNSAccountsTable() {
       }
       
       let accounts = (data.items ?? data.accounts) ?? [];
+      // If a search filter is present in localStorage (for local testing), apply it
+      try {
+        const filterId = localStorage.getItem('accounts.filterId') || '';
+        if (filterId) accounts = accounts.filter((a: any) => String(a.accountId || a.username || '').includes(filterId));
+      } catch {}
       // 登録日(createdAt)の降順でソート（新しい順）
       accounts = accounts.sort((a: any, b: any) => (b.createdAt || 0) - (a.createdAt || 0));
       console.log("Parsed accounts:", accounts); // [DEBUG]

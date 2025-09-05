@@ -520,6 +520,16 @@ export default function ScheduledPostsTable() {
             </option>
           ))}
         </select>
+        <select
+          className="border rounded p-1"
+          value={accountFilter}
+          onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setAccountFilter(e.target.value)}
+        >
+          <option value="">全てのアカウント</option>
+          {accountIds.map((id) => (
+            <option key={id} value={id}>{id}</option>
+          ))}
+        </select>
         <button
           className="border rounded px-2 py-1"
           onClick={() => {
@@ -738,7 +748,8 @@ export default function ScheduledPostsTable() {
                     {/* 即時二段階投稿ボタン */}
                     {post.status === "posted" && 
                      post.doublePostStatus === "waiting" && 
-                     !post.isDeleted && (
+                     !post.isDeleted && 
+                     (post.secondStageWanted !== false) && ( // hide button if explicitly '投稿無し'
                       <button
                         className={`text-white px-2 py-1 rounded text-xs ${
                           secondStagePostingId === post.scheduledPostId 
