@@ -2838,6 +2838,8 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
   try {
     console.log('[gen] processPendingGenerationsForAccount start', { userId, accountId: acct.accountId, limit });
     let q;
+    // fetchLimit: how many candidates to fetch from GSI/PK before sorting and applying the user-requested `limit`
+    const fetchLimit = Math.max(Number(limit) * 10, 100);
     try {
       q = await ddb.send(new QueryCommand({
         TableName: TBL_SCHEDULED,
@@ -2846,7 +2848,7 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
         ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
         ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, generateLockedAt",
         ScanIndexForward: true,
-        Limit: 50
+        Limit: fetchLimit
       }));
     } catch (e) {
       // If the sparse GSI is missing, emit notification and fall back to legacy index
@@ -2864,7 +2866,7 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
         ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
         ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts",
         ScanIndexForward: true,
-        Limit: 50
+        Limit: fetchLimit
       }));
     }
 
