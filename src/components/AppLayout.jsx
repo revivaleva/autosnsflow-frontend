@@ -50,7 +50,28 @@ export default function AppLayout({ children }) {
       if (e.key === "isAdmin") setIsAdmin(getAdminFlag());
     };
     window.addEventListener("storage", onStorage);
+    // 4) ユーザー操作でセッションキープアライブ
+    let lastActivity = Date.now();
+    const updateActivity = () => { lastActivity = Date.now(); };
+    const keepAlive = async () => {
+      try {
+        const idle = Date.now() - lastActivity;
+        // アクティブなら毎5分ごとにkeepaliveを叩く
+        if (idle < 5 * 60 * 1000) {
+          await fetch('/api/auth/keepalive', { method: 'POST', credentials: 'include' }).catch(() => {});
+        }
+      } catch {}
+    };
+    window.addEventListener('mousemove', updateActivity);
+    window.addEventListener('keydown', updateActivity);
+    window.addEventListener('touchstart', updateActivity);
+    const kaInterval = setInterval(keepAlive, 5 * 60 * 1000);
     return () => window.removeEventListener("storage", onStorage);
+    // cleanup
+    window.removeEventListener('mousemove', updateActivity);
+    window.removeEventListener('keydown', updateActivity);
+    window.removeEventListener('touchstart', updateActivity);
+    clearInterval(kaInterval);
   }, [pathname]);
 
   // これがログアウトボタンの onClick で呼ばれる想定

@@ -306,6 +306,24 @@ export default function SNSAccountModal({
           body: JSON.stringify({ accountId: originalAccountId }),
         });
       }
+      // 新規作成時: 同一 accountId の存在チェック
+      if (mode === "create") {
+        try {
+          const checkRes = await fetch(`/api/threads-accounts`, { credentials: "include" });
+          if (checkRes.ok) {
+            const checkData = await checkRes.json();
+            const existing = (checkData.items || checkData.accounts || []).find((a: any) => String(a.accountId || a.username || "") === String(accountId));
+            if (existing) {
+              setError("既に登録されたアカウントです");
+              setSaving(false);
+              return;
+            }
+          }
+        } catch (e) {
+          // チェック失敗は無視して続行（APIエラーがある場合は後続のConditionExpressionで弾かれる）
+          console.log("dup-check failed:", e);
+        }
+      }
       const method = mode === "create" ? "POST" : "PUT";
       const res = await fetch("/api/threads-accounts", {
         method,
