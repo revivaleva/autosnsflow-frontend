@@ -29,7 +29,8 @@ type ScheduleType = { start: string; end: string; theme: string };
 type GroupModalProps = {
   open: boolean;
   onClose: () => void;
-  onSave: (group: AutoPostGroupType) => void;
+  // onSave may receive optional copySource when creating a new group
+  onSave: (group: AutoPostGroupType, copySource?: string) => void;
   group: AutoPostGroupType | null;
   groups: AutoPostGroupType[];
 };
@@ -122,7 +123,8 @@ function GroupModal({
           <button
             className="bg-blue-500 text-white px-6 py-2 rounded hover:bg-blue-600"
             onClick={() => {
-              onSave({ ...(isEdit && group ? { groupKey: group.groupKey } : {}), groupName } as AutoPostGroupType);
+              // pass copySource to onSave when creating new group
+              onSave({ ...(isEdit && group ? { groupKey: group.groupKey } : {}), groupName } as AutoPostGroupType, copySource || undefined);
               onClose();
             }}
             disabled={!groupName.trim()}
@@ -205,10 +207,13 @@ export default function AutoPostGroupsEditor() {
     }
   };
 
-  const handleSave = async (group: AutoPostGroupType) => {
+  // handleSave may receive optional copySource (when creating new group via modal)
+  const handleSave = async (group: AutoPostGroupType, copySource?: string) => {
+    const isCreate = !group.groupKey;
     const method = group.groupKey ? "PUT" : "POST";
+    const newGroupKey = group.groupKey || `GROUP#${Date.now()}`;
     const body = {
-      groupKey: group.groupKey || `GROUP#${Date.now()}`,
+      groupKey: newGroupKey,
       groupName: group.groupName,
       time1: "", theme1: "", time2: "", theme2: "", time3: "", theme3: "",
     };
@@ -219,11 +224,39 @@ export default function AutoPostGroupsEditor() {
       body: JSON.stringify(body),
     });
     const data = await res.json();
-    if (data.success) {
-      loadGroups();
-    } else {
+    if (!data.success) {
       alert("保存に失敗: " + (data.error || ""));
+      return;
     }
+
+    // If creating a new group and copySource is provided, duplicate slots from source
+    if (isCreate && copySource) {
+      try {
+        const r = await fetch(`${API_ITEMS}?groupKey=${encodeURIComponent(copySource)}`, { credentials: "include" });
+        if (r.ok) {
+          const j = await r.json();
+          const items = (j.items || []) as any[];
+          for (let i = 0; i < items.length; i++) {
+            const it = items[i];
+            const payload: any = {
+              groupKey: newGroupKey,
+              slotId: `CLONE#${Date.now()}${i}`,
+              order: i,
+              timeRange: it.timeRange || "",
+              theme: it.theme || "",
+              enabled: typeof it.enabled !== 'undefined' ? !!it.enabled : true,
+              secondStageWanted: !!it.secondStageWanted,
+            };
+            await fetch(API_ITEMS, { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify(payload) });
+          }
+        }
+      } catch (e) {
+        console.log("group clone failed:", e);
+      }
+    }
+
+    // reload groups after save/clone
+    loadGroups();
   };
 
   return (
