@@ -37,20 +37,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           continue;
         }
 
-        // Threads 側削除（実装は lib/threads-delete に委譲）
-        try {
-          await deleteThreadsPost({ postId, accountId, userId });
-        } catch (e: any) {
-          // 削除失敗はログにして status を update で記録
-          await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${id}` } }, UpdateExpression: 'SET deleteAttemptFailed = :t', ExpressionAttributeValues: { ':t': { BOOL: true } } }));
-          results.push({ id, ok: false, error: 'threads_delete_failed' });
-          continue;
-        }
-
-        // Threads 側削除成功 → DBは論理削除にする
+        // 投稿済みでも実API削除は行わず、論理削除のみを行う
         const now = Math.floor(Date.now() / 1000);
         await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${id}` } }, UpdateExpression: 'SET isDeleted = :d, deletedAt = :ts', ExpressionAttributeValues: { ':d': { BOOL: true }, ':ts': { N: String(now) } } }));
-        results.push({ id, ok: true });
+        results.push({ id, ok: true, deleted: false });
       } catch (e: any) {
         results.push({ id, ok: false, error: e?.message || String(e) });
       }

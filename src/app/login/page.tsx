@@ -112,9 +112,10 @@ export default function LoginPage() {
 
         <button
           type="submit"
-          className="w-full rounded-lg bg-black px-4 py-2 font-medium text-white hover:opacity-90"
+          disabled={loggingIn}
+          className={`w-full rounded-lg px-4 py-2 font-medium text-white focus:outline-none focus:ring-2 focus:ring-offset-2 ${loggingIn ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-400'}`}
         >
-          ログイン
+          {loggingIn ? "ログイン中…" : "ログイン"}
         </button>
 
         {/* [ADD] アカウント作成 */}

@@ -1,0 +1,13 @@
+{
+    "Item": {
+        "autoPost": {
+            "BOOL": true
+        },
+        "autoPostAdminStop": {
+            "BOOL": false
+        },
+        "openaiApiKey": {
+            "S": " [REDACTED]"
+        }
+    }
+}

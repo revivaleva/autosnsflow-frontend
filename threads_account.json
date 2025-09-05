@@ -1,0 +1,40 @@
+{
+    "Item": {
+        "PK": {
+            "S": "USER#c7e43ae8-0031-70c5-a8ec-0f7962ee250f"
+        },
+        "accessToken": {
+            "S": "THAATtqpbDcBtBUVJoLUw5azl6RHpXTFl0cG82SmNxUlZATSld3Sk5xNG5JWmpHMXA3Wk9qYUQ0M0xDUFRWdnBsM2pjY2ZA4T2RvVWtvNlBhR2liYzlLbWFuSDQxTEQ5QXdFOFFWcjNyY2tCdVlDSVVIZAWFhbDJuQWljcXExTUgyTWxrS3VzdHM5UGIxWENhTU0ZD"
+        },
+        "autoGenerate": {
+            "BOOL": true
+        },
+        "autoPost": {
+            "BOOL": true
+        },
+        "autoPostGroupId": {
+            "S": "GROUP#1755071475179"
+        },
+        "autoReply": {
+            "BOOL": true
+        },
+        "createdAt": {
+            "N": "1754718917"
+        },
+        "displayName": {
+            "S": "�e�X�g�p�A�J�E���g"
+        },
+        "personaDetail": {
+            "S": "{\"name\":\"����\",\"age\":\"32\",\"gender\":\"����\",\"job\":\"�L���o��\",\"lifestyle\":\"��̓i�C�g���[�N�A���Ԃ͎�ɋx����SNS����\",\"character\":\"�����Ƃ肵�Ă��āA���܎q�����ۂ���������\",\"tone\":\"���炩���A�Â�������Ȍ���\",\"vocab\":\"��Ҍ��t�������A���܁A��l�т����t����\",\"emotion\":\"��{�I�ɂ͈��g�����薾�邢���A�[��ɂ̓Z���V���A���Ȉ�ʂ�\",\"erotic\":\"���ړI�ł͂Ȃ��A�ق̂��ɐF�C������������\��\",\"target\":\"20��㔼����40��̒j��\",\"purpose\":\"���g�̖��͂����������C���t���G���T�[�����A�t�@���̊l��\",\"distance\":\"�e���݂₷���������A������x�̋�������ێ�����\",\"ng\":\"�ߓx�ȘI�o�≺�i�ȕ\���͔�����\"}"
+        },
+        "personaMode": {
+            "S": "detail"
+        },
+        "personaSimple": {
+            "S": "30�㏗���L���o��ł����Ƃ�Ƃ������i�Ə����q�����ۂ��b����������A��͎d���Œ��Ɛ[��̓I�����C���Ŋ����B"
+        },
+        "providerUserId": {
+            "S": "9970238156413660"
+        },
+        "secondStageContent": {
+            "S": 

@@ -3,6 +3,7 @@ name: Deploy Scheduled Lambda
 on:
   push:
     branches: ["lambda"]
+  workflow_dispatch: {}
 
 jobs:
   deploy:

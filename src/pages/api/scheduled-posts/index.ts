@@ -301,83 +301,19 @@ export default async function handler(
           return;
         }
 
-        // 投稿済みの場合は Threads API を呼んで実投稿を削除し、論理削除を行う
-        try {
-          // アカウントのアクセストークンを取得
-          let accessToken = "";
-          if (accountId) {
-            const acc = await ddb.send(new GetItemCommand({ TableName: "ThreadsAccounts", Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } }, ProjectionExpression: "accessToken" }));
-            accessToken = acc.Item?.accessToken?.S || "";
-          }
-
-          // 削除対象は numericPostId のみ許可。存在しない場合はエラーログを残して終了
-          const numericId = existing.Item?.numericPostId?.S || "";
-          if (!numericId || !/^\d+$/.test(numericId)) {
-            await putLog({
-              userId,
-              type: "manual-delete-threads",
-              accountId: accountId || "",
-              targetId: key.SK.S || "",
-              status: "error",
-              message: "numericPostId missing or invalid - cannot delete",
-              detail: { scheduledPostId: body.scheduledPostId, numericPostId: numericId },
-            });
-            res.status(400).json({ ok: false, error: "numericPostId_missing_or_invalid" });
-            return;
-          }
-
-          const deleteTargetId = numericId;
-
-          if (deleteTargetId && accessToken) {
-            // Threads の投稿削除を試みる（共通ユーティリティを利用）
-            try {
-              const { deleteThreadPost } = await import("@/../packages/backend-core/src/services/threadsDelete");
-              const result = await deleteThreadPost({ postId: deleteTargetId, accessToken });
-
-              // ログに出すためアクセストークンのハッシュを作成（漏洩防止）
-              const tokenHash = crypto.createHash("sha256").update(accessToken || "").digest("hex").slice(0, 12);
-
-              // 成功/失敗いずれも詳細ログを残す
-              await putLog({
-                userId,
-                type: "manual-delete-threads",
-                accountId: accountId || "",
-                targetId: key.SK.S || "",
-                status: result.ok ? "ok" : "error",
-                message: result.ok ? "Threads delete attempted" : "Threads delete failed",
-                detail: {
-                  postId: deleteTargetId,
-                  statusCode: result.status,
-                  bodySnippet: (result.body || "").slice(0, 1000),
-                  accessTokenHash: tokenHash,
-                  initiatedBy: "api-manual",
-                },
-              });
-
-              if (!result.ok) {
-                throw new Error(`threads delete failed: ${result.status} ${result.body}`);
-              }
-            } catch (e) {
-              throw e;
-            }
-          }
-
-          const now = Math.floor(Date.now() / 1000);
-          await ddb.send(
-            new UpdateItemCommand({
-              TableName: TBL_SCHEDULED,
-              Key: key,
-              UpdateExpression: "SET isDeleted = :t, deletedAt = :ts",
-              ExpressionAttributeValues: { ":t": { BOOL: true }, ":ts": { N: String(now) } },
-            })
-          );
-          res.status(200).json({ ok: true, deleted: true, deletedAt: Math.floor(Date.now() / 1000) });
-          return;
-        } catch (e: any) {
-          console.error("failed to delete posted thread:", e);
-          res.status(500).json({ ok: false, error: String(e) });
-          return;
-        }
+        // 投稿済みの場合は Threads API を呼ばず、サーバ側では論理削除のみ行う
+        // （実投稿の削除は行わない。フロントはデフォルトで論理削除済を非表示にしているため即時一覧から消える）
+        const now = Math.floor(Date.now() / 1000);
+        await ddb.send(
+          new UpdateItemCommand({
+            TableName: TBL_SCHEDULED,
+            Key: key,
+            UpdateExpression: "SET isDeleted = :t, deletedAt = :ts",
+            ExpressionAttributeValues: { ":t": { BOOL: true }, ":ts": { N: String(now) } },
+          })
+        );
+        res.status(200).json({ ok: true, deleted: false, deletedAt: now });
+        return;
       }
 
       // 内容/日時の編集
@@ -424,6 +360,11 @@ export default async function handler(
         return;
       }
 
+      // Debug: log the update expression and values to help diagnose missing fields
+      console.log(`[DEBUG] PATCH scheduled-posts update - key=${JSON.stringify(key)} expr=${JSON.stringify(
+        expr
+      )} names=${JSON.stringify(names)} values=${JSON.stringify(values)}`);
+
       await ddb.send(
         new UpdateItemCommand({
           TableName: TBL_SCHEDULED,
@@ -434,7 +375,14 @@ export default async function handler(
         })
       );
 
-      res.status(200).json({ ok: true });
+      // Return the updated item so clients can use authoritative data
+      try {
+        const updated = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: key }));
+        return res.status(200).json({ ok: true, post: mapItem(updated.Item || {}) });
+      } catch (e) {
+        console.log('[WARN] failed to fetch updated item after patch:', String(e));
+        return res.status(200).json({ ok: true });
+      }
       return;
     }
 

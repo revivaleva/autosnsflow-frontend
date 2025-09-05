@@ -88,8 +88,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       values[":purl"] = { S: permalink.url };
     }
     
-    // 二段階投稿の初期化
-    if (secondStageContent && secondStageContent.trim()) {
+    // 二段階投稿の初期化: アカウント設定に二段階投稿内容があっても、
+    // 予約行側で secondStageWanted が false の場合は二段階投稿をスキップする
+    const reservationSecondWanted = it.secondStageWanted?.BOOL;
+    if (secondStageContent && secondStageContent.trim() && reservationSecondWanted !== false) {
       sets.push("doublePostStatus = :waiting");
       values[":waiting"] = { S: "waiting" };
     }
