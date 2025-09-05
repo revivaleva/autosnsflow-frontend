@@ -2826,18 +2826,39 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
   jstMid.setHours(0,0,0,0);
   const todayStartSec = Math.floor(jstMid.getTime() / 1000);
 
-  // GSI: accountId + scheduledAt を利用して候補を取得（content が空、または nextGenerateAt <= now）
+  // Prefer sparse GSI (needsContentAccount + nextGenerateAt) to find candidates needing content
   try {
     console.log('[gen] processPendingGenerationsForAccount start', { userId, accountId: acct.accountId, limit });
-    const q = await ddb.send(new QueryCommand({
-      TableName: TBL_SCHEDULED,
-      IndexName: GSI_SCH_BY_ACC_TIME,
-      KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
-      ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
-      ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts",
-      ScanIndexForward: true,
-      Limit: 50
-    }));
+    let q;
+    try {
+      q = await ddb.send(new QueryCommand({
+        TableName: TBL_SCHEDULED,
+        IndexName: GSI_NEEDS_BY_NEXTGEN,
+        KeyConditionExpression: "needsContentAccount = :acc AND nextGenerateAt <= :now",
+        ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
+        ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, generateLockedAt",
+        ScanIndexForward: true,
+        Limit: 50
+      }));
+    } catch (e) {
+      // If the sparse GSI is missing, emit notification and fall back to legacy index
+      if (!isGsiMissing(e)) throw e;
+      try {
+        await putLog({ userId, type: 'gsi-fallback', accountId: acct.accountId, status: 'warn', message: 'NeedsContentByNextGen missing; falling back to accountId+scheduledAt query', detail: { error: String(e) } });
+      } catch (_) {}
+      try {
+        await postDiscordLog({ userId, isError: true, content: `**[GSI FALLBACK] NeedsContentByNextGen missing for user=${userId} account=${acct.accountId}; using legacy index**` });
+      } catch (_) {}
+      q = await ddb.send(new QueryCommand({
+        TableName: TBL_SCHEDULED,
+        IndexName: GSI_SCH_BY_ACC_TIME,
+        KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
+        ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
+        ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts",
+        ScanIndexForward: true,
+        Limit: 50
+      }));
+    }
 
     const items = (q.Items || []);
     console.log('[gen] query returned candidate keys', { count: items.length });
@@ -3098,6 +3119,71 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
         await putLog({ userId, type: "second-stage-delete", accountId: acct.accountId, targetId: sk, status: "error", message: "二段階投稿削除に失敗", detail: { error: String(e), whichFlagUsed: flagSource || 'unknown', deleteTarget: deleteParent ? 'parent' : 'second-stage', postId: postId || '', secondId: secondId || '' } });
       }
     }
+
+    // If GSI returned candidates but none were processed (all skipped), try a limited PK fallback
+    try {
+      const hadGsiCandidates = (q.Items || []).length > 0;
+      if (hadGsiCandidates && generated === 0) {
+        try {
+          await putLog({ userId, type: 'gsi-fallback-run', accountId: acct.accountId, status: 'warn', message: 'GSI candidates skipped; running PK fallback' });
+        } catch (_) {}
+        try { await postDiscordLog({ userId, isError: true, content: `**[FALLBACK] GSI candidates skipped for user=${userId} account=${acct.accountId}; running PK fallback**` }); } catch (_) {}
+
+        const fb = await ddb.send(new QueryCommand({
+          TableName: TBL_SCHEDULED,
+          KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+          ExpressionAttributeValues: {
+            ":pk": { S: `USER#${userId}` },
+            ":pfx": { S: "SCHEDULEDPOST#" },
+            ":acc": { S: acct.accountId },
+            ":now": { N: String(now) },
+            ":f": { BOOL: false }
+          },
+          FilterExpression: "accountId = :acc AND (attribute_not_exists(status) OR status = :scheduled) AND (attribute_not_exists(isDeleted) OR isDeleted = :f) AND scheduledAt <= :now",
+          ExpressionAttributeNames: { "#st": "status" },
+          ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts",
+          ScanIndexForward: true,
+          Limit: 50
+        }));
+
+        const fbItems = (fb.Items || []);
+        console.log('[gen] PK fallback returned', { count: fbItems.length });
+        for (const fit of fbItems) {
+          if (generated >= limit) break;
+          const fpk = getS(fit.PK) || ''; const fsk = getS(fit.SK) || '';
+          console.log('[gen] fallback evaluating', { fpk, fsk });
+          const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: fpk }, SK: { S: fsk } } }));
+          const rec = unmarshall(full.Item || {});
+          const contentEmpty = !rec.content || String(rec.content || '').trim() === '';
+          const nextGen = Number(rec.nextGenerateAt || 0);
+          if (!contentEmpty) { console.log('[gen] fallback skip content present', { fpk, fsk }); continue; }
+          if (nextGen > now) { console.log('[gen] fallback skip nextGenerateAt future', { fpk, fsk, nextGen }); continue; }
+          // attempt lock
+          try {
+            await ddb.send(new UpdateItemCommand({
+              TableName: TBL_SCHEDULED,
+              Key: { PK: { S: fpk }, SK: { S: fsk } },
+              UpdateExpression: "SET #lock = :id, generateLockedAt = :ts",
+              ConditionExpression: "attribute_not_exists(#lock) OR generateLockedAt < :now",
+              ExpressionAttributeNames: { "#lock": 'generateLock' },
+              ExpressionAttributeValues: { ":id": { S: `worker:${process.env.AWS_LAMBDA_LOG_STREAM_NAME || 'lambda'}:${now}` }, ":ts": { N: String(now + 600) }, ":now": { N: String(now) } }
+            }));
+          } catch (e) {
+            console.log('[gen] fallback lock failed', { fpk, fsk, err: String(e) });
+            continue;
+          }
+
+          try {
+            await generateAndAttachContent(userId, acct, fsk.replace(/^SCHEDULEDPOST#/, ''), rec.theme || '', await getUserSettings(userId));
+            generated++;
+            console.log('[gen] fallback generated', { fpk, fsk });
+          } catch (e) {
+            console.log('[gen] fallback generation failed', { fpk, fsk, err: String(e) });
+          }
+          try { await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: fpk }, SK: { S: fsk } }, UpdateExpression: "REMOVE generateLock, generateLockedAt" })); } catch(_) {}
+        }
+      }
+    } catch (e) { console.log('[gen] fallback error', String(e)); }
   } catch (e) {
     console.log("[warn] performScheduledDeletesForAccount error:", e);
   }
