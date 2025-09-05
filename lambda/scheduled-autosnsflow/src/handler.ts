@@ -2700,7 +2700,7 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
     const full = await ddb.send(new GetItemCommand({
       TableName: TBL_SCHEDULED,
       Key: { PK: { S: kpk }, SK: { S: ksk } },
-      ProjectionExpression: "postId, numericPostId, postedAt, doublePostStatus, autoPostGroupId, #st",
+      ProjectionExpression: "postId, numericPostId, postedAt, doublePostStatus, autoPostGroupId, #st, secondStageWanted",
       ExpressionAttributeNames: { "#st": "status" }
     }));
     const f = full.Item || {};
@@ -2710,9 +2710,15 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
     const pid = getS(f.postId) || "";
     const nid = getS(f.numericPostId) || "";
     const pat = getN(f.postedAt) || "";
+    // verbose debug: log the raw secondStageWanted attribute and full item
+    try { console.log('[second-stage] candidate full.Item raw:', JSON.stringify(full.Item || {})); } catch (e) {}
     // secondStageWanted を尊重：存在すれば true のもののみ対象、未指定なら従来通り
     const ssw = (typeof f.secondStageWanted !== 'undefined') ? (f.secondStageWanted?.BOOL === true || String(f.secondStageWanted?.S || '').toLowerCase() === 'true') : undefined;
-    const ok = st === "posted" && pid && (!dp || dp !== "done") && apg.includes("自動投稿") && Number(pat || 0) <= threshold && (ssw === undefined || ssw === true);
+    // verbose: log computed ssw
+    try { console.log('[second-stage] computed secondStageWanted (ssw):', { ssw }); } catch (e) {}
+    // Require explicit secondStageWanted === true to be eligible. If unset (undefined), treat as not eligible to avoid accidental runs.
+    const ok = st === "posted" && pid && (!dp || dp !== "done") && apg.includes("自動投稿") && Number(pat || 0) <= threshold && (ssw === true);
+    try { console.log('[second-stage] candidate ok evaluation', { st, pid, dp, apg, pat, ssw, ok }); } catch (e) {}
     if (debugMode && debugTried.length < 5) debugTried.push({ ksk, st, dp, apg, pid, nid, pat, ok });
     if (ok) { found = { kpk, ksk, pid, nid, pat }; break; }
   }
