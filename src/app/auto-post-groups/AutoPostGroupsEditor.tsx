@@ -330,28 +330,32 @@ function SlotEditor({ groupKey, items, loading, onReload }: { groupKey: string; 
     setRows(arr);
   };
 
-  const saveOrder = async () => {
+  // Save all slots (create new / update existing) with validation
+  const saveAll = async () => {
+    // Validate enabled rows have timeRange and theme
     for (let i = 0; i < rows.length; i++) {
       const it = rows[i];
-      await fetch(API_ITEMS, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ groupKey, slotId: it.slotId, order: i }),
-      });
+      if (!it.enabled) continue; // skip disabled rows
+      const [s = "", e = ""] = (it.timeRange || "").split("-");
+      if (!s || !e || !String(it.theme || "").trim()) {
+        alert("未設定の時間帯や空のテーマがあります。すべての有効なスロットで時間帯とテーマを設定してください。");
+        return;
+      }
+    }
+
+    for (let i = 0; i < rows.length; i++) {
+      const it = rows[i];
+      const payload = { groupKey, slotId: it.slotId, timeRange: it.timeRange || "", theme: it.theme || "", enabled: !!it.enabled, secondStageWanted: !!it.secondStageWanted, order: i };
+      if (String(it.slotId).startsWith("tmp-")) {
+        await fetch(API_ITEMS, { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify(payload) });
+      } else {
+        await fetch(API_ITEMS, { method: "PATCH", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify(payload) });
+      }
     }
     onReload();
   };
 
-  const saveRow = async (it: SlotType & { slotDeleteOnSecondStage?: boolean }) => {
-    await fetch(API_ITEMS, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ groupKey, slotId: it.slotId, timeRange: it.timeRange, theme: it.theme, enabled: it.enabled, secondStageWanted: !!it.secondStageWanted, slotDeleteOnSecondStage: !!(it as any).slotDeleteOnSecondStage }),
-    });
-    onReload();
-  };
+  // per-row save removed: use saveAll to persist all slots at once
 
   const deleteRow = async (slotId: string) => {
     if (!window.confirm("スロットを削除しますか？")) return;
@@ -364,15 +368,11 @@ function SlotEditor({ groupKey, items, loading, onReload }: { groupKey: string; 
     onReload();
   };
 
-  const addRow = async () => {
-    const id = `${Date.now()}`;
-    await fetch(API_ITEMS, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ groupKey, slotId: id, order: rows.length, timeRange: "", theme: "", enabled: true }),
-    });
-    onReload();
+  // Add a temporary local row (not immediately persisted) so unsaved fields are preserved
+  const addRow = () => {
+    const id = `tmp-${Date.now()}`;
+    const newRow: SlotType = { slotId: id, order: rows.length, timeRange: "", theme: "", enabled: true };
+    setRows((r) => [...r, newRow]);
   };
 
   const setField = (i: number, key: keyof SlotType, value: any) => {
@@ -387,7 +387,7 @@ function SlotEditor({ groupKey, items, loading, onReload }: { groupKey: string; 
         <div className="font-semibold">スロット（最大10件）</div>
         <div className="space-x-2">
           <button className="bg-green-600 text-white px-3 py-1 rounded" onClick={addRow}>＋追加</button>
-          <button className="bg-blue-600 text-white px-3 py-1 rounded" onClick={saveOrder}>並び順を保存</button>
+          <button className="bg-blue-600 text-white px-3 py-1 rounded" onClick={saveAll}>保存</button>
         </div>
       </div>
       {loading ? (
@@ -440,7 +440,6 @@ function SlotEditor({ groupKey, items, loading, onReload }: { groupKey: string; 
                   </td>
                   <td className="border p-1 text-center">
                     <div className="inline-flex gap-2">
-                      <button className="bg-blue-600 text-white px-3 py-1 rounded" onClick={() => saveRow(it)}>保存</button>
                       <button className="bg-red-600 text-white px-3 py-1 rounded" onClick={() => deleteRow(it.slotId)}>削除</button>
                     </div>
                   </td>
