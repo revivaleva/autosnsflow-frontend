@@ -377,8 +377,24 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
     })();
   }, [selectedGroup?.groupId]);
 
-  // [MOD] 種別変更時：テーマ・時間帯をスロットから反映
+  // 種別変更時：テーマ・時間帯をスロットから反映（ただし編集モードでは反映しない）
   useEffect(() => {
+    // 編集モードでは自動反映しない
+    if (mode === "edit") return;
+
+    // 種別が未選択（"-"）になった場合の既定動作（追加モードのみ）
+    if (!autoType) {
+      // add モードのみ自動で初期化する
+      if (mode === "add") {
+        setTheme("");
+        setTimeStart("00:00");
+        setTimeEnd("23:59");
+        // 予約日時を現在にセット
+        setScheduledAtLocal(formatDateToLocal(new Date()));
+      }
+      return;
+    }
+
     if (!autoType || groupItems.length === 0) return;
     const idx = autoType - 1;
     const slot = groupItems[idx];
@@ -393,9 +409,7 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
       setTimeStart("00:00");
       setTimeEnd("23:59");
     }
-
-    // [DEL] 種別選択時に予約時刻を自動設定していた処理を削除
-  }, [autoType, groupItems]); // eslint-disable-line
+  }, [autoType, groupItems, mode]); // eslint-disable-line
 
   // [FIX] 追加：open/mode/initial の変化時にフォームへ同期（編集時）
   useEffect(() => {
@@ -600,20 +614,7 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
           ))}
         </select>
 
-        <div className="grid grid-cols-2 gap-3 mt-3">
-          <div>
-            <label className="block text-sm text-gray-600">アカウント名</label>
-            <input
-              className="mt-1 w-full border rounded-md px-3 py-2"
-              value={accountName}
-              onChange={(e) => setAccountName(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-gray-600">アカウントID</label>
-            <input className="mt-1 w-full border rounded-md px-3 py-2" value={accountId} readOnly />
-          </div>
-        </div>
+        {/* アカウント名/アカウントID の入力は削除（アカウント選択で表示されるため） */}
 
         <div className="grid grid-cols-2 gap-3 mt-4">
           <div>

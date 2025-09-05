@@ -5,7 +5,11 @@
 // [DEPLOY] 2025-01-24: GitHub Actions自動デプロイテスト実行
 // [NO-OP] build trigger
 
-import { fetchThreadsAccounts } from "@autosnsflow/backend-core";
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/explicit-module-boundary-types, @typescript-eslint/no-unused-vars, no-console */
+// keep types but avoid disabling TypeScript globally; remove @ts-nocheck
+
+// Removed unused backend-core import; keep SDK calls local to this lambda
+// import { fetchThreadsAccounts } from "@autosnsflow/backend-core";
 import {
   DynamoDBClient,
   QueryCommand,
@@ -33,6 +37,24 @@ const USER_ID = "c7e43ae8-0031-70c5-a8ec-0f7962ee250f";
 
 const region = process.env.AWS_REGION || "ap-northeast-1";
 const ddb = new DynamoDBClient({ region });
+
+// Wrap ddb.send to automatically alias reserved keyword 'status' in ProjectionExpression
+// This prevents ValidationException when 'status' is used as an attribute name in projections
+{
+  const origSend = ddb.send.bind(ddb);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (ddb as any).send = async function(cmd: any) {
+    try {
+      const input = cmd?.input || cmd;
+      if (input && typeof input.ProjectionExpression === 'string' && /\bstatus\b/.test(input.ProjectionExpression)) {
+        // Ensure ExpressionAttributeNames exists and maps '#st' to 'status'
+        input.ExpressionAttributeNames = Object.assign({}, input.ExpressionAttributeNames || {}, { '#st': 'status' });
+        input.ProjectionExpression = input.ProjectionExpression.replace(/\bstatus\b/g, '#st');
+      }
+    } catch (_) {}
+    return origSend(cmd);
+  };
+}
 
 // Helpers to safely read DynamoDB attribute shapes
 const getS = (a: any) => (a && typeof a.S !== 'undefined') ? a.S : undefined;
@@ -86,7 +108,11 @@ const endOfDayJst   = (d: any) => new Date(epochEndOfJstDayMs(d.getTime()));
 const TABLE  = process.env.SCHEDULED_POSTS_TABLE || "ScheduledPosts";
 
 /// ========== GSI名 ==========
-const GSI_SCH_BY_ACC_TIME = "GSI1"; // ScheduledPosts: accountId, scheduledAt
+// legacy / generic: GSI1 mapped to accountId+scheduledAt in some environments
+const GSI_SCH_BY_ACC_TIME = "GSI1"; // ScheduledPosts: accountId, scheduledAt (legacy)
+// New, purpose-specific GSIs (infrastructure pending-gsis.yml)
+const GSI_NEEDS_BY_NEXTGEN = "NeedsContentByNextGen"; // ScheduledPosts: needsContentAccount, nextGenerateAt
+const GSI_PENDING_BY_ACC_TIME = "PendingByAccTime";   // ScheduledPosts: pendingForAutoPostAccount, scheduledAt
 const GSI_POS_BY_ACC_TIME = "GSI2"; // ScheduledPosts: accountId, postedAt
 const GSI_REPLIES_BY_ACC  = "GSI1"; // Replies: accountId, createdAt
 
@@ -296,7 +322,7 @@ async function getDiscordWebhookSets(userId = USER_ID) {
 
 /// ========== 設定・ユーザー ==========
 async function getActiveUserIds() {
-  let lastKey: any, ids: any[] = [];
+  let lastKey: any; const ids: string[] = [];
   do {
     const res: any = await ddb.send(
       new ScanCommand({
@@ -444,7 +470,7 @@ async function reserveOpenAiCredits(userId = USER_ID, cost = 1) {
 
 /// ========== アカウント・グループ ==========
 async function getThreadsAccounts(userId = USER_ID) {
-  let lastKey: any, items: any[] = [];
+  let lastKey: any; let items: any[] = [];
   do {
     const res: any = await ddb.send(
       new QueryCommand({
@@ -642,6 +668,8 @@ async function createScheduledPost(userId: any, { acct, group, type, whenJst, ov
     autoPostGroupId: { S: groupTypeStr },
     theme: { S: themeStr },
     content: { S: "" },
+    // スパースGSI用の属性（候補のみインデックスされるよう、候補時に文字列で accountId を保存）
+    needsContentAccount: { S: acct.accountId },
     scheduledAt: { N: String(toEpochSec(whenJst)) },
     postedAt: { N: "0" },
     status: { S: "scheduled" },
@@ -724,13 +752,33 @@ ${themeStr}
     }
 
     // OpenAI 呼び出しは共通ヘルパーを使い、内部でリトライ／フォールバックする
-    const { text } = await callOpenAIText({
-      apiKey: settings.openaiApiKey,
-      model: settings.model || DEFAULT_OPENAI_MODEL,
-      temperature: settings.openAiTemperature ?? DEFAULT_OPENAI_TEMP,
-      max_tokens: settings.openAiMaxTokens ?? DEFAULT_OPENAI_MAXTOKENS,
-      prompt,
-    });
+    let text: any = undefined;
+    try {
+      // log call metadata (do not log API key)
+      try { console.log('[debug] OpenAI call start', { userId, accountId: acct.accountId, scheduledPostId, model: settings.model || DEFAULT_OPENAI_MODEL, temperature: settings.openAiTemperature, max_tokens: settings.openAiMaxTokens }); } catch (_) {}
+      // Log prompt snippet for debugging (truncate to avoid overly long logs)
+      try { console.log('[debug] prompt snippet', (prompt || '').slice(0, 2000)); } catch(_) {}
+
+      const openAiRes = await callOpenAIText({
+        apiKey: settings.openaiApiKey,
+        model: settings.model || DEFAULT_OPENAI_MODEL,
+        temperature: settings.openAiTemperature ?? DEFAULT_OPENAI_TEMP,
+        max_tokens: settings.openAiMaxTokens ?? DEFAULT_OPENAI_MAXTOKENS,
+        prompt,
+      });
+      text = openAiRes?.text;
+
+      // log full response (user requested verbose dump). Be aware of sensitive data in responses.
+      try { console.log('[debug] OpenAI returned length', text ? String(text).length : 0); } catch(_) {}
+      try { console.log('[debug] OpenAI returned text (full):', text); } catch(_) {}
+      // also persist a small trace to ExecutionLogs for easier post-mortem (no full text stored to DB)
+      try { await putLog({ userId, type: 'openai-call', accountId: acct.accountId, targetId: scheduledPostId, status: 'info', message: 'openai_call_complete', detail: { textLength: text ? String(text).length : 0 } }); } catch (_) {}
+    } catch (e) {
+      // record failure and rethrow to be handled by caller
+      try { console.log('[error] OpenAI call failed', String(e)); } catch(_) {}
+      try { await putLog({ userId, type: 'openai-call', accountId: acct.accountId, targetId: scheduledPostId, status: 'error', message: 'openai_call_failed', detail: { error: String(e) } }); } catch (_) {}
+      throw e;
+    }
 
     if (text) {
       // 編集モーダルと同様の処理：プロンプトの指示部分を除去
@@ -759,11 +807,14 @@ ${themeStr}
         await ddb.send(new UpdateItemCommand({
           TableName: TBL_SCHEDULED,
           Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${scheduledPostId}` } },
-          UpdateExpression: "SET content = :c",
-          ExpressionAttributeValues: { ":c": { S: cleanText } },
+          // 保存時に本文が入ったため needsContentAccount を削除し、pendingForAutoPostAccount をセット
+          UpdateExpression: "SET content = :c, pendingForAutoPostAccount = :acc REMOVE needsContentAccount",
+          ExpressionAttributeValues: { ":c": { S: cleanText }, ":acc": { S: acct.accountId } },
         }));
+        try { console.log('[debug] saved generated content', { scheduledPostId, length: cleanText.length }); } catch(_) {}
         await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "ok", message: "本文生成を完了" });
       } else {
+        try { console.log('[warn] generated text invalid or too short', { scheduledPostId, originalLength: text ? String(text).length : 0, cleanedLength: cleanText ? cleanText.length : 0 }); } catch(_) {}
         await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "error", message: "生成されたテキストが不正です", detail: { originalText: text, cleanedText: cleanText } });
       }
     }
@@ -838,7 +889,81 @@ export const handler = async (event: any = {}) => {
           }
           case "runAutoPost": {
             // テスト時は詳細デバッグ情報を返す
-            const r = await runAutoPostForAccount(acct, userId, settings, true);
+            // たとえ runAutoPostForAccount が早期に戻す場合でも、
+            // 取得した候補やスキップ理由が分かるように追加情報を付与する
+            const r: any = await runAutoPostForAccount(acct, userId, settings, true);
+
+            // runAutoPostForAccount が posted=0 で debug 情報が無ければ、
+            // 補助的にアカウント状況とクエリ結果を収集して debug を付与する
+            if (r && r.posted === 0 && (!r.debug || Object.keys(r.debug || {}).length === 0)) {
+              const assistDebug: any = {
+                acct: {
+                  accountId: acct.accountId,
+                  displayName: acct.displayName,
+                  autoPost: acct.autoPost,
+                  status: acct.status,
+                  providerUserId: acct.providerUserId || null,
+                  hasAccessToken: !!acct.accessToken,
+                  autoGenerate: acct.autoGenerate,
+                },
+                reasonHints: [] as any[],
+              };
+
+              // もし autoPost が無効ならヒントを追加
+              if (!acct.autoPost) assistDebug.reasonHints.push("acct.autoPost is falsy");
+              if (acct.status && acct.status !== "active") assistDebug.reasonHints.push(`account status=${acct.status}`);
+              if (!acct.providerUserId) assistDebug.reasonHints.push("providerUserId missing");
+              if (!acct.accessToken) assistDebug.reasonHints.push("accessToken missing");
+
+              // 予約テーブルのクエリを試みて、対象候補がそもそも存在するかを確認する
+              try {
+                // Prefer pending sparse index if available
+                let q2;
+                try {
+                  q2 = await ddb.send(new QueryCommand({
+                    TableName: TBL_SCHEDULED,
+                    IndexName: GSI_PENDING_BY_ACC_TIME,
+                    KeyConditionExpression: "pendingForAutoPostAccount = :acc AND scheduledAt <= :now",
+                    ExpressionAttributeValues: {
+                      ":acc": { S: acct.accountId },
+                      ":now": { N: String(nowSec()) },
+                    },
+                    // PendingByAccTime GSI may not project 'status' — avoid requesting it
+                    ProjectionExpression: "PK, SK, scheduledAt, postedAt, content",
+                    ScanIndexForward: true,
+                    Limit: 50
+                  }));
+                } catch (e) {
+                  if (!isGsiMissing(e)) throw e;
+                  q2 = await ddb.send(new QueryCommand({
+                    TableName: TBL_SCHEDULED,
+                    IndexName: GSI_SCH_BY_ACC_TIME,
+                    KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
+                    ExpressionAttributeNames: { "#st": "status" },
+                    ExpressionAttributeValues: {
+                      ":acc": { S: acct.accountId },
+                      ":now": { N: String(nowSec()) },
+                    },
+                    ProjectionExpression: "PK, SK, scheduledAt, postedAt, #st, content",
+                    ScanIndexForward: true,
+                    Limit: 50
+                  }));
+                }
+                assistDebug.qItemsCount = (q2.Items || []).length;
+                assistDebug.qItems = (q2.Items || []).slice(0, 6);
+              } catch (e) {
+                assistDebug.qError = String(e);
+              }
+
+              // マージして返却用 debug に突っ込む
+              r.debug = Object.assign(r.debug || {}, assistDebug);
+            }
+
+            // Console にも出力して Lambda の実行ログで確認しやすくする
+            try {
+              console.log('[TEST-OUTPUT] runAutoPost result for', acct.accountId, JSON.stringify(r.debug || r, null, 2));
+            } catch (e) { console.log('[TEST-OUTPUT] runAutoPost result (stringify failed)'); }
+
             results.push({ accountId: acct.accountId, runAutoPost: r });
             break;
           }
@@ -929,11 +1054,375 @@ export const handler = async (event: any = {}) => {
             results.push({ accountId: acct.accountId, createOneOff: r });
             break;
           }
+          case "fullFlowTest": {
+            // end-to-end test: create one-off (no content) -> generate -> post
+            try {
+              const minutesFromNow = Number(event.minutesFromNow ?? 0);
+              const windowMinutes = Number(event.windowMinutes ?? 60);
+              const theme = event.theme || "テスト投稿";
+
+              // create reservation without content
+              const createRes = await createOneOffForTest({ userId, acct, minutesFromNow, windowMinutes, theme, content: "" });
+
+              // run generation (limit configurable)
+              const genLimit = Number(event.limit ?? 1);
+              const genRes = await processPendingGenerationsForAccount(userId, acct, genLimit);
+
+              // run auto-post (debugMode true to return debug)
+              const postRes = await runAutoPostForAccount(acct, userId, settings, true);
+
+              results.push({ accountId: acct.accountId, fullFlow: { created: createRes, generated: genRes, posted: postRes } });
+            } catch (e) {
+              results.push({ accountId: acct.accountId, fullFlow: { error: String(e) } });
+            }
+            break;
+          }
+          case "runGenerate": {
+            // テスト用: 本文が空の予約に対して本文生成を行う
+            try {
+              const limit = Number(event.limit ?? 1);
+
+              // 事前に候補を詳細に取得して原因を可視化する
+              const now = nowSec();
+              let q;
+              try {
+                q = await ddb.send(new QueryCommand({
+                  TableName: TBL_SCHEDULED,
+                  IndexName: GSI_NEEDS_BY_NEXTGEN,
+                  KeyConditionExpression: "needsContentAccount = :acc AND nextGenerateAt <= :now",
+                  ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
+                  ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, generateLockedAt",
+                  ScanIndexForward: true,
+                  Limit: 100
+                }));
+              } catch (e) {
+                if (!isGsiMissing(e)) throw e;
+                q = await ddb.send(new QueryCommand({
+                  TableName: TBL_SCHEDULED,
+                  IndexName: GSI_SCH_BY_ACC_TIME,
+                  KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
+                  ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
+                  ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, generateLockedAt",
+                  ScanIndexForward: true,
+                  Limit: 100
+                }));
+              }
+
+              const items = (q.Items || []);
+              const detailed: any[] = [];
+              for (const it of items) {
+                const pk = getS(it.PK) || '';
+                const sk = getS(it.SK) || '';
+                try {
+                  const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } } }));
+                  const rec = unmarshall(full.Item || {});
+                  const contentEmpty = !rec.content || String(rec.content || '').trim() === '';
+                  const nextGen = Number(rec.nextGenerateAt || 0);
+                  const attempts = Number(rec.generateAttempts || 0);
+                  const lock = rec.generateLock || undefined;
+                  const lockedAt = Number(rec.generateLockedAt || 0);
+                  const lockActive = !!lock && lockedAt > now;
+                  const reasons: string[] = [];
+                  if (!contentEmpty) reasons.push('has_content');
+                  if (nextGen > now) reasons.push(`nextGenerateAt=${nextGen}`);
+                  if (lockActive) reasons.push(`locked_until=${lockedAt}`);
+                  detailed.push({ PK: pk, SK: sk, scheduledAt: rec.scheduledAt || null, contentEmpty, nextGenerateAt: nextGen, generateAttempts: attempts, lock: lock ? String(lock) : null, generateLockedAt: lockedAt || null, lockActive, reasons });
+                } catch (e) {
+                  detailed.push({ PK: pk, SK: sk, error: String(e) });
+                }
+              }
+
+              // 実際に生成処理を実行
+              const genRes = await processPendingGenerationsForAccount(userId, acct, limit);
+
+              // Return both the processed candidate details and the raw GSI items
+              results.push({
+                accountId: acct.accountId,
+                runGenerate: {
+                  generated: genRes.generated || 0,
+                  candidates: { now, count: items.length, items: detailed.slice(0, 100) },
+                  // raw items as returned by the Query (DynamoDB attribute value shapes)
+                  gsiRaw: q.Items || []
+                }
+              });
+            } catch (e) {
+              results.push({ accountId: acct.accountId, runGenerate: { error: String(e) } });
+            }
+            break;
+          }
+          case "runGenerateFromGsi": {
+            // Test action: query GSI for candidates and attempt generation for each
+            try {
+              const now = nowSec();
+              const limit = Number(event.limit ?? 50);
+              const force = !!event.force;
+              let q;
+              try {
+                q = await ddb.send(new QueryCommand({
+                  TableName: TBL_SCHEDULED,
+                  IndexName: GSI_NEEDS_BY_NEXTGEN,
+                  KeyConditionExpression: "needsContentAccount = :acc AND nextGenerateAt <= :now",
+                  ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
+                  ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, generateLockedAt",
+                  ScanIndexForward: true,
+                  Limit: limit
+                }));
+              } catch (e) {
+                if (!isGsiMissing(e)) throw e;
+                q = await ddb.send(new QueryCommand({
+                  TableName: TBL_SCHEDULED,
+                  IndexName: GSI_SCH_BY_ACC_TIME,
+                  KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
+                  ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
+                  ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, generateLockedAt",
+                  ScanIndexForward: true,
+                  Limit: limit
+                }));
+              }
+
+              const items = (q.Items || []);
+              const outcomes: any[] = [];
+              for (const it of items) {
+                const pk = getS(it.PK) || '';
+                const sk = getS(it.SK) || '';
+                try {
+                  const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } } }));
+                  const rec = unmarshall(full.Item || {});
+                  const contentEmpty = !rec.content || String(rec.content || '').trim() === '';
+                  if (!contentEmpty && !force) {
+                    outcomes.push({ PK: pk, SK: sk, skipped: 'has_content' });
+                    continue;
+                  }
+
+                  try {
+                    await generateAndAttachContent(userId, acct, sk.replace(/^SCHEDULEDPOST#/, ''), rec.theme || '', await getUserSettings(userId));
+                    outcomes.push({ PK: pk, SK: sk, ok: true });
+                  } catch (e) {
+                    outcomes.push({ PK: pk, SK: sk, ok: false, error: String(e) });
+                  }
+                } catch (e) {
+                  outcomes.push({ PK: getS(it.PK) || '', SK: getS(it.SK) || '', error: String(e) });
+                }
+              }
+
+              results.push({ accountId: acct.accountId, runGenerateFromGsi: { count: items.length, outcomes, gsiRaw: q.Items || [] } });
+            } catch (e) {
+              results.push({ accountId: acct.accountId, runGenerateFromGsi: { error: String(e) } });
+            }
+            break;
+          }
+          case "debugGenerateCandidates": {
+            // テスト用: 本文未生成の候補に関する詳細（nextGenerateAt, generateAttempts, locks）を返す
+            try {
+              const now = nowSec();
+              let q;
+              try {
+                q = await ddb.send(new QueryCommand({
+                  TableName: TBL_SCHEDULED,
+                  IndexName: GSI_NEEDS_BY_NEXTGEN,
+                  KeyConditionExpression: "needsContentAccount = :acc AND nextGenerateAt <= :now",
+                  ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
+                  ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, generateLockedAt",
+                  ScanIndexForward: true,
+                  Limit: 100
+                }));
+              } catch (e) {
+                if (!isGsiMissing(e)) throw e;
+                q = await ddb.send(new QueryCommand({
+                  TableName: TBL_SCHEDULED,
+                  IndexName: GSI_SCH_BY_ACC_TIME,
+                  KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
+                  ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
+                  ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, generateLock, generateLockedAt",
+                  ScanIndexForward: true,
+                  Limit: 100
+                }));
+              }
+
+              const items = (q.Items || []);
+              const detailed: any[] = [];
+              for (const it of items) {
+                const pk = getS(it.PK) || '';
+                const sk = getS(it.SK) || '';
+                try {
+                  const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } } }));
+                  const rec = unmarshall(full.Item || {});
+                  const contentEmpty = !rec.content || String(rec.content || '').trim() === '';
+                  const nextGen = Number(rec.nextGenerateAt || 0);
+                  const attempts = Number(rec.generateAttempts || 0);
+                  const lock = rec.generateLock || undefined;
+                  const lockedAt = Number(rec.generateLockedAt || 0);
+                  const lockActive = !!lock && lockedAt > now;
+                  const reasons: string[] = [];
+                  if (!contentEmpty) reasons.push('has_content');
+                  if (nextGen > now) reasons.push(`nextGenerateAt=${nextGen}`);
+                  if (lockActive) reasons.push(`locked_until=${lockedAt}`);
+                  detailed.push({ PK: pk, SK: sk, scheduledAt: rec.scheduledAt || null, contentEmpty, nextGenerateAt: nextGen, generateAttempts: attempts, lock: lock ? String(lock) : null, generateLockedAt: lockedAt || null, lockActive, reasons });
+                } catch (e) {
+                  detailed.push({ PK: pk, SK: sk, error: String(e) });
+                }
+              }
+
+              results.push({ accountId: acct.accountId, debugGenerateCandidates: { now: now, count: items.length, items: detailed.slice(0, 100) } });
+            } catch (e) {
+              results.push({ accountId: acct.accountId, debugGenerateCandidates: { error: String(e) } });
+            }
+            break;
+          }
           case "getAccount": {
             // 取得済み acct をそのまま返す（accountId を指定すれば1件、無指定なら全件ループで返る）
             results.push({ accountId: acct.accountId, account: acct });
             break;
           }
+          case "debugAll": {
+            // GSIクエリとPKフォールバックを両方実行して観測性を高めるテスト用アクション
+            try {
+              const now = nowSec();
+              let gsiRes;
+              try {
+                gsiRes = await ddb.send(new QueryCommand({
+                  TableName: TBL_SCHEDULED,
+                  IndexName: GSI_PENDING_BY_ACC_TIME,
+                  KeyConditionExpression: "pendingForAutoPostAccount = :acc AND scheduledAt <= :now",
+                  ExpressionAttributeValues: {
+                    ":acc": { S: acct.accountId },
+                    ":now": { N: String(now) }
+                  },
+                  // PendingByAccTime GSI may not project 'status' — avoid requesting it here
+                  ProjectionExpression: "PK, SK, scheduledAt, postedAt, timeRange, content",
+                  ScanIndexForward: true,
+                  Limit: 50
+                }));
+              } catch (e) {
+                if (!isGsiMissing(e)) throw e;
+                gsiRes = await ddb.send(new QueryCommand({
+                  TableName: TBL_SCHEDULED,
+                  IndexName: GSI_SCH_BY_ACC_TIME,
+                  KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
+                  ExpressionAttributeValues: {
+                    ":acc": { S: acct.accountId },
+                    ":now": { N: String(now) }
+                  },
+                  ProjectionExpression: "PK, SK, scheduledAt, postedAt, timeRange, content",
+                  ScanIndexForward: true,
+                  Limit: 50
+                }));
+              }
+
+              const gsiItems = (gsiRes.Items || []).slice(0, 6);
+
+              // PK フォールバッククエリ
+              let fallbackItems: any[] = [];
+              let fallbackCount = 0;
+              try {
+                const fb = await ddb.send(new QueryCommand({
+                  TableName: TBL_SCHEDULED,
+                  KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+                  ExpressionAttributeValues: {
+                    ":pk": { S: `USER#${userId}` },
+                    ":pfx": { S: "SCHEDULEDPOST#" },
+                    ":acc": { S: acct.accountId },
+                  },
+                  FilterExpression: "accountId = :acc",
+                  ProjectionExpression: "PK, SK, scheduledAt, postedAt, #st, timeRange, content, accountId",
+                  ExpressionAttributeNames: { "#st": "status" },
+                  ScanIndexForward: true,
+                  Limit: 50
+                }));
+                fallbackCount = (fb.Items || []).length;
+                fallbackItems = (fb.Items || []).slice(0, 6);
+              } catch (e) {
+                fallbackItems = [{ error: String(e).slice(0, 500) }];
+              }
+
+              const payload = {
+                gsi: { count: (gsiRes.Items || []).length, items: gsiItems },
+                fallback: { count: fallbackCount, items: fallbackItems }
+              };
+              try { console.log('[TEST-DEBUGALL] ', acct.accountId, JSON.stringify(payload, null, 2)); } catch (e) {}
+              results.push({ accountId: acct.accountId, debugAll: payload });
+            } catch (e) {
+              results.push({ accountId: acct.accountId, debugAll: { error: String(e) } });
+            }
+            break;
+          }
+        case "debugQueryDetailed": {
+          // GSIで取得したキー群を個別にGetItemして、
+          // runAutoPost のフィルタ条件ごとに除外理由を付与して返す（観測性向上）
+          try {
+            const now = nowSec();
+            let q;
+            try {
+              q = await ddb.send(new QueryCommand({
+                TableName: TBL_SCHEDULED,
+                IndexName: GSI_PENDING_BY_ACC_TIME,
+                KeyConditionExpression: "pendingForAutoPostAccount = :acc AND scheduledAt <= :now",
+                ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
+                ProjectionExpression: "PK, SK, scheduledAt, postedAt",
+                ScanIndexForward: true,
+                Limit: 100
+              }));
+            } catch (e) {
+              if (!isGsiMissing(e)) throw e;
+              q = await ddb.send(new QueryCommand({
+                TableName: TBL_SCHEDULED,
+                IndexName: GSI_SCH_BY_ACC_TIME,
+                KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
+                ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
+                ProjectionExpression: "PK, SK, scheduledAt, postedAt",
+                ScanIndexForward: true,
+                Limit: 100
+              }));
+            }
+
+            const items = (q.Items || []);
+            const detailed: any[] = [];
+            for (const it of items) {
+              const pk = getS(it.PK) || ''; const sk = getS(it.SK) || '';
+              const reason = [] as string[];
+              try {
+                const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } } }));
+                const f = unmarshall(full.Item || {});
+                // check runAutoPost filters
+                if ((f.status || '') !== 'scheduled') reason.push(`status=${f.status || '(missing)'}`);
+                if (f.postedAt && Number(f.postedAt || 0) !== 0) reason.push(`postedAt=${f.postedAt}`);
+                // timeRange expiry check
+                if (f.timeRange) {
+                  const endJst = rangeEndOfDayJst(f.timeRange, jstFromEpoch(Number(f.scheduledAt || 0)));
+                  if (endJst && nowSec() > toEpochSec(endJst)) reason.push(`timeRange_expired:${f.timeRange}`);
+                }
+                // content empty
+                if (!f.content || String(f.content || '').trim() === '') reason.push('no_content');
+
+                detailed.push({ PK: pk, SK: sk, scheduledAt: f.scheduledAt, postedAt: f.postedAt, status: f.status, timeRange: f.timeRange, contentEmpty: !f.content, reasons: reason });
+              } catch (e) {
+                detailed.push({ PK: pk, SK: sk, error: String(e) });
+              }
+            }
+
+            results.push({ accountId: acct.accountId, debugQueryDetailed: { now: nowSec(), count: items.length, items: detailed.slice(0, 50) } });
+          } catch (e) {
+            results.push({ accountId: acct.accountId, debugQueryDetailed: { error: String(e) } });
+          }
+          break;
+        }
+        case "getScheduledPost": {
+          // Return full scheduled post item for given PK/SK or scheduledPostId (for debugging)
+          try {
+            const pk = event.pk || `USER#${userId}`;
+            const sk = event.sk || (event.scheduledPostId ? `SCHEDULEDPOST#${event.scheduledPostId}` : null);
+            if (!pk || !sk) {
+              results.push({ accountId: acct.accountId, getScheduledPost: { error: 'missing pk/sk or scheduledPostId' } });
+              break;
+            }
+            const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } } }));
+            const rec = unmarshall(full.Item || {});
+            results.push({ accountId: acct.accountId, getScheduledPost: { found: !!full.Item, item: rec } });
+          } catch (e) {
+            results.push({ accountId: acct.accountId, getScheduledPost: { error: String(e) } });
+          }
+          break;
+        }
           default:
             results.push({ accountId: acct?.accountId || "-", error: "unknown action" });
         }
@@ -969,7 +1458,11 @@ export const handler = async (event: any = {}) => {
     for (const uid of userIds) {
       try {
         const r = await runHourlyJobForUser(uid);
-        // ……合算……
+        // 合算: runHourlyJobForUser が返す集計を totals に反映
+        totals.createdCount += Number(r?.createdCount || 0);
+        totals.fetchedReplies += Number(r?.fetchedReplies || 0);
+        totals.replyDrafts += Number(r?.replyDrafts || 0);
+        totals.skippedAccounts += Number(r?.skippedAccounts || 0);
         userSucceeded++;
       } catch (e) {
         console.log("hourly error for", uid, e);
@@ -1005,7 +1498,11 @@ export const handler = async (event: any = {}) => {
   for (const uid of userIds) {
     try {
       const r = await runFiveMinJobForUser(uid);
-      // ……合算……
+      // 合算: runFiveMinJobForUser の結果を totals に反映
+      totals.totalAuto += Number(r?.totalAuto || 0);
+      totals.totalReply += Number(r?.totalReply || 0);
+      totals.totalTwo += Number(r?.totalTwo || 0);
+      totals.rateSkipped += Number(r?.rateSkipped || 0);
       userSucceeded++;
     } catch (e) {
       console.log("5min error for", uid, e);
@@ -1067,7 +1564,8 @@ async function createOneOffForTest({
   userId,
   acct,
   minutesFromNow = 1,
-  windowMinutes = 10,
+  // default window widened to 60 minutes to avoid too-narrow time ranges during tests
+  windowMinutes = 60,
   theme = "テスト投稿",
   content = "",
 }: any) {
@@ -1082,7 +1580,10 @@ async function createOneOffForTest({
   );
   const hhmm = (d: any) =>
     `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-  const range = `${hhmm(base)}-${hhmm(new Date(base.getTime() + windowMinutes * 60 * 1000))}`;
+  // Anchor the range around the scheduled time 'when' to produce a more sensible window
+  const rangeStart = new Date(when.getTime() - Math.floor(windowMinutes / 2) * 60 * 1000);
+  const rangeEnd = new Date(rangeStart.getTime() + windowMinutes * 60 * 1000);
+  const range = `${hhmm(rangeStart)}-${hhmm(rangeEnd)}`;
 
   const fakeGroup = {
     groupName: "テスト",
@@ -1668,7 +2169,7 @@ async function postToThreads({ accessToken, text, userIdOnPlatform, inReplyTo = 
   }
 
   // 🔧 公式ドキュメント準拠: Create は /me/threads を使用
-  let createRes = await fetch(`${base}/me/threads`, {
+  const createRes = await fetch(`${base}/me/threads`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(createPayload),
@@ -1756,36 +2257,93 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
 
   // まず "未投稿・時刻到来" の予約を1件取得（GSI→PKフォールバック）
   // 方式B: GSIはキーだけを取得（Filterしない）→ 本体をGetItemで精査
-  const q = await ddb.send(new QueryCommand({
-    TableName: TBL_SCHEDULED,
-    IndexName: GSI_SCH_BY_ACC_TIME,
-    KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
-    FilterExpression: "#st = :scheduled AND postedAt = :zero",
-    ExpressionAttributeNames: { "#st": "status" },
-    ExpressionAttributeValues: {
-      ":acc": { S: acct.accountId },
-      ":now": { N: String(nowSec()) },
-      ":scheduled": { S: "scheduled" },
-      ":zero": { N: "0" },
-    },
-    // Keys only でも動くように PK/SK と scheduledAt だけ取得
-    ProjectionExpression: "PK, SK, scheduledAt, postedAt, #st",
-    ScanIndexForward: true, // 古い順に見る
-    Limit: 50               // 上限を増やして取りこぼしを回避
-  }));
+  // Query only by GSI keys (accountId + scheduledAt) and avoid server-side FilterExpression
+  // so that we don't consume the Limit with filtered-out items. We'll refine candidates
+  // locally (GetItem + checks) to decide the actual posting target.
+  // Prefer sparse pending-index if available
+  let q;
+  try {
+    q = await ddb.send(new QueryCommand({
+      TableName: TBL_SCHEDULED,
+      IndexName: GSI_PENDING_BY_ACC_TIME,
+      KeyConditionExpression: "pendingForAutoPostAccount = :acc AND scheduledAt <= :now",
+      ExpressionAttributeValues: {
+        ":acc": { S: acct.accountId },
+        ":now": { N: String(nowSec()) },
+      },
+      // PendingByAccTime GSI does not necessarily project 'status' — avoid requesting it
+      ProjectionExpression: "PK, SK, scheduledAt, postedAt",
+      ScanIndexForward: true,
+      Limit: 50
+    }));
+  } catch (e) {
+    if (!isGsiMissing(e)) throw e;
+    // fallback to legacy index
+    q = await ddb.send(new QueryCommand({
+      TableName: TBL_SCHEDULED,
+      IndexName: GSI_SCH_BY_ACC_TIME,
+      KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
+      ExpressionAttributeValues: {
+        ":acc": { S: acct.accountId },
+        ":now": { N: String(nowSec()) },
+      },
+      // Keys only でも動くように PK/SK と scheduledAt だけ取得
+      ProjectionExpression: "PK, SK, scheduledAt, postedAt",
+      ScanIndexForward: true, // 古い順に見る
+      Limit: 50               // 上限を増やして取りこぼしを回避
+    }));
+  }
   // debug: capture raw q items if requested
   const debugInfo: any = debugMode ? { qItemsCount: (q.Items || []).length, items: [] as any[] } : undefined;
+
+  // If GSI returned no items, try a PK-based fallback query for observability
+  if (debugMode && (!q.Items || q.Items.length === 0)) {
+    try {
+      const fallback = await ddb.send(new QueryCommand({
+        TableName: TBL_SCHEDULED,
+        // PK fallback: USER#userId + begins_with SK
+        KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+        ExpressionAttributeValues: {
+          ":pk": { S: `USER#${userId}` },
+          ":pfx": { S: "SCHEDULEDPOST#" },
+          ":acc": { S: acct.accountId },
+        },
+        FilterExpression: "accountId = :acc",
+        ProjectionExpression: "PK, SK, scheduledAt, postedAt, #st, timeRange, content, accountId",
+        ExpressionAttributeNames: { "#st": "status" },
+        ScanIndexForward: true,
+        Limit: 50
+      }));
+      (debugInfo as any).fallbackCount = (fallback.Items || []).length;
+      (debugInfo as any).fallbackSample = (fallback.Items || []).slice(0, 6).map(it => {
+        try {
+          return {
+            PK: it.PK?.S,
+            SK: it.SK?.S,
+            scheduledAt: it.scheduledAt?.N,
+            postedAt: it.postedAt?.N,
+            status: it.status?.S || it["#st"]?.S || null,
+            timeRange: it.timeRange?.S,
+            contentEmpty: !(it.content && it.content.S && String(it.content.S).trim().length > 0),
+            accountId: it.accountId?.S,
+          };
+        } catch (e) { return { err: String(e) }; }
+      });
+    } catch (e) {
+      try { (debugInfo as any).fallbackError = String(e).slice(0, 500); } catch (_) { }
+    }
+  }
 
   let cand = null;
   let iterIndex = 0;
   for (const it of (q.Items || [])) {
-    const pk = it.PK.S;
-    const sk = it.SK.S;
+    const pk = getS(it.PK) || '';
+    const sk = getS(it.SK) || '';
 
     // 本体を取得して status/postedAt/timeRange を確認
     const full = await ddb.send(new GetItemCommand({
       TableName: TBL_SCHEDULED,
-      Key: { PK: { S: pk }, SK: { S: sk } },
+      Key: { PK: { S: String(pk) }, SK: { S: String(sk) } },
       ProjectionExpression: "content, postedAt, timeRange, scheduledAt, autoPostGroupId, #st",
       ExpressionAttributeNames: { "#st": "status" }
     }));
@@ -2142,7 +2700,7 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
     const full = await ddb.send(new GetItemCommand({
       TableName: TBL_SCHEDULED,
       Key: { PK: { S: kpk }, SK: { S: ksk } },
-      ProjectionExpression: "postId, numericPostId, postedAt, doublePostStatus, autoPostGroupId, #st",
+      ProjectionExpression: "postId, numericPostId, postedAt, doublePostStatus, autoPostGroupId, #st, secondStageWanted",
       ExpressionAttributeNames: { "#st": "status" }
     }));
     const f = full.Item || {};
@@ -2152,9 +2710,15 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
     const pid = getS(f.postId) || "";
     const nid = getS(f.numericPostId) || "";
     const pat = getN(f.postedAt) || "";
+    // verbose debug: log the raw secondStageWanted attribute and full item
+    try { console.log('[second-stage] candidate full.Item raw:', JSON.stringify(full.Item || {})); } catch (e) {}
     // secondStageWanted を尊重：存在すれば true のもののみ対象、未指定なら従来通り
     const ssw = (typeof f.secondStageWanted !== 'undefined') ? (f.secondStageWanted?.BOOL === true || String(f.secondStageWanted?.S || '').toLowerCase() === 'true') : undefined;
-    const ok = st === "posted" && pid && (!dp || dp !== "done") && apg.includes("自動投稿") && Number(pat || 0) <= threshold && (ssw === undefined || ssw === true);
+    // verbose: log computed ssw
+    try { console.log('[second-stage] computed secondStageWanted (ssw):', { ssw }); } catch (e) {}
+    // Require explicit secondStageWanted === true to be eligible. If unset (undefined), treat as not eligible to avoid accidental runs.
+    const ok = st === "posted" && pid && (!dp || dp !== "done") && apg.includes("自動投稿") && Number(pat || 0) <= threshold && (ssw === true);
+    try { console.log('[second-stage] candidate ok evaluation', { st, pid, dp, apg, pat, ssw, ok }); } catch (e) {}
     if (debugMode && debugTried.length < 5) debugTried.push({ ksk, st, dp, apg, pid, nid, pat, ok });
     if (ok) { found = { kpk, ksk, pid, nid, pat }; break; }
   }
@@ -2289,36 +2853,68 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
   jstMid.setHours(0,0,0,0);
   const todayStartSec = Math.floor(jstMid.getTime() / 1000);
 
-  // GSI: accountId + scheduledAt を利用して候補を取得（content が空、または nextGenerateAt <= now）
+  // Prefer sparse GSI (needsContentAccount + nextGenerateAt) to find candidates needing content
   try {
-    const q = await ddb.send(new QueryCommand({
-      TableName: TBL_SCHEDULED,
-      IndexName: GSI_SCH_BY_ACC_TIME,
-      KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
-      ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
-      ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts",
-      ScanIndexForward: true,
-      Limit: 50
-    }));
+    console.log('[gen] processPendingGenerationsForAccount start', { userId, accountId: acct.accountId, limit });
+    let q;
+    try {
+      q = await ddb.send(new QueryCommand({
+        TableName: TBL_SCHEDULED,
+        IndexName: GSI_NEEDS_BY_NEXTGEN,
+        KeyConditionExpression: "needsContentAccount = :acc AND nextGenerateAt <= :now",
+        ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
+        ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, generateLockedAt",
+        ScanIndexForward: true,
+        Limit: 50
+      }));
+    } catch (e) {
+      // If the sparse GSI is missing, emit notification and fall back to legacy index
+      if (!isGsiMissing(e)) throw e;
+      try {
+        await putLog({ userId, type: 'gsi-fallback', accountId: acct.accountId, status: 'warn', message: 'NeedsContentByNextGen missing; falling back to accountId+scheduledAt query', detail: { error: String(e) } });
+      } catch (_) {}
+      try {
+        await postDiscordLog({ userId, isError: true, content: `**[GSI FALLBACK] NeedsContentByNextGen missing for user=${userId} account=${acct.accountId}; using legacy index**` });
+      } catch (_) {}
+      q = await ddb.send(new QueryCommand({
+        TableName: TBL_SCHEDULED,
+        IndexName: GSI_SCH_BY_ACC_TIME,
+        KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
+        ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
+        ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts",
+        ScanIndexForward: true,
+        Limit: 50
+      }));
+    }
 
     const items = (q.Items || []);
+    console.log('[gen] query returned candidate keys', { count: items.length });
     for (const it of items) {
       if (generated >= limit) break;
       const pk = getS(it.PK) || ''; const sk = getS(it.SK) || '';
+      console.log('[gen] evaluating candidate', { pk, sk });
       const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } } }));
       const rec = unmarshall(full.Item || {});
       const contentEmpty = !rec.content || String(rec.content || '').trim() === '';
+      console.log('[gen] candidate record', { pk, sk, scheduledAt: rec.scheduledAt || null, contentEmpty, nextGenerateAt: rec.nextGenerateAt || null, generateAttempts: rec.generateAttempts || 0, generateLock: rec.generateLock || null });
       // 定期実行は「本文が空のデータ」のみに対して生成を行う
-      if (!contentEmpty) continue;
+      if (!contentEmpty) {
+        console.log('[gen] skip candidate content present', { pk, sk });
+        continue;
+      }
       const nextGen = Number(rec.nextGenerateAt || 0);
       // nextGenerateAt が将来に設定されていればスキップ（バックオフ等）
-      if (nextGen > now) continue;
+      if (nextGen > now) {
+        console.log('[gen] skip candidate nextGenerateAt in future', { pk, sk, nextGen });
+        continue;
+      }
 
       // 条件付きでロックを取得して二重生成を防ぐ
       const lockKey = 'generateLock';
       const lockExpireSec = 60 * 10; // ロック10分
       const expiresAt = now + lockExpireSec;
       try {
+        console.log('[gen] attempting to acquire lock', { pk, sk, worker: `worker:${process.env.AWS_LAMBDA_LOG_STREAM_NAME || 'lambda'}:${now}`, expiresAt });
         await ddb.send(new UpdateItemCommand({
           TableName: TBL_SCHEDULED,
           Key: { PK: { S: pk }, SK: { S: sk } },
@@ -2331,8 +2927,10 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
             ":now": { N: String(now) }
           }
         }));
+        console.log('[gen] lock acquired', { pk, sk });
       } catch (e) {
         // ロック取得失敗 -> 他プロセスで処理中
+        console.log('[gen] lock acquire failed, skipping', { pk, sk, err: String(e) });
         continue;
       }
 
@@ -2495,17 +3093,37 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
 
       // 削除対象を判定してThreads APIで削除を試みる（共通ユーティリティ経由、詳細ログ追加）
       try {
-        const { deleteThreadPost } = await import("../../../packages/backend-core/src/services/threadsDelete");
+        // dynamic import workaround for monorepo path resolution in Lambda build
+        let deleteThreadPost: any = null;
+        try {
+          // preferred local package path
+          const mod = await import("../../../packages/backend-core/src/services/threadsDelete");
+          deleteThreadPost = mod.deleteThreadPost;
+        } catch (e) {
+          try {
+            // attempt to load from package name (might not exist in lambda build)
+            const pkgMod = await import("@autosnsflow/backend-core").catch(() => null);
+            if (pkgMod && pkgMod.deleteThreadPost) deleteThreadPost = pkgMod.deleteThreadPost;
+            else deleteThreadPost = null;
+          } catch (e2) {
+            deleteThreadPost = null;
+          }
+        }
 
         // トークンハッシュを作成（ログにそのままトークンを出さない）
         const tokenHash = acct.accessToken ? crypto.createHash("sha256").update(acct.accessToken).digest("hex").slice(0, 12) : "";
 
         let deleteResult: any = null;
-        if (deleteParent && postId) {
-          deleteResult = await deleteThreadPost({ postId, accessToken: acct.accessToken });
-        }
-        if (!deleteParent && secondId) {
-          deleteResult = await deleteThreadPost({ postId: secondId, accessToken: acct.accessToken });
+        if (deleteThreadPost) {
+          if (deleteParent && postId) {
+            deleteResult = await deleteThreadPost({ postId, accessToken: acct.accessToken });
+          }
+          if (!deleteParent && secondId) {
+            deleteResult = await deleteThreadPost({ postId: secondId, accessToken: acct.accessToken });
+          }
+        } else {
+          // Could not load deleteThreadPost module; mark as skipped
+          deleteResult = { ok: false, status: 0, body: 'deleteThreadPost module missing' };
         }
 
         // Delete result must be checked
@@ -2528,6 +3146,71 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
         await putLog({ userId, type: "second-stage-delete", accountId: acct.accountId, targetId: sk, status: "error", message: "二段階投稿削除に失敗", detail: { error: String(e), whichFlagUsed: flagSource || 'unknown', deleteTarget: deleteParent ? 'parent' : 'second-stage', postId: postId || '', secondId: secondId || '' } });
       }
     }
+
+    // If GSI returned candidates but none were processed (all skipped), try a limited PK fallback
+    try {
+      const hadGsiCandidates = (q.Items || []).length > 0;
+      if (hadGsiCandidates && generated === 0) {
+        try {
+          await putLog({ userId, type: 'gsi-fallback-run', accountId: acct.accountId, status: 'warn', message: 'GSI candidates skipped; running PK fallback' });
+        } catch (_) {}
+        try { await postDiscordLog({ userId, isError: true, content: `**[FALLBACK] GSI candidates skipped for user=${userId} account=${acct.accountId}; running PK fallback**` }); } catch (_) {}
+
+        const fb = await ddb.send(new QueryCommand({
+          TableName: TBL_SCHEDULED,
+          KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+          ExpressionAttributeValues: {
+            ":pk": { S: `USER#${userId}` },
+            ":pfx": { S: "SCHEDULEDPOST#" },
+            ":acc": { S: acct.accountId },
+            ":now": { N: String(now) },
+            ":f": { BOOL: false }
+          },
+          FilterExpression: "accountId = :acc AND (attribute_not_exists(status) OR status = :scheduled) AND (attribute_not_exists(isDeleted) OR isDeleted = :f) AND scheduledAt <= :now",
+          ExpressionAttributeNames: { "#st": "status" },
+          ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts",
+          ScanIndexForward: true,
+          Limit: 50
+        }));
+
+        const fbItems = (fb.Items || []);
+        console.log('[gen] PK fallback returned', { count: fbItems.length });
+        for (const fit of fbItems) {
+          if (generated >= limit) break;
+          const fpk = getS(fit.PK) || ''; const fsk = getS(fit.SK) || '';
+          console.log('[gen] fallback evaluating', { fpk, fsk });
+          const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: fpk }, SK: { S: fsk } } }));
+          const rec = unmarshall(full.Item || {});
+          const contentEmpty = !rec.content || String(rec.content || '').trim() === '';
+          const nextGen = Number(rec.nextGenerateAt || 0);
+          if (!contentEmpty) { console.log('[gen] fallback skip content present', { fpk, fsk }); continue; }
+          if (nextGen > now) { console.log('[gen] fallback skip nextGenerateAt future', { fpk, fsk, nextGen }); continue; }
+          // attempt lock
+          try {
+            await ddb.send(new UpdateItemCommand({
+              TableName: TBL_SCHEDULED,
+              Key: { PK: { S: fpk }, SK: { S: fsk } },
+              UpdateExpression: "SET #lock = :id, generateLockedAt = :ts",
+              ConditionExpression: "attribute_not_exists(#lock) OR generateLockedAt < :now",
+              ExpressionAttributeNames: { "#lock": 'generateLock' },
+              ExpressionAttributeValues: { ":id": { S: `worker:${process.env.AWS_LAMBDA_LOG_STREAM_NAME || 'lambda'}:${now}` }, ":ts": { N: String(now + 600) }, ":now": { N: String(now) } }
+            }));
+          } catch (e) {
+            console.log('[gen] fallback lock failed', { fpk, fsk, err: String(e) });
+            continue;
+          }
+
+          try {
+            await generateAndAttachContent(userId, acct, fsk.replace(/^SCHEDULEDPOST#/, ''), rec.theme || '', await getUserSettings(userId));
+            generated++;
+            console.log('[gen] fallback generated', { fpk, fsk });
+          } catch (e) {
+            console.log('[gen] fallback generation failed', { fpk, fsk, err: String(e) });
+          }
+          try { await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: fpk }, SK: { S: fsk } }, UpdateExpression: "REMOVE generateLock, generateLockedAt" })); } catch(_) {}
+        }
+      }
+    } catch (e) { console.log('[gen] fallback error', String(e)); }
   } catch (e) {
     console.log("[warn] performScheduledDeletesForAccount error:", e);
   }
