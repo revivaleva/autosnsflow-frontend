@@ -21,6 +21,7 @@ const DEFAULTS = {
   doublePostDelete: false,
   doublePostDeleteDelay: "60",
   parentDelete: false,
+  enableAppColumn: true,
 };
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -70,6 +71,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         doublePostDelete: it.doublePostDelete?.BOOL === true,
         doublePostDeleteDelay: it.doublePostDeleteDelay?.N ? String(it.doublePostDeleteDelay.N) : "60",
         parentDelete: it.parentDelete?.BOOL === true,
+        enableAppColumn: it.enableAppColumn?.BOOL === true,
       };
 
       return res.status(200).json({ settings });
@@ -91,6 +93,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         doublePostDelete,
         doublePostDeleteDelay,
         parentDelete,
+        enableAppColumn,
       } = body;
 
       // [ADD] 型ガード（最低限）
@@ -159,6 +162,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         names["#pdel"] = "parentDelete";
         values[":pdel"] = { BOOL: !!parentDelete };
         sets.push("#pdel = :pdel");
+      }
+      if (has(enableAppColumn)) {
+        names["#eapp"] = "enableAppColumn";
+        values[":eapp"] = { BOOL: !!enableAppColumn };
+        sets.push("#eapp = :eapp");
       }
 
       if (!sets.length) return res.status(400).json({ error: "no_fields" });

@@ -1408,23 +1408,7 @@ export const handler = async (event: any = {}) => {
           }
           break;
         }
-        case "getScheduledPost": {
-          // Return full scheduled post item for given PK/SK or scheduledPostId (for debugging)
-          try {
-            const pk = event.pk || `USER#${userId}`;
-            const sk = event.sk || (event.scheduledPostId ? `SCHEDULEDPOST#${event.scheduledPostId}` : null);
-            if (!pk || !sk) {
-              results.push({ accountId: acct.accountId, getScheduledPost: { error: 'missing pk/sk or scheduledPostId' } });
-              break;
-            }
-            const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } } }));
-            const rec = unmarshall(full.Item || {});
-            results.push({ accountId: acct.accountId, getScheduledPost: { found: !!full.Item, item: rec } });
-          } catch (e) {
-            results.push({ accountId: acct.accountId, getScheduledPost: { error: String(e) } });
-          }
-          break;
-        }
+        // removed debug action
           default:
             results.push({ accountId: acct?.accountId || "-", error: "unknown action" });
         }
@@ -2712,15 +2696,10 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
     const pid = getS(f.postId) || "";
     const nid = getS(f.numericPostId) || "";
     const pat = getN(f.postedAt) || "";
-    // verbose debug: log the raw secondStageWanted attribute and full item
-    try { console.log('[second-stage] candidate full.Item raw:', JSON.stringify(full.Item || {})); } catch (e) {}
     // secondStageWanted を尊重：存在すれば true のもののみ対象、未指定なら従来通り
     const ssw = (typeof f.secondStageWanted !== 'undefined') ? (f.secondStageWanted?.BOOL === true || String(f.secondStageWanted?.S || '').toLowerCase() === 'true') : undefined;
-    // verbose: log computed ssw
-    try { console.log('[second-stage] computed secondStageWanted (ssw):', { ssw }); } catch (e) {}
-    // Require explicit secondStageWanted === true to be eligible. If unset (undefined), treat as not eligible to avoid accidental runs.
+    // Require explicit secondStageWanted === true to be eligible.
     const ok = st === "posted" && pid && (!dp || dp !== "done") && apg.includes("自動投稿") && Number(pat || 0) <= threshold && (ssw === true);
-    try { console.log('[second-stage] candidate ok evaluation', { st, pid, dp, apg, pat, ssw, ok }); } catch (e) {}
     if (debugMode && debugTried.length < 5) debugTried.push({ ksk, st, dp, apg, pid, nid, pat, ok });
     if (ok) { found = { kpk, ksk, pid, nid, pat }; break; }
   }
@@ -2832,13 +2811,15 @@ async function runHourlyJobForUser(userId: any) {
       { label: "スキップ", value: skippedAccounts },
     ]);
   } catch (e) { /* ignore logging errors */ }
+  // `metrics` が空（= 実行なし）の場合は簡略化して 'hourly：実行なし' のみ送る
   const metrics = formatNonZeroLine([
     { label: "予約投稿作成", value: createdCount, suffix: " 件" },
     { label: "返信取得", value: fetchedReplies, suffix: " 件" },
     { label: "返信下書き", value: replyDrafts, suffix: " 件" },
     { label: "スキップ", value: skippedAccounts },
-  ]);
-  await postDiscordLog({ userId, content: `**[定期実行レポート] ${now} (hourly)**\n${metrics}` });
+  ], "hourly");
+  const content = metrics === "hourly：実行なし" ? metrics : `**[定期実行レポート] ${now} (hourly)**\n${metrics}`;
+  await postDiscordLog({ userId, content });
   return { userId, createdCount, fetchedReplies, replyDrafts, skippedAccounts };
 }
 
@@ -2859,6 +2840,8 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
   try {
     console.log('[gen] processPendingGenerationsForAccount start', { userId, accountId: acct.accountId, limit });
     let q;
+    // fetchLimit: how many candidates to fetch from GSI/PK before sorting and applying the user-requested `limit`
+    const fetchLimit = Math.max(Number(limit) * 10, 100);
     try {
       q = await ddb.send(new QueryCommand({
         TableName: TBL_SCHEDULED,
@@ -2867,7 +2850,7 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
         ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
         ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, generateLockedAt",
         ScanIndexForward: true,
-        Limit: 50
+        Limit: fetchLimit
       }));
     } catch (e) {
       // If the sparse GSI is missing, emit notification and fall back to legacy index
@@ -2885,18 +2868,34 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
         ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
         ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts",
         ScanIndexForward: true,
-        Limit: 50
+        Limit: fetchLimit
       }));
     }
 
     const items = (q.Items || []);
     console.log('[gen] query returned candidate keys', { count: items.length });
+
+    // Prefetch full items so we can sort by scheduledAt (oldest first)
+    const candidates: any[] = [];
     for (const it of items) {
+      const pk = getS(it.PK) || '';
+      const sk = getS(it.SK) || '';
+      try {
+        const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } } }));
+        const rec = unmarshall(full.Item || {});
+        candidates.push({ pk, sk, rec });
+      } catch (e) {
+        console.log('[gen] prefetch GetItem failed', { pk, sk, err: String(e) });
+      }
+    }
+
+    // Sort by scheduledAt ascending (oldest first)
+    candidates.sort((a, b) => Number(a.rec?.scheduledAt || 0) - Number(b.rec?.scheduledAt || 0));
+
+    for (const c of candidates) {
       if (generated >= limit) break;
-      const pk = getS(it.PK) || ''; const sk = getS(it.SK) || '';
+      const pk = c.pk; const sk = c.sk; const rec = c.rec || {};
       console.log('[gen] evaluating candidate', { pk, sk });
-      const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } } }));
-      const rec = unmarshall(full.Item || {});
       const contentEmpty = !rec.content || String(rec.content || '').trim() === '';
       console.log('[gen] candidate record', { pk, sk, scheduledAt: rec.scheduledAt || null, contentEmpty, nextGenerateAt: rec.nextGenerateAt || null, generateAttempts: rec.generateAttempts || 0, generateLock: rec.generateLock || null });
       // 定期実行は「本文が空のデータ」のみに対して生成を行う
@@ -2931,12 +2930,11 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
         }));
         console.log('[gen] lock acquired', { pk, sk });
       } catch (e) {
-        // ロック取得失敗 -> 他プロセスで処理中
         console.log('[gen] lock acquire failed, skipping', { pk, sk, err: String(e) });
         continue;
       }
 
-      // 生成処理（既存の generateAndAttachContent と同等の処理を呼ぶ）
+      // 生成処理
       try {
         await generateAndAttachContent(userId, acct, sk.replace(/^SCHEDULEDPOST#/, ''), rec.theme || '', await getUserSettings(userId));
         generated++;
@@ -2951,7 +2949,7 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
         }));
       }
 
-      // 正常終了または失敗後にロックをクリア（成功時は generateAndAttachContent 内で content を更新しているはず）
+      // 正常終了または失敗後にロックをクリア
       try {
         await ddb.send(new UpdateItemCommand({
           TableName: TBL_SCHEDULED,
@@ -3024,9 +3022,9 @@ async function runFiveMinJobForUser(userId: any) {
     { label: "リプ返信", value: totalReply },
     { label: "2段階投稿", value: totalTwo },
     { label: "失効(rate-limit)", value: rateSkipped },
-  ]);
-  const base = `**[定期実行レポート] ${now} (every-5min)**\n${metrics}`;
-  await postDiscordLog({ userId, content: base });
+  ], "every-5min");
+  const content = metrics === "every-5min：実行なし" ? metrics : `**[定期実行レポート] ${now} (every-5min)**\n${metrics}`;
+  await postDiscordLog({ userId, content });
   return { userId, totalAuto, totalReply, totalTwo, rateSkipped };
 }
 
@@ -3237,11 +3235,14 @@ async function postDiscordMaster(content: any) {
 }
 
 // ====== 通知: 非ゼロの項目だけを結合し、全てゼロなら「実行なし」
-function formatNonZeroLine(items: Array<{ label: string; value: number; suffix?: string }>) {
+function formatNonZeroLine(items: Array<{ label: string; value: number; suffix?: string }>, job?: string) {
   const parts = items
     .filter(i => (Number(i.value) || 0) > 0)
     .map(i => `${i.label}: ${i.value}${i.suffix || ''}`);
-  return parts.length > 0 ? parts.join(" / ") : "実行なし";
+  if (parts.length > 0) return parts.join(" / ");
+  // 簡略表示: ジョブ名が与えられれば `${job}：実行なし` を返す
+  if (job) return `${job}：実行なし`;
+  return "実行なし";
 }
 
 function formatMasterMessage({ job, startedAt, finishedAt, userTotal, userSucceeded, totals }: any) {
