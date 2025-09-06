@@ -20,6 +20,8 @@ type Settings = {
   doublePostDeleteDelay: string;
   // 親投稿も削除するか
   parentDelete: boolean;
+  // 一覧でアプリ列を表示するか
+  enableAppColumn?: boolean;
 };
 
 const DEFAULTS: Settings = {
@@ -34,6 +36,7 @@ const DEFAULTS: Settings = {
   doublePostDelete: false,
   doublePostDeleteDelay: "60",
   parentDelete: false,
+  enableAppColumn: true,
 };
 
 export default function SettingsForm() {
@@ -221,6 +224,18 @@ export default function SettingsForm() {
               <option value="true">親投稿も削除</option>
             </select>
           </div>
+        </div>
+
+        <div>
+          <label className="block text-sm text-gray-600">一覧にアプリ列を表示する</label>
+          <select
+            className="mt-1 w-full border rounded-md px-3 py-2"
+            value={values.enableAppColumn ? "true" : "false"}
+            onChange={(e) => setValues({ ...values, enableAppColumn: e.target.value === "true" })}
+          >
+            <option value="true">表示する</option>
+            <option value="false">表示しない</option>
+          </select>
         </div>
 
         <div className="flex items-center gap-4">
