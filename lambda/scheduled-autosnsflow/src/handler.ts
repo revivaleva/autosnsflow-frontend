@@ -2811,13 +2811,15 @@ async function runHourlyJobForUser(userId: any) {
       { label: "スキップ", value: skippedAccounts },
     ]);
   } catch (e) { /* ignore logging errors */ }
+  // `metrics` が空（= 実行なし）の場合は簡略化して 'hourly：実行なし' のみ送る
   const metrics = formatNonZeroLine([
     { label: "予約投稿作成", value: createdCount, suffix: " 件" },
     { label: "返信取得", value: fetchedReplies, suffix: " 件" },
     { label: "返信下書き", value: replyDrafts, suffix: " 件" },
     { label: "スキップ", value: skippedAccounts },
-  ]);
-  await postDiscordLog({ userId, content: `**[定期実行レポート] ${now} (hourly)**\n${metrics}` });
+  ], "hourly");
+  const content = metrics === "hourly：実行なし" ? metrics : `**[定期実行レポート] ${now} (hourly)**\n${metrics}`;
+  await postDiscordLog({ userId, content });
   return { userId, createdCount, fetchedReplies, replyDrafts, skippedAccounts };
 }
 
@@ -3020,9 +3022,9 @@ async function runFiveMinJobForUser(userId: any) {
     { label: "リプ返信", value: totalReply },
     { label: "2段階投稿", value: totalTwo },
     { label: "失効(rate-limit)", value: rateSkipped },
-  ]);
-  const base = `**[定期実行レポート] ${now} (every-5min)**\n${metrics}`;
-  await postDiscordLog({ userId, content: base });
+  ], "every-5min");
+  const content = metrics === "every-5min：実行なし" ? metrics : `**[定期実行レポート] ${now} (every-5min)**\n${metrics}`;
+  await postDiscordLog({ userId, content });
   return { userId, totalAuto, totalReply, totalTwo, rateSkipped };
 }
 
@@ -3233,11 +3235,14 @@ async function postDiscordMaster(content: any) {
 }
 
 // ====== 通知: 非ゼロの項目だけを結合し、全てゼロなら「実行なし」
-function formatNonZeroLine(items: Array<{ label: string; value: number; suffix?: string }>) {
+function formatNonZeroLine(items: Array<{ label: string; value: number; suffix?: string }>, job?: string) {
   const parts = items
     .filter(i => (Number(i.value) || 0) > 0)
     .map(i => `${i.label}: ${i.value}${i.suffix || ''}`);
-  return parts.length > 0 ? parts.join(" / ") : "実行なし";
+  if (parts.length > 0) return parts.join(" / ");
+  // 簡略表示: ジョブ名が与えられれば `${job}：実行なし` を返す
+  if (job) return `${job}：実行なし`;
+  return "実行なし";
 }
 
 function formatMasterMessage({ job, startedAt, finishedAt, userTotal, userSucceeded, totals }: any) {
