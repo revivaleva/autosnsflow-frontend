@@ -303,7 +303,7 @@ export default function SNSAccountsTable() {
                 <td className="py-2 px-3">
                   <div className="flex items-center justify-center">
                     <button
-                      className="bg-indigo-500 text-white rounded px-3 py-1 hover:bg-indigo-600"
+                      className="bg-indigo-500 text-white rounded px-3 py-1 hover:bg-indigo-600 whitespace-nowrap"
                       onClick={() => handleOpenInApp(acc)}
                       title="アプリ"
                     >
