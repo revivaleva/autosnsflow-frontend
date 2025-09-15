@@ -1476,6 +1476,23 @@ export const handler = async (event: any = {}) => {
     return { statusCode: 200, body: JSON.stringify({ processedUsers: userIds.length, userSucceeded, totals }) };
   }
 
+  // daily prune: delete scheduled posts older than 7 days (未投稿かつ未論理削除のもの)
+  if (job === "daily-prune" || job === "prune") {
+    const userIds = await getActiveUserIds();
+    let totalDeleted = 0;
+    for (const uid of userIds) {
+      try {
+        const c = await pruneOldScheduledPosts(uid);
+        totalDeleted += Number(c || 0);
+      } catch (e) {
+        console.log("[warn] daily-prune failed for", uid, e);
+        await putLog({ userId: uid, type: "prune", status: "error", message: "daily prune failed", detail: { error: String(e) } });
+      }
+    }
+    await postDiscordMaster( `**[PRUNE] scheduled posts older than 7 days deleted: ${totalDeleted}**` );
+    return { statusCode: 200, body: JSON.stringify({ deleted: totalDeleted }) };
+  }
+
   // every-5min（デフォルト）
   const userIds = await getActiveUserIds();
   let userSucceeded = 0;
@@ -3213,6 +3230,55 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
     } catch (e) { console.log('[gen] fallback error', String(e)); }
   } catch (e) {
     console.log("[warn] performScheduledDeletesForAccount error:", e);
+  }
+}
+
+// 指定ユーザーの予約投稿で、scheduledAt が 7 日以上前かつ未投稿のものを物理削除する
+async function pruneOldScheduledPosts(userId: any) {
+  try {
+    const sevenDaysAgo = Math.floor(Date.now() / 1000) - (7 * 24 * 60 * 60);
+    // Use GSI if available for account-based queries, otherwise scan PK
+    let lastKey: any = undefined;
+    let totalDeleted = 0;
+    do {
+      const q = await ddb.send(new QueryCommand({
+        TableName: TBL_SCHEDULED,
+        KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+        ExpressionAttributeValues: { 
+          ":pk": { S: `USER#${userId}` },
+          ":pfx": { S: "SCHEDULEDPOST#" },
+        },
+        ProjectionExpression: "PK, SK, scheduledAt, status, isDeleted",
+        ExclusiveStartKey: lastKey,
+      }));
+
+      for (const it of (q.Items || [])) {
+        try {
+          const scheduledAt = Number(getN(it.scheduledAt) || 0);
+          const status = getS(it.status) || "";
+          const isDeleted = it.isDeleted?.BOOL === true;
+          if (isDeleted) continue;
+          if (status === "posted") continue;
+          if (!scheduledAt) continue;
+          if (scheduledAt <= sevenDaysAgo) {
+            await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: it.PK, SK: it.SK } }));
+            totalDeleted++;
+          }
+        } catch (e) {
+          console.log("[warn] prune delete failed for item", e);
+        }
+      }
+
+      lastKey = q.LastEvaluatedKey;
+    } while (lastKey);
+
+    if (totalDeleted > 0) {
+      await putLog({ userId, type: "prune", status: "info", message: `古い予約投稿 ${totalDeleted} 件を削除しました` });
+    }
+    return totalDeleted;
+  } catch (e) {
+    console.log("[warn] pruneOldScheduledPosts failed:", e);
+    throw e;
   }
 }
 
