@@ -1478,10 +1478,23 @@ export const handler = async (event: any = {}) => {
 
   // daily prune: delete scheduled posts older than 7 days (未投稿かつ未論理削除のもの)
   if (job === "daily-prune" || job === "prune") {
-    const userIds = await getActiveUserIds();
+    // Options:
+    // - event.dryRun (boolean): true = do not delete, only count and log candidates
+    // - event.userId (string): if provided, only run for that user
+    const dryRun = !!event.dryRun;
+    const singleUser = event.userId || null;
+
+    const userIds = singleUser ? [singleUser] : await getActiveUserIds();
     let totalDeleted = 0;
+    let totalCandidates = 0;
     for (const uid of userIds) {
       try {
+        if (dryRun) {
+          const cands = await countPruneCandidates(uid);
+          totalCandidates += cands;
+          await putLog({ userId: uid, type: "prune", status: "info", message: `dry-run: ${cands} 削除候補` });
+          continue;
+        }
         const c = await pruneOldScheduledPosts(uid);
         totalDeleted += Number(c || 0);
       } catch (e) {
@@ -1489,7 +1502,13 @@ export const handler = async (event: any = {}) => {
         await putLog({ userId: uid, type: "prune", status: "error", message: "daily prune failed", detail: { error: String(e) } });
       }
     }
-    await postDiscordMaster( `**[PRUNE] scheduled posts older than 7 days deleted: ${totalDeleted}**` );
+
+    if (dryRun) {
+      await postDiscordMaster(`**[PRUNE dry-run] candidates across users: ${totalCandidates}**`);
+      return { statusCode: 200, body: JSON.stringify({ dryRun: true, candidates: totalCandidates }) };
+    }
+
+    await postDiscordMaster(`**[PRUNE] scheduled posts older than 7 days deleted: ${totalDeleted}**`);
     return { statusCode: 200, body: JSON.stringify({ deleted: totalDeleted }) };
   }
 
@@ -3278,6 +3297,48 @@ async function pruneOldScheduledPosts(userId: any) {
     return totalDeleted;
   } catch (e) {
     console.log("[warn] pruneOldScheduledPosts failed:", e);
+    throw e;
+  }
+}
+
+// 削除候補の件数だけを数える dry-run 用関数
+async function countPruneCandidates(userId: any) {
+  try {
+    const sevenDaysAgo = Math.floor(Date.now() / 1000) - (7 * 24 * 60 * 60);
+    let lastKey: any = undefined;
+    let totalCandidates = 0;
+    do {
+      const q = await ddb.send(new QueryCommand({
+        TableName: TBL_SCHEDULED,
+        KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+        ExpressionAttributeValues: { 
+          ":pk": { S: `USER#${userId}` },
+          ":pfx": { S: "SCHEDULEDPOST#" },
+        },
+        ProjectionExpression: "scheduledAt, status, isDeleted",
+        ExclusiveStartKey: lastKey,
+      }));
+
+      for (const it of (q.Items || [])) {
+        try {
+          const scheduledAt = Number(getN(it.scheduledAt) || 0);
+          const status = getS(it.status) || "";
+          const isDeleted = it.isDeleted?.BOOL === true;
+          if (isDeleted) continue;
+          if (status === "posted") continue;
+          if (!scheduledAt) continue;
+          if (scheduledAt <= sevenDaysAgo) totalCandidates++;
+        } catch (e) {
+          // continue
+        }
+      }
+
+      lastKey = q.LastEvaluatedKey;
+    } while (lastKey);
+
+    return totalCandidates;
+  } catch (e) {
+    console.log("[warn] countPruneCandidates failed:", e);
     throw e;
   }
 }
