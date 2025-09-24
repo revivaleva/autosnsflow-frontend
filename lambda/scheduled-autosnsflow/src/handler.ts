@@ -1487,12 +1487,17 @@ export const handler = async (event: any = {}) => {
     const userIds = singleUser ? [singleUser] : await getActiveUserIds();
     let totalDeleted = 0;
     let totalCandidates = 0;
+    let totalScanned = 0;
+    let totalScanned = 0;
     for (const uid of userIds) {
       try {
         if (dryRun) {
-          const cands = await countPruneCandidates(uid);
+          const res = await countPruneCandidates(uid);
+          const cands = res?.candidates || 0;
+          const scanned = res?.scanned || 0;
           totalCandidates += cands;
-          await putLog({ userId: uid, type: "prune", status: "info", message: `dry-run: ${cands} 削除候補` });
+          totalScanned += scanned;
+          await putLog({ userId: uid, type: "prune", status: "info", message: `dry-run: ${cands} 削除候補 (scanned=${scanned})` });
           continue;
         }
         const c = await pruneOldScheduledPosts(uid);
@@ -1504,8 +1509,8 @@ export const handler = async (event: any = {}) => {
     }
 
     if (dryRun) {
-      await postDiscordMaster(`**[PRUNE dry-run] candidates across users: ${totalCandidates}**`);
-      return { statusCode: 200, body: JSON.stringify({ dryRun: true, candidates: totalCandidates }) };
+      await postDiscordMaster(`**[PRUNE dry-run] candidates across users: ${totalCandidates} (scanned=${totalScanned})**`);
+      return { statusCode: 200, body: JSON.stringify({ dryRun: true, candidates: totalCandidates, scanned: totalScanned }) };
     }
 
     await postDiscordMaster(`**[PRUNE] scheduled posts older than 7 days deleted: ${totalDeleted}**`);
@@ -3324,6 +3329,7 @@ async function countPruneCandidates(userId: any) {
           const scheduledAt = Number(getN(it.scheduledAt) || 0);
           const status = getS(it.status) || "";
           const isDeleted = it.isDeleted?.BOOL === true;
+          totalScanned++;
           if (isDeleted) continue;
           if (status === "posted") continue;
           if (!scheduledAt) continue;
@@ -3336,7 +3342,7 @@ async function countPruneCandidates(userId: any) {
       lastKey = q.LastEvaluatedKey;
     } while (lastKey);
 
-    return totalCandidates;
+    return { candidates: totalCandidates, scanned: totalScanned };
   } catch (e) {
     console.log("[warn] countPruneCandidates failed:", e);
     throw e;
