@@ -70,6 +70,17 @@ const sanitizeItem = (it: any) => {
   return out;
 };
 
+// Normalize DynamoDB epoch value to seconds.
+// Handles values stored in seconds or milliseconds.
+function normalizeEpochSec(raw: any): number {
+  if (raw === null || typeof raw === 'undefined') return 0;
+  const v = Number(raw);
+  if (!isFinite(v)) return 0;
+  // Heuristic: if value looks like milliseconds (> 1e12), convert to seconds
+  if (v > 1e12) return Math.floor(v / 1000);
+  return Math.floor(v);
+}
+
 const isValidUrl = (s: any) => {
   try {
     if (!s || typeof s !== 'string') return false;
@@ -3376,7 +3387,7 @@ async function countPruneCandidates(userId: any) {
 
       for (const it of (q.Items || [])) {
         try {
-          const scheduledAt = Number(getN(it.scheduledAt) || 0);
+          const scheduledAt = normalizeEpochSec(getN(it.scheduledAt) || 0);
           const status = getS(it.status) || "";
           const isDeleted = it.isDeleted?.BOOL === true;
           totalScanned++;
@@ -3460,7 +3471,7 @@ async function countPostedCandidates(userId: any) {
           totalScanned++;
           const status = getS(it.status) || "";
           const isDeleted = it.isDeleted?.BOOL === true;
-          const postedAt = Number(getN(it.postedAt) || 0);
+          const postedAt = normalizeEpochSec(getN(it.postedAt) || 0);
           // postedAt > 0 or status === 'posted' indicates posted
           if (isDeleted) continue;
           if (postedAt > 0 || status === 'posted') totalCandidates++;
