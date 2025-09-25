@@ -1488,7 +1488,6 @@ export const handler = async (event: any = {}) => {
     let totalDeleted = 0;
     let totalCandidates = 0;
     let totalScanned = 0;
-    let totalScanned = 0;
     for (const uid of userIds) {
       try {
         if (dryRun) {
