@@ -3325,6 +3325,8 @@ async function pruneOldScheduledPosts(userId: any) {
     // Use GSI if available for account-based queries, otherwise scan PK
     let lastKey: any = undefined;
     let totalDeleted = 0;
+    // Per-account deletion limit to avoid large single-run deletes
+    const perAccountLimit = Number(process.env.PER_ACCOUNT_PRUNE_LIMIT || 20);
     do {
       const q = await ddb.send(new QueryCommand({
         TableName: TBL_SCHEDULED,
@@ -3334,6 +3336,7 @@ async function pruneOldScheduledPosts(userId: any) {
           ":pfx": { S: "SCHEDULEDPOST#" },
         },
         ProjectionExpression: "PK, SK, scheduledAt, status, isDeleted",
+        Limit: 1000,
         ExclusiveStartKey: lastKey,
       }));
 
@@ -3345,10 +3348,17 @@ async function pruneOldScheduledPosts(userId: any) {
           if (scheduledAt <= sevenDaysAgo) {
             await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: it.PK, SK: it.SK } }));
             totalDeleted++;
+            // enforce per-account cap
+            if (totalDeleted >= perAccountLimit) break;
           }
         } catch (e) {
           console.log("[warn] prune delete failed for item", e);
         }
+      }
+
+      // stop if we hit limit for this account
+      if (totalDeleted >= perAccountLimit) {
+        break;
       }
 
       lastKey = q.LastEvaluatedKey;
@@ -3380,6 +3390,7 @@ async function countPruneCandidates(userId: any) {
           ":pfx": { S: "SCHEDULEDPOST#" },
         },
         ProjectionExpression: "scheduledAt, status, isDeleted",
+        Limit: 1000,
         ExclusiveStartKey: lastKey,
       }));
 
