@@ -1558,16 +1558,9 @@ export const handler = async (event: any = {}) => {
 
     if (dryRun) {
       const finishedAt = Date.now();
-      await postDiscordMaster(
-        formatMasterMessage({
-          job: "daily-prune",
-          startedAt,
-          finishedAt,
-          userTotal: userIds.length,
-          userSucceeded: 0,
-          totals: { candidates: totalCandidates, scanned: totalScanned, deleted: 0, preFilterTotal }
-        })
-      );
+      // build totals object expected by formatMasterMessage
+      const t = { candidates: totalCandidates, scanned: totalScanned, deleted: 0, preFilterTotal } as any;
+      await postDiscordMaster(formatMasterMessage({ job: "daily-prune", startedAt, finishedAt, userTotal: userIds.length, userSucceeded: 0, totals: t }));
       return { statusCode: 200, body: JSON.stringify({ dryRun: true, preFilterTotal, candidates: totalCandidates, scanned: totalScanned }) };
     }
 
@@ -1576,16 +1569,8 @@ export const handler = async (event: any = {}) => {
       try {
         const allDeleted = await pruneOldScheduledPostsAll();
         const finishedAt = Date.now();
-        await postDiscordMaster(
-          formatMasterMessage({
-            job: "daily-prune",
-            startedAt,
-            finishedAt,
-            userTotal: userIds.length,
-            userSucceeded: userSucceeded,
-            totals: { candidates: totalCandidates, scanned: totalScanned, deleted: allDeleted, preFilterTotal }
-          })
-        );
+        const t = { candidates: totalCandidates, scanned: totalScanned, deleted: allDeleted, preFilterTotal } as any;
+        await postDiscordMaster(formatMasterMessage({ job: "daily-prune", startedAt, finishedAt, userTotal: userIds.length, userSucceeded, totals: t }));
         return { statusCode: 200, body: JSON.stringify({ deleted: allDeleted, preFilterTotal }) };
       } catch (e) {
         console.log('[warn] full-table prune failed:', e);
@@ -1595,16 +1580,8 @@ export const handler = async (event: any = {}) => {
     }
 
     const finishedAt = Date.now();
-    await postDiscordMaster(
-      formatMasterMessage({
-        job: "daily-prune",
-        startedAt,
-        finishedAt,
-        userTotal: userIds.length,
-        userSucceeded: userSucceeded,
-        totals: { candidates: totalCandidates, scanned: totalScanned, deleted: totalDeleted, preFilterTotal }
-      })
-    );
+    const t = { candidates: totalCandidates, scanned: totalScanned, deleted: totalDeleted, preFilterTotal } as any;
+    await postDiscordMaster(formatMasterMessage({ job: "daily-prune", startedAt, finishedAt, userTotal: userIds.length, userSucceeded, totals: t }));
     return { statusCode: 200, body: JSON.stringify({ deleted: totalDeleted }) };
   }
 
