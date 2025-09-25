@@ -3339,11 +3339,8 @@ async function pruneOldScheduledPosts(userId: any) {
 
       for (const it of (q.Items || [])) {
         try {
-          const scheduledAt = Number(getN(it.scheduledAt) || 0);
-          const status = getS(it.status) || "";
-          const isDeleted = it.isDeleted?.BOOL === true;
-          if (isDeleted) continue;
-          if (status === "posted") continue;
+          const scheduledAt = normalizeEpochSec(getN(it.scheduledAt) || 0);
+          // NOTE: per request, do not filter by status or isDeleted — delete purely by scheduledAt age
           if (!scheduledAt) continue;
           if (scheduledAt <= sevenDaysAgo) {
             await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: it.PK, SK: it.SK } }));
@@ -3388,11 +3385,8 @@ async function countPruneCandidates(userId: any) {
       for (const it of (q.Items || [])) {
         try {
           const scheduledAt = normalizeEpochSec(getN(it.scheduledAt) || 0);
-          const status = getS(it.status) || "";
-          const isDeleted = it.isDeleted?.BOOL === true;
           totalScanned++;
-          if (isDeleted) continue;
-          if (status === "posted") continue;
+          // NOTE: per request, do not filter by status or isDeleted — count purely by scheduledAt age
           if (!scheduledAt) continue;
           if (scheduledAt <= sevenDaysAgo) totalCandidates++;
         } catch (e) {
