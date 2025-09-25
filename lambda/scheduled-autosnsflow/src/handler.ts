@@ -1476,7 +1476,8 @@ export const handler = async (event: any = {}) => {
     return { statusCode: 200, body: JSON.stringify({ processedUsers: userIds.length, userSucceeded, totals }) };
   }
 
-  // daily prune: delete scheduled posts older than 7 days (未投稿かつ未論理削除のもの)
+  // daily prune: delete scheduled posts older than 7 days
+  // NOTE: caller can request full-table operation by omitting event.userId
   if (job === "daily-prune" || job === "prune") {
     // Options:
     // - event.dryRun (boolean): true = do not delete, only count and log candidates
@@ -1487,6 +1488,16 @@ export const handler = async (event: any = {}) => {
     const confirmPostedDelete = !!event.confirm; // safety: require confirm=true to actually delete posted items
 
     const userIds = singleUser ? [singleUser] : await getActiveUserIds();
+    // If no userId specified, also compute pre-filter total across the whole table
+    let preFilterTotal: number | null = null;
+    if (!singleUser) {
+      try {
+        preFilterTotal = await countAllScheduledPosts();
+        await postDiscordMaster(`**[PRUNE] pre-filter total items across table: ${preFilterTotal}**`);
+      } catch (e) {
+        console.log('[warn] countAllScheduledPosts failed:', e);
+      }
+    }
     let totalDeleted = 0;
     let totalCandidates = 0;
     let totalScanned = 0;
@@ -1536,7 +1547,20 @@ export const handler = async (event: any = {}) => {
 
     if (dryRun) {
       await postDiscordMaster(`**[PRUNE dry-run] candidates across users: ${totalCandidates} (scanned=${totalScanned})**`);
-      return { statusCode: 200, body: JSON.stringify({ dryRun: true, candidates: totalCandidates, scanned: totalScanned }) };
+      return { statusCode: 200, body: JSON.stringify({ dryRun: true, preFilterTotal, candidates: totalCandidates, scanned: totalScanned }) };
+    }
+
+    // If no userId was specified, perform full-table prune
+    if (!singleUser) {
+      try {
+        const allDeleted = await pruneOldScheduledPostsAll();
+        await postDiscordMaster(`**[PRUNE] full-table deleted: ${allDeleted} (preFilterTotal=${preFilterTotal})**`);
+        return { statusCode: 200, body: JSON.stringify({ deleted: allDeleted, preFilterTotal }) };
+      } catch (e) {
+        console.log('[warn] full-table prune failed:', e);
+        await postDiscordMaster(`**[PRUNE] full-table prune failed**`);
+        return { statusCode: 500, body: JSON.stringify({ error: String(e) }) };
+      }
     }
 
     await postDiscordMaster(`**[PRUNE] scheduled posts older than 7 days deleted: ${totalDeleted}**`);
@@ -3371,6 +3395,44 @@ async function countPruneCandidates(userId: any) {
     return { candidates: totalCandidates, scanned: totalScanned };
   } catch (e) {
     console.log("[warn] countPruneCandidates failed:", e);
+    throw e;
+  }
+}
+
+// Count ALL scheduled posts in the table (pre-filter total)
+async function countAllScheduledPosts() {
+  try {
+    let lastKey: any = undefined;
+    let total = 0;
+    do {
+      const q = await ddb.send(new ScanCommand({
+        TableName: TBL_SCHEDULED,
+        ProjectionExpression: "PK",
+        ExclusiveStartKey: lastKey,
+        Limit: 1000,
+      }));
+      total += (q.Count || 0);
+      lastKey = q.LastEvaluatedKey;
+    } while (lastKey);
+    return total;
+  } catch (e) {
+    console.log('[warn] countAllScheduledPosts failed:', e);
+    throw e;
+  }
+}
+
+// Full-table prune helper: iterate all users and run pruneOldScheduledPosts
+async function pruneOldScheduledPostsAll() {
+  try {
+    const userIds = await getActiveUserIds();
+    let totalDeleted = 0;
+    for (const uid of userIds) {
+      const c = await pruneOldScheduledPosts(uid);
+      totalDeleted += Number(c || 0);
+    }
+    return totalDeleted;
+  } catch (e) {
+    console.log('[warn] pruneOldScheduledPostsAll failed:', e);
     throw e;
   }
 }
