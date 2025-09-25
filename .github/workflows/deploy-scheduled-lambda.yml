@@ -31,22 +31,7 @@ jobs:
       - name: Install (lambda only)
         working-directory: lambda/scheduled-autosnsflow
         run: |
-          # Use same safe install pattern as other packages to avoid npm ci issues
-          if [ -f package-lock.json ]; then
-            npm ci || (echo "npm ci failed, trying npm install" && npm install --no-audit --no-fund)
-          else
-            npm install --no-audit --no-fund
-          fi
-
-      - name: Debug: show node/npm and package files
-        working-directory: lambda/scheduled-autosnsflow
-        run: |
-          echo "node: $(node -v)";
-          echo "npm: $(npm -v)";
-          echo "PWD: $(pwd)";
-          ls -la
-          echo "---- package.json ----"; sed -n '1,120p' package.json || true
-          echo "---- package-lock.json (head) ----"; [ -f package-lock.json ] && sed -n '1,40p' package-lock.json || echo 'no lockfile'
+          if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi
 
       - name: Build & Zip Lambda
         working-directory: lambda/scheduled-autosnsflow
