@@ -3382,6 +3382,17 @@ async function countPruneCandidates(userId: any) {
         ExclusiveStartKey: lastKey,
       }));
 
+      // Emit debug for first N items to help troubleshooting
+      const dbgItems = (q.Items || []).slice(0, 20).map((it: any) => ({
+        PK: undefined,
+        SK: undefined,
+        scheduledAtRaw: it.scheduledAt?.N || null,
+        scheduledAtNorm: normalizeEpochSec(getN(it.scheduledAt) || 0),
+        status: it.status?.S || null,
+        isDeleted: typeof it.isDeleted !== 'undefined' ? it.isDeleted?.BOOL === true : null,
+      }));
+      try { console.log('[PRUNE-DBG] sample items for user', userId, dbgItems); } catch (_) {}
+
       for (const it of (q.Items || [])) {
         try {
           const scheduledAt = normalizeEpochSec(getN(it.scheduledAt) || 0);
