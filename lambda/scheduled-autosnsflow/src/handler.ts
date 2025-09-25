@@ -3325,8 +3325,10 @@ async function pruneOldScheduledPosts(userId: any) {
     // Use GSI if available for account-based queries, otherwise scan PK
     let lastKey: any = undefined;
     let totalDeleted = 0;
-    // Per-account deletion limit to avoid large single-run deletes
+    // Per-Threads-account deletion limit to avoid large single-run deletes
     const perAccountLimit = Number(process.env.PER_ACCOUNT_PRUNE_LIMIT || 20);
+    // track deletes per Threads accountId (accountId field inside scheduled items)
+    const deletedByAccount: Record<string, number> = {};
     do {
       const q = await ddb.send(new QueryCommand({
         TableName: TBL_SCHEDULED,
@@ -3335,7 +3337,8 @@ async function pruneOldScheduledPosts(userId: any) {
           ":pk": { S: `USER#${userId}` },
           ":pfx": { S: "SCHEDULEDPOST#" },
         },
-        ProjectionExpression: "PK, SK, scheduledAt, status, isDeleted",
+        // include accountId so we can enforce per-Threads-account caps
+        ProjectionExpression: "PK, SK, scheduledAt, status, isDeleted, accountId",
         Limit: 1000,
         ExclusiveStartKey: lastKey,
       }));
@@ -3346,18 +3349,24 @@ async function pruneOldScheduledPosts(userId: any) {
           // NOTE: per request, do not filter by status or isDeleted — delete purely by scheduledAt age
           if (!scheduledAt) continue;
           if (scheduledAt <= sevenDaysAgo) {
+            const acctId = getS(it.accountId) || "__unknown__";
+            const cur = deletedByAccount[acctId] || 0;
+            if (cur >= perAccountLimit) {
+              // reached cap for this Threads account
+              continue;
+            }
             await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: it.PK, SK: it.SK } }));
             totalDeleted++;
-            // enforce per-account cap
-            if (totalDeleted >= perAccountLimit) break;
+            deletedByAccount[acctId] = cur + 1;
           }
         } catch (e) {
           console.log("[warn] prune delete failed for item", e);
         }
       }
 
-      // stop if we hit limit for this account
-      if (totalDeleted >= perAccountLimit) {
+      // If every seen account has reached cap, we can stop early. This is a heuristic — if new accounts may appear later, the loop continues.
+      const allReached = Object.values(deletedByAccount).every(v => v >= perAccountLimit) && Object.keys(deletedByAccount).length > 0;
+      if (allReached) {
         break;
       }
 
