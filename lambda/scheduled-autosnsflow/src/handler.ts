@@ -1486,20 +1486,6 @@ export const handler = async (event: any = {}) => {
 
     return { statusCode: 200, body: JSON.stringify({ processedUsers: userIds.length, userSucceeded, totals }) };
   }
-  if (job === "daily-prune" || job === "prune") {
-    const line = formatNonZeroLine([
-      { label: "削除候補", value: totals?.candidates || 0, suffix: " 件" },
-      { label: "スキャン", value: totals?.scanned || 0, suffix: " 件" },
-      { label: "削除済み", value: totals?.deleted || 0, suffix: " 件" },
-      { label: "テーブル合計", value: totals?.preFilterTotal || 0, suffix: " 件" },
-    ]);
-    return [
-      `**[MASTER] 定期実行サマリ ${iso} (daily-prune)**`,
-      `スキャンユーザー数: ${userTotal} / 実行成功: ${userSucceeded}`,
-      line,
-      `所要時間: ${durSec}s`
-    ].join("\n");
-  }
 
   // daily prune: delete scheduled posts older than 7 days
   // NOTE: caller can request full-table operation by omitting event.userId
