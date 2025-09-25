@@ -3370,6 +3370,7 @@ async function countPruneCandidates(userId: any) {
     const sevenDaysAgo = Math.floor(Date.now() / 1000) - (7 * 24 * 60 * 60);
     let lastKey: any = undefined;
     let totalCandidates = 0;
+    let totalScanned = 0;
     do {
       const q = await ddb.send(new QueryCommand({
         TableName: TBL_SCHEDULED,
