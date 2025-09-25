@@ -1486,6 +1486,20 @@ export const handler = async (event: any = {}) => {
 
     return { statusCode: 200, body: JSON.stringify({ processedUsers: userIds.length, userSucceeded, totals }) };
   }
+  if (job === "daily-prune" || job === "prune") {
+    const line = formatNonZeroLine([
+      { label: "削除候補", value: totals?.candidates || 0, suffix: " 件" },
+      { label: "スキャン", value: totals?.scanned || 0, suffix: " 件" },
+      { label: "削除済み", value: totals?.deleted || 0, suffix: " 件" },
+      { label: "テーブル合計", value: totals?.preFilterTotal || 0, suffix: " 件" },
+    ]);
+    return [
+      `**[MASTER] 定期実行サマリ ${iso} (daily-prune)**`,
+      `スキャンユーザー数: ${userTotal} / 実行成功: ${userSucceeded}`,
+      line,
+      `所要時間: ${durSec}s`
+    ].join("\n");
+  }
 
   // daily prune: delete scheduled posts older than 7 days
   // NOTE: caller can request full-table operation by omitting event.userId
@@ -3629,6 +3643,26 @@ function formatMasterMessage({ job, startedAt, finishedAt, userTotal, userSuccee
       `所要時間: ${durSec}s`
     ].join("\n");
   }
+
+  if (job === "daily-prune" || job === "prune") {
+    const totalRecords = Number(totals?.preFilterTotal || 0);
+    const targetRecords = Number(totals?.candidates || 0);
+    const deleted = Number(totals?.deleted || 0);
+    const remaining = Math.max(0, targetRecords - deleted);
+    const line = [
+      `スキャンユーザー数: ${userTotal}`,
+      `全レコード数: ${totalRecords}`,
+      `対象レコード数: ${targetRecords}`,
+      `削除済レコード数: ${deleted}`,
+      `残対象レコード数: ${remaining}`,
+    ].join(" / ");
+    return [
+      `**[MASTER] 定期実行サマリ ${iso} (daily-prune)**`,
+      line,
+      `所要時間: ${durSec}s`
+    ].join("\n");
+  }
+
   const line = formatNonZeroLine([
     { label: "自動投稿 合計", value: totals.totalAuto },
     { label: "リプ返信 合計", value: totals.totalReply },
