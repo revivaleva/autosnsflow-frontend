@@ -39,6 +39,8 @@ export default function ScheduledPostsTable() {
   const [repliesModalItems, setRepliesModalItems] = useState<ReplyType[]>([]);
   // [ADD] bulk selection
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  // Per-account toggle for enabling app-open on account name
+  const [appEnabledByAccount, setAppEnabledByAccount] = useState<Record<string, boolean>>({});
 
   const toggleSelect = (id: string) => {
     setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -566,6 +568,7 @@ export default function ScheduledPostsTable() {
               <th className="border p-1" style={{ width: 120 }}>二段階投稿削除</th>
               <th className="border p-1" style={{ width: 120 }}>投稿削除</th>
               <th className="border p-1" style={{ width: 90 }}>リプ状況</th>
+              <th className="border p-1" style={{ width: 120 }}>アプリ</th>
               <th className="border p-1" style={{ width: 180 }}>アクション</th>
             </tr>
           </thead>
@@ -593,8 +596,28 @@ export default function ScheduledPostsTable() {
                     )}
                   </td>
                   <td className="border p-1">
-                    <div className="text-sm font-medium">{post.accountName}</div>
-                    <div className="text-xs text-gray-500 break-words">{post.accountId}</div>
+                    {appEnabledByAccount[post.accountId] ? (
+                      <div>
+                        <a
+                          href={`/#/account/${encodeURIComponent(post.accountId)}`}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            // try open app scheme, then fallback to internal page
+                            try { window.location.href = `autosnsflow://account/${encodeURIComponent(post.accountId)}`; } catch (_) {}
+                            window.location.href = `/#/account/${encodeURIComponent(post.accountId)}`;
+                          }}
+                          className="text-sm font-medium text-blue-600 underline"
+                        >
+                          {post.accountName}
+                        </a>
+                        <div className="text-xs text-gray-500 break-words">{post.accountId}</div>
+                      </div>
+                    ) : (
+                      <div>
+                        <div className="text-sm font-medium">{post.accountName}</div>
+                        <div className="text-xs text-gray-500 break-words">{post.accountId}</div>
+                      </div>
+                    )}
                   </td>
                   <td className="border p-1">
                     {post.scheduledAt
@@ -731,6 +754,14 @@ export default function ScheduledPostsTable() {
                       }
                     >
                       {repliesStatus}
+                    </button>
+                  </td>
+                  <td className="border p-1 text-center">
+                    <button
+                      className={`px-2 py-1 rounded text-sm ${appEnabledByAccount[post.accountId] ? 'bg-green-500 text-white' : 'bg-gray-200'}`}
+                      onClick={(e) => { e.stopPropagation(); setAppEnabledByAccount(prev => ({ ...prev, [post.accountId]: !prev[post.accountId] })); }}
+                    >
+                      {appEnabledByAccount[post.accountId] ? 'ON' : 'OFF'}
                     </button>
                   </td>
                   <td className="border p-1 space-x-1">
