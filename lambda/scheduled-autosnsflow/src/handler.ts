@@ -1483,6 +1483,8 @@ export const handler = async (event: any = {}) => {
     // - event.userId (string): if provided, only run for that user
     const dryRun = !!event.dryRun;
     const singleUser = event.userId || null;
+    const deletePosted = !!event.deletePosted; // if true, perform deletion of posted records
+    const confirmPostedDelete = !!event.confirm; // safety: require confirm=true to actually delete posted items
 
     const userIds = singleUser ? [singleUser] : await getActiveUserIds();
     let totalDeleted = 0;
@@ -1490,6 +1492,31 @@ export const handler = async (event: any = {}) => {
     let totalScanned = 0;
     for (const uid of userIds) {
       try {
+        // If deletePosted mode is requested, only allow single-user operations for safety
+        if (deletePosted) {
+          if (!singleUser) {
+            // skip global posted-deletion for safety
+            await putLog({ userId: uid, type: "prune", status: "error", message: "deletePosted requested but no userId specified; skipping" });
+            continue;
+          }
+          if (dryRun) {
+            const res = await countPostedCandidates(uid);
+            const cands = res?.candidates || 0;
+            const scanned = res?.scanned || 0;
+            await putLog({ userId: uid, type: "prune", status: "info", message: `dry-run deletePosted: ${cands} candidates (scanned=${scanned})` });
+            totalCandidates += cands;
+            totalScanned += scanned;
+            continue;
+          }
+          // non-dry-run: require explicit confirmation to perform posted deletion
+          if (!confirmPostedDelete) {
+            await putLog({ userId: uid, type: "prune", status: "warn", message: "deletePosted requested but not confirmed (confirm=false); skipping" });
+            continue;
+          }
+          const del = await deletePostedForUser(uid);
+          totalDeleted += Number(del || 0);
+          continue;
+        }
         if (dryRun) {
           const res = await countPruneCandidates(uid);
           const cands = res?.candidates || 0;
@@ -3346,6 +3373,84 @@ async function countPruneCandidates(userId: any) {
     console.log("[warn] countPruneCandidates failed:", e);
     throw e;
   }
+}
+
+// Count posted records for dry-run deletePosted mode
+async function countPostedCandidates(userId: any) {
+  try {
+    let lastKey: any = undefined;
+    let totalCandidates = 0;
+    let totalScanned = 0;
+    do {
+      const q = await ddb.send(new QueryCommand({
+        TableName: TBL_SCHEDULED,
+        KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+        ExpressionAttributeValues: { 
+          ":pk": { S: `USER#${userId}` },
+          ":pfx": { S: "SCHEDULEDPOST#" },
+        },
+        ProjectionExpression: "scheduledAt, status, isDeleted, postedAt",
+        ExclusiveStartKey: lastKey,
+      }));
+
+      for (const it of (q.Items || [])) {
+        try {
+          totalScanned++;
+          const status = getS(it.status) || "";
+          const isDeleted = it.isDeleted?.BOOL === true;
+          const postedAt = Number(getN(it.postedAt) || 0);
+          // postedAt > 0 or status === 'posted' indicates posted
+          if (isDeleted) continue;
+          if (postedAt > 0 || status === 'posted') totalCandidates++;
+        } catch (e) {}
+      }
+
+      lastKey = q.LastEvaluatedKey;
+    } while (lastKey);
+
+    return { candidates: totalCandidates, scanned: totalScanned };
+  } catch (e) {
+    console.log("[warn] countPostedCandidates failed:", e);
+    throw e;
+  }
+}
+
+// Physically delete posted records for a specific user
+async function deletePostedForUser(userId: any) {
+  try {
+    let lastKey: any = undefined;
+    let totalDeleted = 0;
+    do {
+      const q = await ddb.send(new QueryCommand({
+        TableName: TBL_SCHEDULED,
+        KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+        ExpressionAttributeValues: { 
+          ":pk": { S: `USER#${userId}` },
+          ":pfx": { S: "SCHEDULEDPOST#" },
+        },
+        ProjectionExpression: "PK,SK,postedAt,status,isDeleted",
+        ExclusiveStartKey: lastKey,
+      }));
+
+      for (const it of (q.Items || [])) {
+        try {
+          const postedAt = Number(getN(it.postedAt) || 0);
+          const status = getS(it.status) || "";
+          const isDeleted = it.isDeleted?.BOOL === true;
+          if (isDeleted) continue;
+          if (postedAt > 0 || status === 'posted') {
+            await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: it.PK, SK: it.SK } }));
+            totalDeleted++;
+          }
+        } catch (e) { console.log('[warn] deletePosted failed for item', e); }
+      }
+
+      lastKey = q.LastEvaluatedKey;
+    } while (lastKey);
+
+    if (totalDeleted > 0) await putLog({ userId, type: 'prune', status: 'info', message: `deleted posted ${totalDeleted} items` });
+    return totalDeleted;
+  } catch (e) { console.log('[warn] deletePostedForUser failed:', e); throw e; }
 }
 
 /// ========== マスタ通知（集計サマリ） ==========
