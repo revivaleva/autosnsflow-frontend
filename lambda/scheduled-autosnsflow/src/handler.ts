@@ -1557,7 +1557,17 @@ export const handler = async (event: any = {}) => {
     }
 
     if (dryRun) {
-      await postDiscordMaster(`**[PRUNE dry-run] candidates across users: ${totalCandidates} (scanned=${totalScanned})**`);
+      const finishedAt = Date.now();
+      await postDiscordMaster(
+        formatMasterMessage({
+          job: "daily-prune",
+          startedAt,
+          finishedAt,
+          userTotal: userIds.length,
+          userSucceeded: 0,
+          totals: { candidates: totalCandidates, scanned: totalScanned, deleted: 0, preFilterTotal }
+        })
+      );
       return { statusCode: 200, body: JSON.stringify({ dryRun: true, preFilterTotal, candidates: totalCandidates, scanned: totalScanned }) };
     }
 
@@ -1565,7 +1575,17 @@ export const handler = async (event: any = {}) => {
     if (!singleUser) {
       try {
         const allDeleted = await pruneOldScheduledPostsAll();
-        await postDiscordMaster(`**[PRUNE] full-table deleted: ${allDeleted} (preFilterTotal=${preFilterTotal})**`);
+        const finishedAt = Date.now();
+        await postDiscordMaster(
+          formatMasterMessage({
+            job: "daily-prune",
+            startedAt,
+            finishedAt,
+            userTotal: userIds.length,
+            userSucceeded: userSucceeded,
+            totals: { candidates: totalCandidates, scanned: totalScanned, deleted: allDeleted, preFilterTotal }
+          })
+        );
         return { statusCode: 200, body: JSON.stringify({ deleted: allDeleted, preFilterTotal }) };
       } catch (e) {
         console.log('[warn] full-table prune failed:', e);
@@ -1574,7 +1594,17 @@ export const handler = async (event: any = {}) => {
       }
     }
 
-    await postDiscordMaster(`**[PRUNE] scheduled posts older than 7 days deleted: ${totalDeleted}**`);
+    const finishedAt = Date.now();
+    await postDiscordMaster(
+      formatMasterMessage({
+        job: "daily-prune",
+        startedAt,
+        finishedAt,
+        userTotal: userIds.length,
+        userSucceeded: userSucceeded,
+        totals: { candidates: totalCandidates, scanned: totalScanned, deleted: totalDeleted, preFilterTotal }
+      })
+    );
     return { statusCode: 200, body: JSON.stringify({ deleted: totalDeleted }) };
   }
 
