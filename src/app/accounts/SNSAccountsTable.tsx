@@ -244,6 +244,7 @@ export default function SNSAccountsTable() {
             {/* ▼追加カラム：2段階投稿の有無／冒頭プレビュー */}
             <th className="py-2 px-3 w-52 text-left">2段階投稿</th>
             {showAppColumn && <th className="py-2 px-3 w-40">アプリ</th>}
+              <th className="py-2 px-3 w-48">認可</th>
             {/* [DEL] 操作列（編集/削除）は廃止 */}
           </tr>
         </thead>
@@ -312,6 +313,17 @@ export default function SNSAccountsTable() {
                   </div>
                 </td>
               )}
+              <td className="py-2 px-3">
+                <div className="flex items-center justify-center">
+                  <button
+                    className="bg-yellow-500 text-white rounded px-3 py-1 hover:bg-yellow-600 whitespace-nowrap"
+                    onClick={() => { window.open('/api/auth/threads/start', '_blank'); }}
+                    title="Threads 認可を再取得"
+                  >
+                    再認可
+                  </button>
+                </div>
+              </td>
               {/* [DEL] 一覧の編集/削除ボタンは廃止 */}
             </tr>
           ))}
