@@ -27,8 +27,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
   if (accountIdFromState) {
     try {
-      const get = await ddb.send(new (require('@aws-sdk/client-dynamodb').GetItemCommand)({ TableName: TBL_THREADS, Key: { PK: { S: `USER#${req.cookies['__session'] || 'local'}` }, SK: { S: `ACCOUNT#${accountIdFromState}` } } }));
-      const it = get.Item || {};
+      // ddb.send() return typing can be broad; cast to any to access .Item safely
+      const get = await ddb.send(new (require('@aws-sdk/client-dynamodb').GetItemCommand)({ TableName: TBL_THREADS, Key: { PK: { S: `USER#${req.cookies['__session'] || 'local'}` }, SK: { S: `ACCOUNT#${accountIdFromState}` } } })) as any;
+      const it = (get && get.Item) ? get.Item : {};
       if (it.clientId && it.clientId.S) clientId = it.clientId.S;
       if (it.clientSecret && it.clientSecret.S) clientSecret = it.clientSecret.S;
     } catch (e) {
