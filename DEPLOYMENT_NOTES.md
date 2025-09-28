@@ -87,3 +87,16 @@ mv next.config.ts next.config.mjs
 - `lambda`: Lambda関数開発・デプロイ用
 
 **注意**: `lambda`ブランチの変更は自動的にLambda関数にデプロイされます。
+
+### 7. 追加ルール（Threads OAuth / 削除機能）
+
+- Threads OAuth を利用するには各アカウントごとの App ID と App Secret が必要になる場合があります。運用上は以下を満たしてください。
+  - **固定のコールバックURL** を Facebook App の `Valid OAuth Redirect URIs` に登録しておくこと（例: `https://your-domain.com/api/auth/threads/callback` / `http://localhost:3000/api/auth/threads/callback`）。
+  - フロントエンドからは `/api/auth/threads/start?accountId=<id>` を呼ぶだけで、サーバ側が該当アカウントの client_id を選択してリダイレクトします。
+  - アプリの `threads_delete` 権限を使用する場合はユーザーの再同意（re-consent）が必要です。
+
+- 投稿削除の運用ルール:
+  - 削除は Threads の API 制限（1アカウントあたり24時間で最大100件）を尊重すること。
+  - UI からの削除は二重確認を必須とし、削除実行後は `ExecutionLogs` に結果を残すこと。
+  - 大量削除を行う場合は即時100件まで削除し、残件は専用キュー (`DeletionQueue`) に保管して24時間後に再試行する（`daily-prune` を hourly に変更して利用することも検討）。
+
