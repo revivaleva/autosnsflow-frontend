@@ -223,35 +223,51 @@ export default function ScheduledPostsTable() {
     if (!window.confirm("この操作は取り消せません。投稿を完全に削除します。続行しますか？")) return;
     if (!window.confirm("最終確認：本当にこの投稿を削除しますか？")) return;
 
+    console.debug('[UI][delete] clicked', { scheduledPostId: id });
+
     const post = posts.find(p => p.scheduledPostId === id);
-    if (!post) return alert("投稿が見つかりませんでした");
+    if (!post) {
+      console.error('[UI][delete] post not found', { scheduledPostId: id });
+      return alert("投稿が見つかりませんでした");
+    }
     const numeric = (post as any).numericPostId;
-    if (!numeric) return alert("numericPostId が存在しないため削除できません");
+    console.debug('[UI][delete] post data', { scheduledPostId: id, numericPostId: numeric, accountId: post.accountId });
+    if (!numeric) {
+      console.warn('[UI][delete] numericPostId missing', { scheduledPostId: id });
+      return alert("numericPostId が存在しないため削除できません");
+    }
 
     // set deleting state
     setBulkDeleting(true);
     try {
+      const payload = { scheduledPostId: id, numericPostId: String(numeric), accountId: post.accountId };
+      console.debug('[UI][delete] calling API', payload);
       const resp = await fetch('/api/threads/delete-post', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ scheduledPostId: id, numericPostId: String(numeric), accountId: post.accountId })
+        body: JSON.stringify(payload)
       });
+      console.debug('[UI][delete] api response status', resp.status);
       const j = await resp.json().catch(() => ({}));
+      console.debug('[UI][delete] api response body', j);
       if (!resp.ok || !j?.ok) {
+        console.error('[UI][delete] api reported error', { status: resp.status, body: j });
         throw new Error(j?.error || '削除に失敗しました');
       }
 
       // physical delete: remove from UI if server deleted
       if (j.deletedCount && j.deletedCount > 0) {
+        console.info('[UI][delete] deleted scheduled post', { scheduledPostId: id, deletedCount: j.deletedCount });
         setPosts(prev => prev.filter(p => p.scheduledPostId !== id));
       } else {
-        // if not deleted, mark isDeleted true for safety
+        console.info('[UI][delete] marked isDeleted', { scheduledPostId: id });
         setPosts(prev => prev.map(p => p.scheduledPostId === id ? { ...p, isDeleted: true } : p));
       }
 
       alert(`削除完了: 削除数=${j.deletedCount || 0} 残=${j.remaining || 0}`);
     } catch (e: any) {
+      console.error('[UI][delete] failed', e);
       alert(`削除に失敗しました: ${e.message || String(e)}`);
     } finally {
       setBulkDeleting(false);
