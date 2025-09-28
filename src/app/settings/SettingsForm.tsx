@@ -245,7 +245,7 @@ export default function SettingsForm() {
         </div>
 
         <div>
-          <label className="block text-sm text-gray-600">既定の Threads App ID（未入力時は環境変数）</label>
+          <label className="block text-sm text-gray-600">既定の Threads App ID</label>
           <input
             className="mt-1 w-full border rounded-md px-3 py-2"
             value={values.defaultThreadsClientId ?? ""}
@@ -254,7 +254,7 @@ export default function SettingsForm() {
         </div>
 
         <div>
-          <label className="block text-sm text-gray-600">既定の Threads App Secret（未入力時は環境変数）</label>
+          <label className="block text-sm text-gray-600">既定の Threads App Secret</label>
           <input
             className="mt-1 w-full border rounded-md px-3 py-2"
             type="password"
