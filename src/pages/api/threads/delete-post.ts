@@ -58,7 +58,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     let json: any = {};
     try { json = text ? JSON.parse(text) : {}; } catch { json = { raw: text }; }
 
+    // always log response for debugging
+    console.log('[delete-post] threads response', { status: resp.status, body: json });
+
     if (!resp.ok) {
+      // include body text for easier debugging
       await putLog({ userId, type: "delete-post", accountId, targetId: numericPostId, status: "error", message: `threads delete failed ${resp.status}`, detail: { status: resp.status, body: json } });
       return res.status(500).json({ ok: false, error: `threads delete failed: ${resp.status}`, detail: json });
     }
