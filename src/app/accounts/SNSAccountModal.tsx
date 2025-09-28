@@ -93,6 +93,8 @@ export default function SNSAccountModal({
   const [displayName, setDisplayName] = useState("");
   const [accountId, setAccountId] = useState("");
   const [accessToken, setAccessToken] = useState("");
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
   const [characterImage, setCharacterImage] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [groupId, setGroupId] = useState("");
@@ -124,6 +126,8 @@ export default function SNSAccountModal({
       setDisplayName(account.displayName || "");
       setAccountId(account.accountId || "");
       setAccessToken(account.accessToken || "");
+      setClientId(account.clientId || "");
+      setClientSecret(account.clientSecret || "");
       setGroupId(account.autoPostGroupId || "");
       // ▼【追加】不正なJSON文字列で落ちないようガード
       try {
@@ -139,6 +143,8 @@ export default function SNSAccountModal({
       setDisplayName("");
       setAccountId("");
       setAccessToken("");
+      setClientId("");
+      setClientSecret("");
       setGroupId("");
       setPersonaMode("detail");
       setPersonaSimple("");
@@ -156,6 +162,8 @@ export default function SNSAccountModal({
     setDisplayName("");
     setAccountId("");
     setAccessToken("");
+    setClientId(acc.clientId || "");
+    setClientSecret(acc.clientSecret || "");
     setGroupId("");
     setCharacterImage(acc.characterImage || "");
     setPersonaMode(acc.personaMode || "detail");
@@ -333,6 +341,8 @@ export default function SNSAccountModal({
           accountId,
           displayName,
           accessToken: accessToken,
+          clientId: clientId || undefined,
+          clientSecret: clientSecret || undefined,
           createdAt:
             mode === "create"
               ? Math.floor(Date.now() / 1000)
@@ -425,6 +435,21 @@ export default function SNSAccountModal({
           className="mb-2 border rounded px-2 py-1 w-full"
           value={accessToken}
           onChange={(e) => setAccessToken(e.target.value)}
+        />
+
+        <label className="block mt-2">Threads App ID (clientId)</label>
+        <input
+          className="mb-2 border rounded px-2 py-1 w-full"
+          value={clientId}
+          onChange={(e) => setClientId(e.target.value)}
+        />
+
+        <label className="block">Threads App Secret (clientSecret)</label>
+        <input
+          className="mb-2 border rounded px-2 py-1 w-full"
+          type="password"
+          value={clientSecret}
+          onChange={(e) => setClientSecret(e.target.value)}
         />
 
         <label className="block">キャラクターイメージ</label>

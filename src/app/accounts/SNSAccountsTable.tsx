@@ -317,7 +317,10 @@ export default function SNSAccountsTable() {
                 <div className="flex items-center justify-center">
                   <button
                     className="bg-yellow-500 text-white rounded px-3 py-1 hover:bg-yellow-600 whitespace-nowrap"
-                    onClick={() => { window.open('/api/auth/threads/start', '_blank'); }}
+                    onClick={() => {
+                      const url = '/api/auth/threads/start' + (acc.accountId ? `?accountId=${encodeURIComponent(acc.accountId)}` : '');
+                      window.open(url, '_blank');
+                    }}
                     title="Threads 認可を再取得"
                   >
                     再認可

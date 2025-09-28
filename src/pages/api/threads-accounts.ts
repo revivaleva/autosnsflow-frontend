@@ -32,6 +32,8 @@ const UPDATABLE_FIELDS = new Set([
   "autoPostGroupId",
   "secondStageContent",
   "accessToken",
+  "clientId",
+  "clientSecret",
 ]);
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -80,7 +82,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
 
     if (req.method === "POST") {
-      const { accountId, username, displayName, accessToken = "" } = safeBody(req.body);
+      const { accountId, username, displayName, accessToken = "", clientId, clientSecret } = safeBody(req.body);
       if (!accountId) return res.status(400).json({ error: "accountId required" });
       const now = `${Math.floor(Date.now() / 1000)}`;
       await ddb.send(new PutItemCommand({
@@ -91,6 +93,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           username: { S: username || "" },
           displayName: { S: displayName || "" },
           accessToken: { S: accessToken }, // [ADD]
+          clientId: clientId ? { S: String(clientId) } : undefined,
+          clientSecret: clientSecret ? { S: String(clientSecret) } : undefined,
           autoPost: { BOOL: false }, autoGenerate: { BOOL: false }, autoReply: { BOOL: false },
           createdAt: { N: now }, updatedAt: { N: now },
         },
@@ -119,6 +123,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if ("username" in body) setStr("username", body.username);
       if ("displayName" in body) setStr("displayName", body.displayName);
       if ("accessToken" in body) setStr("accessToken", body.accessToken); // [ADD]
+      if ("clientId" in body) setStr("clientId", body.clientId);
+      if ("clientSecret" in body) setStr("clientSecret", body.clientSecret);
 
       // トグル/メタ
       if ("autoPost" in body) setStr("autoPost", !!body.autoPost);
