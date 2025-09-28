@@ -50,6 +50,33 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(400).json({ ok: false, error: "account access token missing" });
     }
 
+    // Check daily deletion count (limit 100 per account per day)
+    try {
+      const startOfDay = Math.floor(new Date().setHours(0,0,0,0) / 1000);
+      const q = await ddb.send(new QueryCommand({
+        TableName: TBL_LOGS,
+        KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
+        ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'LOG#' }, ':acc': { S: accountId }, ':type': { S: 'delete-post' }, ':t0': { N: String(startOfDay) } },
+        ProjectionExpression: 'createdAt,type,accountId'
+      }));
+      let todayDeletes = 0;
+      for (const it of (q.Items || [])) {
+        try {
+          const t = Number(it.createdAt?.N || 0);
+          const tp = it.type?.S || '';
+          const aid = it.accountId?.S || '';
+          if (tp === 'delete-post' && aid === accountId && t >= startOfDay) todayDeletes++;
+        } catch (_) {}
+      }
+      console.log('[delete-post] todayDeletes for account', accountId, todayDeletes);
+      if (todayDeletes >= 100) {
+        await putLog({ userId, type: 'delete-post', accountId, targetId: numericPostId, status: 'warn', message: 'daily delete limit reached' });
+        return res.status(429).json({ ok: false, error: 'daily delete limit reached (100)', remaining: 0 });
+      }
+    } catch (e) {
+      console.log('[warn] count today deletes failed', e);
+    }
+
     // Call Threads delete API
     const url = `https://graph.threads.net/v1.0/${encodeURIComponent(numericPostId)}?access_token=${encodeURIComponent(accessToken)}`;
     console.log("[delete-post] calling threads delete", { url: url.slice(0, 120) });
@@ -60,6 +87,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // always log response for debugging
     console.log('[delete-post] threads response', { status: resp.status, body: json });
+
+    // If response status is 400/401/403/404, provide clearer message
+    if (resp.status === 401 || resp.status === 403) {
+      await putLog({ userId, type: 'delete-post', accountId, targetId: numericPostId, status: 'error', message: 'threads auth error', detail: { status: resp.status, body: json } });
+      return res.status(403).json({ ok: false, error: 'threads auth error (token may lack threads_delete or be expired)', detail: json });
+    }
+    if (resp.status === 404) {
+      await putLog({ userId, type: 'delete-post', accountId, targetId: numericPostId, status: 'error', message: 'threads media not found', detail: json });
+      return res.status(404).json({ ok: false, error: 'threads media not found', detail: json });
+    }
 
     if (!resp.ok) {
       // include body text for easier debugging
