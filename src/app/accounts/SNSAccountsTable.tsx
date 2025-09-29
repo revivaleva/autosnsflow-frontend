@@ -206,7 +206,11 @@ export default function SNSAccountsTable() {
     }
   };
 
-  if (loading) return <div className="text-center py-8">読み込み中...</div>;
+  if (loading) {
+    return (
+      <div className="text-center py-8">読み込み中...</div>
+    );
+  }
 
   return (
     <div className="max-w-5xl mx-auto mt-10">
