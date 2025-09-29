@@ -304,7 +304,6 @@ export default function SNSAccountsTable() {
                   : "—"}
               </td>
               {showAppColumn && (
-              {showAppColumn && (
                 <td className="py-2 px-3">
                   <div className="flex items-center justify-center">
                     <button
@@ -317,12 +316,6 @@ export default function SNSAccountsTable() {
                   </div>
                 </td>
               )}
-              )}
-              <td className="py-2 px-3">
-                <div className="flex items-center justify-center">
-              {/* 再認可ボタンは廃止。認可はアカウント編集モーダルで行います。 */}
-                </div>
-              </td>
               {/* [DEL] 一覧の編集/削除ボタンは廃止 */}
             </tr>
           ))}

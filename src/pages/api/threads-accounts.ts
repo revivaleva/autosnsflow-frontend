@@ -8,6 +8,7 @@ import {
   PutItemCommand,
   UpdateItemCommand,
   DeleteItemCommand,
+  GetItemCommand,
 } from "@aws-sdk/client-dynamodb";
 import { createDynamoClient } from "@/lib/ddb";
 import { verifyUserFromRequest } from "@/lib/auth";
@@ -75,7 +76,29 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
         autoPostGroupId: it.autoPostGroupId,
         secondStageContent: it.secondStageContent,
+        // clientId/clientSecret may be present under various names depending on origin
+        clientId: (it as any).clientId || (it as any).client_id || ((it as any).client && (it as any).client.id) || "",
+        // Do not expose clientSecret plaintext. Instead expose a boolean flag indicating presence.
+        hasClientSecret: !!((it as any).clientSecret || (it as any).client_secret || ((it as any).client && (it as any).client.secret)),
       }));
+
+      // If backend-core didn't return clientId/secret fields, fetch them directly from DynamoDB as fallback
+      for (let i = 0; i < items.length; i++) {
+        const acc = items[i];
+        if (acc.clientId && acc.hasClientSecret) continue; // already present
+        try {
+          const out = await ddb.send(new GetItemCommand({
+            TableName: TBL,
+            Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${acc.accountId}` } },
+            ProjectionExpression: 'clientId, clientSecret',
+          }));
+          const it: any = (out as any).Item || {};
+          if (!acc.clientId && it.clientId && it.clientId.S) acc.clientId = it.clientId.S;
+          if (!acc.hasClientSecret && it.clientSecret && it.clientSecret.S) acc.hasClientSecret = true;
+        } catch (e) {
+          console.log('[threads-accounts] fallback read clientId failed', e);
+        }
+      }
 
       return res.status(200).json({ items });
     }

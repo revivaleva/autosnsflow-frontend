@@ -95,6 +95,7 @@ export default function SNSAccountModal({
   const [accessToken, setAccessToken] = useState("");
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
+  const [clientSecretMasked, setClientSecretMasked] = useState(false);
   const [characterImage, setCharacterImage] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [groupId, setGroupId] = useState("");
@@ -127,8 +128,18 @@ export default function SNSAccountModal({
       setDisplayName(account.displayName || "");
       setAccountId(account.accountId || "");
       setAccessToken(account.accessToken || "");
-      setClientId(account.clientId || "");
-      setClientSecret(account.clientSecret || "");
+      // clientId may be stored under different keys depending on migration; try several fallbacks
+      setClientId(
+        account.clientId || account.client_id || account.CLIENT_ID || (account?.client && account.client.id) || ""
+      );
+
+      // For security, do not preload actual clientSecret into the editable field.
+      // API may return clientSecret (legacy) or hasClientSecret flag; check both.
+      const hasSecret = !!(
+        account.clientSecret || account.client_secret || account.hasClientSecret || account.has_client_secret || (account?.client && account.client.secret)
+      );
+      setClientSecret("");
+      setClientSecretMasked(hasSecret);
       setGroupId(account.autoPostGroupId || "");
       // ▼【追加】不正なJSON文字列で落ちないようガード
       try {
@@ -146,6 +157,7 @@ export default function SNSAccountModal({
       setAccessToken("");
       setClientId("");
       setClientSecret("");
+      setClientSecretMasked(false);
       setGroupId("");
       setPersonaMode("detail");
       setPersonaSimple("");
@@ -486,15 +498,38 @@ export default function SNSAccountModal({
           className="mb-2 border rounded px-2 py-1 w-full"
           value={clientId}
           onChange={(e) => setClientId(e.target.value)}
+          placeholder="未設定の場合は空欄"
         />
 
         <label className="block">Threads App Secret (clientSecret)</label>
-        <input
-          className="mb-2 border rounded px-2 py-1 w-full"
-          type="password"
-          value={clientSecret}
-          onChange={(e) => setClientSecret(e.target.value)}
-        />
+        {clientSecretMasked ? (
+          <div className="mb-2 flex items-center gap-2">
+            <input
+              className="flex-1 border rounded px-2 py-1 w-full bg-gray-50"
+              readOnly
+              value={'********'}
+            />
+            <button
+              type="button"
+              className="px-3 py-1 border rounded bg-white hover:bg-gray-50"
+              onClick={() => {
+                // allow user to replace the masked secret
+                setClientSecretMasked(false);
+                setClientSecret("");
+              }}
+            >
+              変更
+            </button>
+          </div>
+        ) : (
+          <input
+            className="mb-2 border rounded px-2 py-1 w-full"
+            type="password"
+            value={clientSecret}
+            onChange={(e) => setClientSecret(e.target.value)}
+            placeholder="登録済みのシークレットを上書きするにはここに入力"
+          />
+        )}
 
         <label className="block">キャラクターイメージ</label>
         <div className="flex gap-2 mb-2">
