@@ -3,6 +3,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 // Remove dependency on 'node-fetch' to avoid build-time module resolution errors.
 import { createDynamoClient } from '@/lib/ddb';
 import crypto from 'crypto';
+import { GetItemCommand, PutItemCommand } from '@aws-sdk/client-dynamodb';
 
 const ddb = createDynamoClient();
 const TBL_THREADS = 'ThreadsAccounts';
@@ -29,8 +30,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
   if (accountIdFromState) {
     try {
-      const get = await ddb.send(new (require('@aws-sdk/client-dynamodb').GetItemCommand)({ TableName: TBL_THREADS, Key: { PK: { S: `USER#${req.cookies['__session'] || 'local'}` }, SK: { S: `ACCOUNT#${accountIdFromState}` } } }));
-      const it = get.Item || {};
+      const get = await ddb.send(new GetItemCommand({ TableName: TBL_THREADS, Key: { PK: { S: `USER#${req.cookies['__session'] || 'local'}` }, SK: { S: `ACCOUNT#${accountIdFromState}` } } }));
+      const it = (get as any).Item || {};
       if (it.clientId && it.clientId.S) clientId = it.clientId.S;
       if (it.clientSecret && it.clientSecret.S) clientSecret = it.clientSecret.S;
     } catch (e) {
@@ -60,7 +61,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       tokenExpiresAt: { N: String(Math.floor(Date.now()/1000) + expiresIn) },
       createdAt: { N: String(Math.floor(Date.now()/1000)) }
     };
-    try { await ddb.send(new (require("@aws-sdk/client-dynamodb").PutItemCommand)({ TableName: TBL_THREADS, Item: item })); } catch (e) { console.log('[oauth] save token failed', e); }
+    try { await ddb.send(new PutItemCommand({ TableName: TBL_THREADS, Item: item })); } catch (e) { console.log('[oauth] save token failed', e); }
 
     res.send('<html><body>Authentication successful. You may close this window.</body></html>');
   } catch (e) {
