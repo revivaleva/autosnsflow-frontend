@@ -107,6 +107,7 @@ export default function SNSAccountModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [copyModalOpen, setCopyModalOpen] = useState(false);
+  const [authUrlFallback, setAuthUrlFallback] = useState<string | null>(null);
   const [aiPreviewModalOpen, setAiPreviewModalOpen] = useState(false);
   const [aiPersonaDetail, setAiPersonaDetail] = useState("");
   const [aiPersonaSimple, setAiPersonaSimple] = useState("");
@@ -439,17 +440,45 @@ export default function SNSAccountModal({
 
         {/* 認可ボタン（編集時のみ表示） */}
         {mode === "edit" && accountId && (
-          <div className="mb-3">
-            <button
-              type="button"
-              className="bg-yellow-500 text-white rounded px-3 py-1 hover:bg-yellow-600"
-              onClick={() => {
-                const url = '/api/auth/threads/start' + (accountId ? `?accountId=${encodeURIComponent(accountId)}` : '');
-                window.open(url, '_blank');
-              }}
-            >
-              認可を再実行
-            </button>
+          <div className="mb-3 flex flex-col gap-2">
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className="bg-yellow-500 text-white rounded px-3 py-1 hover:bg-yellow-600"
+                onClick={() => {
+                  const url = '/api/auth/threads/start' + (accountId ? `?accountId=${encodeURIComponent(accountId)}` : '');
+                  window.open(url, '_blank');
+                }}
+              >
+                認可を再実行
+              </button>
+              <button
+                type="button"
+                className="bg-gray-200 text-gray-800 rounded px-3 py-1 hover:bg-gray-300"
+                onClick={async () => {
+                  const url = '/api/auth/threads/start' + (accountId ? `?accountId=${encodeURIComponent(accountId)}` : '');
+                  try {
+                    await navigator.clipboard.writeText(url);
+                    // 簡易なフィードバック
+                    alert('認可URLをクリップボードにコピーしました');
+                  } catch (e) {
+                    // コピーできなかった場合はフォールバック表示
+                    setAuthUrlFallback(url);
+                  }
+                }}
+              >
+                認可URLをコピー
+              </button>
+            </div>
+            {authUrlFallback && (
+              <div className="text-sm">
+                <div className="mb-1">クリップボードにコピーできませんでした。下のリンクをクリックして開くか、手動でコピーしてください。</div>
+                <div className="flex gap-2 items-center">
+                  <input className="flex-1 border rounded px-2 py-1" readOnly value={authUrlFallback} />
+                  <a className="text-blue-600 underline" href={authUrlFallback} target="_blank" rel="noreferrer">開く</a>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
