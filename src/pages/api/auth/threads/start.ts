@@ -9,13 +9,21 @@ const TBL_SETTINGS = process.env.TBL_SETTINGS || "UserSettings";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const accountId = typeof req.query.accountId === "string" ? req.query.accountId : undefined;
-  let clientId = process.env.THREADS_CLIENT_ID || process.env.THREADS_APP_ID || "";
+  // Helper to treat literal 'undefined' or empty strings as not set
+  const getEnv = (name: string) => {
+    const v = process.env[name as keyof NodeJS.ProcessEnv];
+    if (!v) return undefined;
+    if (String(v).trim() === "" || String(v).trim().toLowerCase() === "undefined") return undefined;
+    return v;
+  };
+
+  let clientId = getEnv('THREADS_CLIENT_ID') || getEnv('THREADS_APP_ID') || "";
   // Prefer production redirect if provided, otherwise use local override, then fallback to localhost
   const redirectUri =
-    process.env.THREADS_OAUTH_REDIRECT_PROD ||
-    process.env.THREADS_OAUTH_REDIRECT_LOCAL ||
+    getEnv('THREADS_OAUTH_REDIRECT_PROD') ||
+    getEnv('THREADS_OAUTH_REDIRECT_LOCAL') ||
     (process.env.NODE_ENV === "production"
-      ? process.env.THREADS_OAUTH_REDIRECT_PROD
+      ? getEnv('THREADS_OAUTH_REDIRECT_PROD')
       : "http://localhost:3000/api/auth/threads/callback");
 
   // Try to resolve clientId from DB (account-specific), then user settings, then env
