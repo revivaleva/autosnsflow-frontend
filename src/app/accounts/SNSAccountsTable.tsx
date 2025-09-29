@@ -244,7 +244,6 @@ export default function SNSAccountsTable() {
             {/* ▼追加カラム：2段階投稿の有無／冒頭プレビュー */}
             <th className="py-2 px-3 w-52 text-left">2段階投稿</th>
             {showAppColumn && <th className="py-2 px-3 w-40">アプリ</th>}
-              <th className="py-2 px-3 w-48">認可</th>
             {/* [DEL] 操作列（編集/削除）は廃止 */}
           </tr>
         </thead>
@@ -301,6 +300,7 @@ export default function SNSAccountsTable() {
                   : "—"}
               </td>
               {showAppColumn && (
+              {showAppColumn && (
                 <td className="py-2 px-3">
                   <div className="flex items-center justify-center">
                     <button
@@ -312,6 +312,7 @@ export default function SNSAccountsTable() {
                     </button>
                   </div>
                 </td>
+              )}
               )}
               <td className="py-2 px-3">
                 <div className="flex items-center justify-center">
