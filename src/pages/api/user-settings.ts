@@ -72,6 +72,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         doublePostDeleteDelay: it.doublePostDeleteDelay?.N ? String(it.doublePostDeleteDelay.N) : "60",
         parentDelete: it.parentDelete?.BOOL === true,
         enableAppColumn: it.enableAppColumn?.BOOL === true,
+    // ▼追加: default Threads app credentials for fallback
+    defaultThreadsClientId: it.defaultThreadsClientId?.S || "",
+    defaultThreadsClientSecret: it.defaultThreadsClientSecret?.S || "",
       };
 
       return res.status(200).json({ settings });
@@ -94,6 +97,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         doublePostDeleteDelay,
         parentDelete,
         enableAppColumn,
+        defaultThreadsClientId,
+        defaultThreadsClientSecret,
       } = body;
 
       // [ADD] 型ガード（最低限）
@@ -167,6 +172,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         names["#eapp"] = "enableAppColumn";
         values[":eapp"] = { BOOL: !!enableAppColumn };
         sets.push("#eapp = :eapp");
+      }
+      if (has(defaultThreadsClientId)) {
+        names["#dtc"] = "defaultThreadsClientId";
+        values[":dtc"] = { S: String(defaultThreadsClientId || "") };
+        sets.push("#dtc = :dtc");
+      }
+      if (has(defaultThreadsClientSecret)) {
+        names["#dts"] = "defaultThreadsClientSecret";
+        values[":dts"] = { S: String(defaultThreadsClientSecret || "") };
+        sets.push("#dts = :dts");
       }
 
       if (!sets.length) return res.status(400).json({ error: "no_fields" });

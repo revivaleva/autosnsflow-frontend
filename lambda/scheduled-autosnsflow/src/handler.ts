@@ -70,6 +70,17 @@ const sanitizeItem = (it: any) => {
   return out;
 };
 
+// Normalize DynamoDB epoch value to seconds.
+// Handles values stored in seconds or milliseconds.
+function normalizeEpochSec(raw: any): number {
+  if (raw === null || typeof raw === 'undefined') return 0;
+  const v = Number(raw);
+  if (!isFinite(v)) return 0;
+  // Heuristic: if value looks like milliseconds (> 1e12), convert to seconds
+  if (v > 1e12) return Math.floor(v / 1000);
+  return Math.floor(v);
+}
+
 const isValidUrl = (s: any) => {
   try {
     if (!s || typeof s !== 'string') return false;
@@ -1474,6 +1485,104 @@ export const handler = async (event: any = {}) => {
     );
 
     return { statusCode: 200, body: JSON.stringify({ processedUsers: userIds.length, userSucceeded, totals }) };
+  }
+
+  // daily prune: delete scheduled posts older than 7 days
+  // NOTE: caller can request full-table operation by omitting event.userId
+  if (job === "daily-prune" || job === "prune") {
+    // Options:
+    // - event.dryRun (boolean): true = do not delete, only count and log candidates
+    // - event.userId (string): if provided, only run for that user
+    const dryRun = !!event.dryRun;
+    const singleUser = event.userId || null;
+    const deletePosted = !!event.deletePosted; // if true, perform deletion of posted records
+    const confirmPostedDelete = !!event.confirm; // safety: require confirm=true to actually delete posted items
+
+    const userIds = singleUser ? [singleUser] : await getActiveUserIds();
+    // If no userId specified, also compute pre-filter total across the whole table
+    let preFilterTotal: number | null = null;
+    if (!singleUser) {
+      try {
+        preFilterTotal = await countAllScheduledPosts();
+        await postDiscordMaster(`**[PRUNE] pre-filter total items across table: ${preFilterTotal}**`);
+      } catch (e) {
+        console.log('[warn] countAllScheduledPosts failed:', e);
+      }
+    }
+    let totalDeleted = 0;
+    let totalCandidates = 0;
+    let totalScanned = 0;
+    for (const uid of userIds) {
+      try {
+        // If deletePosted mode is requested, only allow single-user operations for safety
+        if (deletePosted) {
+          if (!singleUser) {
+            // skip global posted-deletion for safety
+            await putLog({ userId: uid, type: "prune", status: "error", message: "deletePosted requested but no userId specified; skipping" });
+            continue;
+          }
+          if (dryRun) {
+            const res = await countPostedCandidates(uid);
+            const cands = res?.candidates || 0;
+            const scanned = res?.scanned || 0;
+            await putLog({ userId: uid, type: "prune", status: "info", message: `dry-run deletePosted: ${cands} candidates (scanned=${scanned})` });
+            totalCandidates += cands;
+            totalScanned += scanned;
+            continue;
+          }
+          // non-dry-run: require explicit confirmation to perform posted deletion
+          if (!confirmPostedDelete) {
+            await putLog({ userId: uid, type: "prune", status: "warn", message: "deletePosted requested but not confirmed (confirm=false); skipping" });
+            continue;
+          }
+          const del = await deletePostedForUser(uid);
+          totalDeleted += Number(del || 0);
+          continue;
+        }
+        if (dryRun) {
+          const res = await countPruneCandidates(uid);
+          const cands = res?.candidates || 0;
+          const scanned = res?.scanned || 0;
+          totalCandidates += cands;
+          totalScanned += scanned;
+          await putLog({ userId: uid, type: "prune", status: "info", message: `dry-run: ${cands} 削除候補 (scanned=${scanned})` });
+          continue;
+        }
+        const c = await pruneOldScheduledPosts(uid);
+        totalDeleted += Number(c || 0);
+      } catch (e) {
+        console.log("[warn] daily-prune failed for", uid, e);
+        await putLog({ userId: uid, type: "prune", status: "error", message: "daily prune failed", detail: { error: String(e) } });
+      }
+    }
+
+    if (dryRun) {
+      const finishedAt = Date.now();
+      // build totals object expected by formatMasterMessage
+      const t = { candidates: totalCandidates, scanned: totalScanned, deleted: 0, preFilterTotal } as any;
+      await postDiscordMaster(formatMasterMessage({ job: "daily-prune", startedAt, finishedAt, userTotal: userIds.length, userSucceeded: 0, totals: t }));
+      return { statusCode: 200, body: JSON.stringify({ dryRun: true, preFilterTotal, candidates: totalCandidates, scanned: totalScanned }) };
+    }
+
+    // If no userId was specified, perform full-table prune
+    if (!singleUser) {
+      try {
+        const allDeleted = await pruneOldScheduledPostsAll();
+        const finishedAt = Date.now();
+        const t = { candidates: totalCandidates, scanned: totalScanned, deleted: allDeleted, preFilterTotal } as any;
+        await postDiscordMaster(formatMasterMessage({ job: "daily-prune", startedAt, finishedAt, userTotal: userIds.length, userSucceeded, totals: t }));
+        return { statusCode: 200, body: JSON.stringify({ deleted: allDeleted, preFilterTotal }) };
+      } catch (e) {
+        console.log('[warn] full-table prune failed:', e);
+        await postDiscordMaster(`**[PRUNE] full-table prune failed**`);
+        return { statusCode: 500, body: JSON.stringify({ error: String(e) }) };
+      }
+    }
+
+    const finishedAt = Date.now();
+    const t = { candidates: totalCandidates, scanned: totalScanned, deleted: totalDeleted, preFilterTotal } as any;
+    await postDiscordMaster(formatMasterMessage({ job: "daily-prune", startedAt, finishedAt, userTotal: userIds.length, userSucceeded, totals: t }));
+    return { statusCode: 200, body: JSON.stringify({ deleted: totalDeleted }) };
   }
 
   // every-5min（デフォルト）
@@ -3216,6 +3325,240 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
   }
 }
 
+// 指定ユーザーの予約投稿で、scheduledAt が 7 日以上前かつ未投稿のものを物理削除する
+async function pruneOldScheduledPosts(userId: any) {
+  try {
+    const sevenDaysAgo = Math.floor(Date.now() / 1000) - (7 * 24 * 60 * 60);
+    // Use GSI if available for account-based queries, otherwise scan PK
+    let lastKey: any = undefined;
+    let totalDeleted = 0;
+    // Per-Threads-account deletion limit to avoid large single-run deletes
+    const perAccountLimit = Number(process.env.PER_ACCOUNT_PRUNE_LIMIT || 20);
+    // track deletes per Threads accountId (accountId field inside scheduled items)
+    const deletedByAccount: Record<string, number> = {};
+    do {
+      const q = await ddb.send(new QueryCommand({
+        TableName: TBL_SCHEDULED,
+        KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+        ExpressionAttributeValues: { 
+          ":pk": { S: `USER#${userId}` },
+          ":pfx": { S: "SCHEDULEDPOST#" },
+        },
+        // include accountId so we can enforce per-Threads-account caps
+        ProjectionExpression: "PK, SK, scheduledAt, status, isDeleted, accountId",
+        Limit: 1000,
+        ExclusiveStartKey: lastKey,
+      }));
+
+      for (const it of (q.Items || [])) {
+        try {
+          const scheduledAt = normalizeEpochSec(getN(it.scheduledAt) || 0);
+          // NOTE: per request, do not filter by status or isDeleted — delete purely by scheduledAt age
+          if (!scheduledAt) continue;
+          if (scheduledAt <= sevenDaysAgo) {
+            const acctId = getS(it.accountId) || "__unknown__";
+            const cur = deletedByAccount[acctId] || 0;
+            if (cur >= perAccountLimit) {
+              // reached cap for this Threads account
+              continue;
+            }
+            await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: it.PK, SK: it.SK } }));
+            totalDeleted++;
+            deletedByAccount[acctId] = cur + 1;
+          }
+        } catch (e) {
+          console.log("[warn] prune delete failed for item", e);
+        }
+      }
+
+      // If every seen account has reached cap, we can stop early. This is a heuristic — if new accounts may appear later, the loop continues.
+      const allReached = Object.values(deletedByAccount).every(v => v >= perAccountLimit) && Object.keys(deletedByAccount).length > 0;
+      if (allReached) {
+        break;
+      }
+
+      lastKey = q.LastEvaluatedKey;
+    } while (lastKey);
+
+    if (totalDeleted > 0) {
+      await putLog({ userId, type: "prune", status: "info", message: `古い予約投稿 ${totalDeleted} 件を削除しました` });
+    }
+    return totalDeleted;
+  } catch (e) {
+    console.log("[warn] pruneOldScheduledPosts failed:", e);
+    throw e;
+  }
+}
+
+// 削除候補の件数だけを数える dry-run 用関数
+async function countPruneCandidates(userId: any) {
+  try {
+    const sevenDaysAgo = Math.floor(Date.now() / 1000) - (7 * 24 * 60 * 60);
+    let lastKey: any = undefined;
+    let totalCandidates = 0;
+    let totalScanned = 0;
+    do {
+      const q = await ddb.send(new QueryCommand({
+        TableName: TBL_SCHEDULED,
+        KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+        ExpressionAttributeValues: { 
+          ":pk": { S: `USER#${userId}` },
+          ":pfx": { S: "SCHEDULEDPOST#" },
+        },
+        ProjectionExpression: "scheduledAt, status, isDeleted",
+        Limit: 1000,
+        ExclusiveStartKey: lastKey,
+      }));
+
+      // Emit debug for first N items to help troubleshooting
+      const dbgItems = (q.Items || []).slice(0, 20).map((it: any) => ({
+        PK: undefined,
+        SK: undefined,
+        scheduledAtRaw: it.scheduledAt?.N || null,
+        scheduledAtNorm: normalizeEpochSec(getN(it.scheduledAt) || 0),
+        status: it.status?.S || null,
+        isDeleted: typeof it.isDeleted !== 'undefined' ? it.isDeleted?.BOOL === true : null,
+      }));
+      try { console.log('[PRUNE-DBG] sample items for user', userId, dbgItems); } catch (_) {}
+
+      for (const it of (q.Items || [])) {
+        try {
+          const scheduledAt = normalizeEpochSec(getN(it.scheduledAt) || 0);
+          totalScanned++;
+          // NOTE: per request, do not filter by status or isDeleted — count purely by scheduledAt age
+          if (!scheduledAt) continue;
+          if (scheduledAt <= sevenDaysAgo) totalCandidates++;
+        } catch (e) {
+          // continue
+        }
+      }
+
+      lastKey = q.LastEvaluatedKey;
+    } while (lastKey);
+
+    return { candidates: totalCandidates, scanned: totalScanned };
+  } catch (e) {
+    console.log("[warn] countPruneCandidates failed:", e);
+    throw e;
+  }
+}
+
+// Count ALL scheduled posts in the table (pre-filter total)
+async function countAllScheduledPosts() {
+  try {
+    let lastKey: any = undefined;
+    let total = 0;
+    do {
+      const q = await ddb.send(new ScanCommand({
+        TableName: TBL_SCHEDULED,
+        ProjectionExpression: "PK",
+        ExclusiveStartKey: lastKey,
+        Limit: 1000,
+      }));
+      total += (q.Count || 0);
+      lastKey = q.LastEvaluatedKey;
+    } while (lastKey);
+    return total;
+  } catch (e) {
+    console.log('[warn] countAllScheduledPosts failed:', e);
+    throw e;
+  }
+}
+
+// Full-table prune helper: iterate all users and run pruneOldScheduledPosts
+async function pruneOldScheduledPostsAll() {
+  try {
+    const userIds = await getActiveUserIds();
+    let totalDeleted = 0;
+    for (const uid of userIds) {
+      const c = await pruneOldScheduledPosts(uid);
+      totalDeleted += Number(c || 0);
+    }
+    return totalDeleted;
+  } catch (e) {
+    console.log('[warn] pruneOldScheduledPostsAll failed:', e);
+    throw e;
+  }
+}
+
+// Count posted records for dry-run deletePosted mode
+async function countPostedCandidates(userId: any) {
+  try {
+    let lastKey: any = undefined;
+    let totalCandidates = 0;
+    let totalScanned = 0;
+    do {
+      const q = await ddb.send(new QueryCommand({
+        TableName: TBL_SCHEDULED,
+        KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+        ExpressionAttributeValues: { 
+          ":pk": { S: `USER#${userId}` },
+          ":pfx": { S: "SCHEDULEDPOST#" },
+        },
+        ProjectionExpression: "scheduledAt, status, isDeleted, postedAt",
+        ExclusiveStartKey: lastKey,
+      }));
+
+      for (const it of (q.Items || [])) {
+        try {
+          totalScanned++;
+          const status = getS(it.status) || "";
+          const isDeleted = it.isDeleted?.BOOL === true;
+          const postedAt = normalizeEpochSec(getN(it.postedAt) || 0);
+          // postedAt > 0 or status === 'posted' indicates posted
+          if (isDeleted) continue;
+          if (postedAt > 0 || status === 'posted') totalCandidates++;
+        } catch (e) {}
+      }
+
+      lastKey = q.LastEvaluatedKey;
+    } while (lastKey);
+
+    return { candidates: totalCandidates, scanned: totalScanned };
+  } catch (e) {
+    console.log("[warn] countPostedCandidates failed:", e);
+    throw e;
+  }
+}
+
+// Physically delete posted records for a specific user
+async function deletePostedForUser(userId: any) {
+  try {
+    let lastKey: any = undefined;
+    let totalDeleted = 0;
+    do {
+      const q = await ddb.send(new QueryCommand({
+        TableName: TBL_SCHEDULED,
+        KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+        ExpressionAttributeValues: { 
+          ":pk": { S: `USER#${userId}` },
+          ":pfx": { S: "SCHEDULEDPOST#" },
+        },
+        ProjectionExpression: "PK,SK,postedAt,status,isDeleted",
+        ExclusiveStartKey: lastKey,
+      }));
+
+      for (const it of (q.Items || [])) {
+        try {
+          const postedAt = Number(getN(it.postedAt) || 0);
+          const status = getS(it.status) || "";
+          const isDeleted = it.isDeleted?.BOOL === true;
+          if (isDeleted) continue;
+          if (postedAt > 0 || status === 'posted') {
+            await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: it.PK, SK: it.SK } }));
+            totalDeleted++;
+          }
+        } catch (e) { console.log('[warn] deletePosted failed for item', e); }
+      }
+
+      lastKey = q.LastEvaluatedKey;
+    } while (lastKey);
+
+    if (totalDeleted > 0) await putLog({ userId, type: 'prune', status: 'info', message: `deleted posted ${totalDeleted} items` });
+    return totalDeleted;
+  } catch (e) { console.log('[warn] deletePostedForUser failed:', e); throw e; }
+}
+
 /// ========== マスタ通知（集計サマリ） ==========
 function getMasterWebhookUrl() {
   return process.env.MASTER_DISCORD_WEBHOOK || process.env.DISCORD_MASTER_WEBHOOK || "";
@@ -3263,6 +3606,26 @@ function formatMasterMessage({ job, startedAt, finishedAt, userTotal, userSuccee
       `所要時間: ${durSec}s`
     ].join("\n");
   }
+
+  if (job === "daily-prune" || job === "prune") {
+    const totalRecords = Number(totals?.preFilterTotal || 0);
+    const targetRecords = Number(totals?.candidates || 0);
+    const deleted = Number(totals?.deleted || 0);
+    const remaining = Math.max(0, targetRecords - deleted);
+    const line = [
+      `スキャンユーザー数: ${userTotal}`,
+      `全レコード数: ${totalRecords}`,
+      `対象レコード数: ${targetRecords}`,
+      `削除済レコード数: ${deleted}`,
+      `残対象レコード数: ${remaining}`,
+    ].join(" / ");
+    return [
+      `**[MASTER] 定期実行サマリ ${iso} (daily-prune)**`,
+      line,
+      `所要時間: ${durSec}s`
+    ].join("\n");
+  }
+
   const line = formatNonZeroLine([
     { label: "自動投稿 合計", value: totals.totalAuto },
     { label: "リプ返信 合計", value: totals.totalReply },

@@ -8,6 +8,7 @@ import {
   PutItemCommand,
   UpdateItemCommand,
   DeleteItemCommand,
+  GetItemCommand,
 } from "@aws-sdk/client-dynamodb";
 import { createDynamoClient } from "@/lib/ddb";
 import { verifyUserFromRequest } from "@/lib/auth";
@@ -32,6 +33,8 @@ const UPDATABLE_FIELDS = new Set([
   "autoPostGroupId",
   "secondStageContent",
   "accessToken",
+  "clientId",
+  "clientSecret",
 ]);
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -73,27 +76,57 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
         autoPostGroupId: it.autoPostGroupId,
         secondStageContent: it.secondStageContent,
+        // clientId/clientSecret may be present under various names depending on origin
+        clientId: (it as any).clientId || (it as any).client_id || ((it as any).client && (it as any).client.id) || "",
+        // Do not expose clientSecret plaintext. Instead expose a boolean flag indicating presence.
+        hasClientSecret: !!((it as any).clientSecret || (it as any).client_secret || ((it as any).client && (it as any).client.secret)),
       }));
+
+      // If backend-core didn't return clientId/secret fields, fetch them directly from DynamoDB as fallback
+      for (let i = 0; i < items.length; i++) {
+        const acc = items[i];
+        if (acc.clientId && acc.hasClientSecret) continue; // already present
+        try {
+          const out = await ddb.send(new GetItemCommand({
+            TableName: TBL,
+            Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${acc.accountId}` } },
+            ProjectionExpression: 'clientId, clientSecret',
+          }));
+          const it: any = (out as any).Item || {};
+          if (!acc.clientId && it.clientId && it.clientId.S) acc.clientId = it.clientId.S;
+          if (!acc.hasClientSecret && it.clientSecret && it.clientSecret.S) acc.hasClientSecret = true;
+        } catch (e) {
+          console.log('[threads-accounts] fallback read clientId failed', e);
+        }
+      }
 
       return res.status(200).json({ items });
     }
 
 
     if (req.method === "POST") {
-      const { accountId, username, displayName, accessToken = "" } = safeBody(req.body);
+      const { accountId, username, displayName, accessToken = "", clientId, clientSecret } = safeBody(req.body);
       if (!accountId) return res.status(400).json({ error: "accountId required" });
       const now = `${Math.floor(Date.now() / 1000)}`;
+      const item: any = {
+        PK: { S: `USER#${userId}` },
+        SK: { S: `ACCOUNT#${accountId}` },
+        accountId: { S: accountId },
+        username: { S: username || "" },
+        displayName: { S: displayName || "" },
+        accessToken: { S: accessToken }, // [ADD]
+        autoPost: { BOOL: false },
+        autoGenerate: { BOOL: false },
+        autoReply: { BOOL: false },
+        createdAt: { N: now },
+        updatedAt: { N: now },
+      };
+      if (clientId) item.clientId = { S: String(clientId) };
+      if (clientSecret) item.clientSecret = { S: String(clientSecret) };
+
       await ddb.send(new PutItemCommand({
         TableName: TBL,
-        Item: {
-          PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` },
-          accountId: { S: accountId },
-          username: { S: username || "" },
-          displayName: { S: displayName || "" },
-          accessToken: { S: accessToken }, // [ADD]
-          autoPost: { BOOL: false }, autoGenerate: { BOOL: false }, autoReply: { BOOL: false },
-          createdAt: { N: now }, updatedAt: { N: now },
-        },
+        Item: item,
         ConditionExpression: "attribute_not_exists(PK) AND attribute_not_exists(SK)",
       }));
       return res.status(201).json({ ok: true });
@@ -119,6 +152,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if ("username" in body) setStr("username", body.username);
       if ("displayName" in body) setStr("displayName", body.displayName);
       if ("accessToken" in body) setStr("accessToken", body.accessToken); // [ADD]
+      if ("clientId" in body) setStr("clientId", body.clientId);
+      if ("clientSecret" in body) setStr("clientSecret", body.clientSecret);
 
       // トグル/メタ
       if ("autoPost" in body) setStr("autoPost", !!body.autoPost);
