@@ -56,9 +56,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   // include accountId in state so callback can map to account
   const stateObj = { s: Math.random().toString(36).slice(2), a: accountId || null };
   const state = Buffer.from(JSON.stringify(stateObj)).toString("base64");
-  const scope = encodeURIComponent("threads_basic,threads_delete");
+  const scope = encodeURIComponent(
+    "threads_basic,threads_manage_insights,threads_manage_replies,threads_read_replies,threads_delete"
+  );
   // Coerce values to string to satisfy TypeScript strictness for encodeURIComponent
-  const url = `https://www.facebook.com/v16.0/dialog/oauth?client_id=${encodeURIComponent(String(clientId))}&redirect_uri=${encodeURIComponent(String(redirectUri))}&scope=${scope}&response_type=code&state=${encodeURIComponent(String(state))}`;
+  const url = `https://threads.net/oauth/authorize?client_id=${encodeURIComponent(String(clientId))}&response_type=code&redirect_uri=${encodeURIComponent(String(redirectUri))}&scope=${scope}&state=${encodeURIComponent(String(state))}`;
   // If caller requested JSON (raw) or prefers JSON, return the auth URL instead of redirecting.
   // This allows the client to copy the auth_url to clipboard without performing a redirect fetch.
   if (req.query.raw === '1' || (req.headers.accept || '').includes('application/json')) {
