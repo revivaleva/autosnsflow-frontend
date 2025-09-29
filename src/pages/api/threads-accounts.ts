@@ -85,19 +85,25 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const { accountId, username, displayName, accessToken = "", clientId, clientSecret } = safeBody(req.body);
       if (!accountId) return res.status(400).json({ error: "accountId required" });
       const now = `${Math.floor(Date.now() / 1000)}`;
+      const item: any = {
+        PK: { S: `USER#${userId}` },
+        SK: { S: `ACCOUNT#${accountId}` },
+        accountId: { S: accountId },
+        username: { S: username || "" },
+        displayName: { S: displayName || "" },
+        accessToken: { S: accessToken }, // [ADD]
+        autoPost: { BOOL: false },
+        autoGenerate: { BOOL: false },
+        autoReply: { BOOL: false },
+        createdAt: { N: now },
+        updatedAt: { N: now },
+      };
+      if (clientId) item.clientId = { S: String(clientId) };
+      if (clientSecret) item.clientSecret = { S: String(clientSecret) };
+
       await ddb.send(new PutItemCommand({
         TableName: TBL,
-        Item: {
-          PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` },
-          accountId: { S: accountId },
-          username: { S: username || "" },
-          displayName: { S: displayName || "" },
-          accessToken: { S: accessToken }, // [ADD]
-          clientId: clientId ? { S: String(clientId) } : undefined,
-          clientSecret: clientSecret ? { S: String(clientSecret) } : undefined,
-          autoPost: { BOOL: false }, autoGenerate: { BOOL: false }, autoReply: { BOOL: false },
-          createdAt: { N: now }, updatedAt: { N: now },
-        },
+        Item: item,
         ConditionExpression: "attribute_not_exists(PK) AND attribute_not_exists(SK)",
       }));
       return res.status(201).json({ ok: true });
