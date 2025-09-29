@@ -2,12 +2,13 @@
 	"version": "2.0.0",
 	"tasks": [
 	  {
-		"type": "npm",
-		"script": "build",
+		"label": "npm: build (WSL)",
+		"type": "shell",
+		"command": "wsl.exe -d Ubuntu bash -lc 'npm run build'",
+		"options": { "cwd": "${workspaceFolder}" },
 		"group": "build",
 		"problemMatcher": [],
-		"label": "npm: build",
-		"detail": "next build"
+		"detail": "next build (WSL)"
 	  },
 	  {
 		"label": "Build (WSL, timeout 30m, log to /tmp)",

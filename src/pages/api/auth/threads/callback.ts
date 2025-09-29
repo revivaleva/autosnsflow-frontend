@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import fetch from 'node-fetch';
+// Use global fetch available in Node 18+ (build environment uses Node 20)
+// Remove dependency on 'node-fetch' to avoid build-time module resolution errors.
 import { createDynamoClient } from '@/lib/ddb';
 import crypto from 'crypto';
 
