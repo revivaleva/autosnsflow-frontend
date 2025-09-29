@@ -57,7 +57,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const stateObj = { s: Math.random().toString(36).slice(2), a: accountId || null };
   const state = Buffer.from(JSON.stringify(stateObj)).toString("base64");
   const scope = encodeURIComponent("threads_basic,threads_delete");
-  const url = `https://www.facebook.com/v16.0/dialog/oauth?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scope}&response_type=code&state=${encodeURIComponent(state)}`;
+  // Coerce values to string to satisfy TypeScript strictness for encodeURIComponent
+  const url = `https://www.facebook.com/v16.0/dialog/oauth?client_id=${encodeURIComponent(String(clientId))}&redirect_uri=${encodeURIComponent(String(redirectUri))}&scope=${scope}&response_type=code&state=${encodeURIComponent(String(state))}`;
   // Debug log: output resolved values and the URL so frontend/local dev can inspect
   console.log("[oauth:start] resolved", { accountId, clientId, redirectUri, state: stateObj });
   console.log("[oauth:start] auth_url: ", url);
