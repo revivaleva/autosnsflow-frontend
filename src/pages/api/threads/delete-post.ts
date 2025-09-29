@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { GetItemCommand, DeleteItemCommand, PutItemCommand } from "@aws-sdk/client-dynamodb";
+import { GetItemCommand, DeleteItemCommand, PutItemCommand, QueryCommand } from "@aws-sdk/client-dynamodb";
 import { createDynamoClient } from "@/lib/ddb";
 import { verifyUserFromRequest } from "@/lib/auth";
 
