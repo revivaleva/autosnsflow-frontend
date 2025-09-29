@@ -445,25 +445,24 @@ export default function SNSAccountModal({
               <button
                 type="button"
                 className="bg-yellow-500 text-white rounded px-3 py-1 hover:bg-yellow-600"
-                onClick={() => {
-                  const url = '/api/auth/threads/start' + (accountId ? `?accountId=${encodeURIComponent(accountId)}` : '');
-                  window.open(url, '_blank');
-                }}
-              >
-                認可を再実行
-              </button>
-              <button
-                type="button"
-                className="bg-gray-200 text-gray-800 rounded px-3 py-1 hover:bg-gray-300"
                 onClick={async () => {
-                  const url = '/api/auth/threads/start' + (accountId ? `?accountId=${encodeURIComponent(accountId)}` : '');
+                  const apiUrl = '/api/auth/threads/start' + (accountId ? `?accountId=${encodeURIComponent(accountId)}` : '');
                   try {
-                    await navigator.clipboard.writeText(url);
-                    // 簡易なフィードバック
-                    alert('認可URLをクリップボードにコピーしました');
+                    const r = await fetch(apiUrl + '&raw=1', { headers: { Accept: 'application/json' } });
+                    const j = await r.json().catch(() => ({}));
+                    const authUrl = j.auth_url || apiUrl;
+                    try {
+                      await navigator.clipboard.writeText(authUrl);
+                      alert('認可URLをクリップボードにコピーしました');
+                      setAuthUrlFallback(null);
+                    } catch (e) {
+                      setAuthUrlFallback(authUrl);
+                    }
                   } catch (e) {
-                    // コピーできなかった場合はフォールバック表示
-                    setAuthUrlFallback(url);
+                    // フェッチ失敗時は従来の挙動に戻す
+                    const fallbackUrl = apiUrl;
+                    try { await navigator.clipboard.writeText(fallbackUrl); alert('認可URLをクリップボードにコピーしました'); setAuthUrlFallback(null); }
+                    catch { setAuthUrlFallback(fallbackUrl); }
                   }
                 }}
               >

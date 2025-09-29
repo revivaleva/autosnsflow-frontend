@@ -59,6 +59,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const scope = encodeURIComponent("threads_basic,threads_delete");
   // Coerce values to string to satisfy TypeScript strictness for encodeURIComponent
   const url = `https://www.facebook.com/v16.0/dialog/oauth?client_id=${encodeURIComponent(String(clientId))}&redirect_uri=${encodeURIComponent(String(redirectUri))}&scope=${scope}&response_type=code&state=${encodeURIComponent(String(state))}`;
+  // If caller requested JSON (raw) or prefers JSON, return the auth URL instead of redirecting.
+  // This allows the client to copy the auth_url to clipboard without performing a redirect fetch.
+  if (req.query.raw === '1' || (req.headers.accept || '').includes('application/json')) {
+    return res.status(200).json({ auth_url: url });
+  }
   // Debug log: output resolved values and the URL so frontend/local dev can inspect
   console.log("[oauth:start] resolved", { accountId, clientId, redirectUri, state: stateObj });
   console.log("[oauth:start] auth_url: ", url);
