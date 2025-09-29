@@ -437,6 +437,22 @@ export default function SNSAccountModal({
           onChange={(e) => setAccessToken(e.target.value)}
         />
 
+        {/* 認可ボタン（編集時のみ表示） */}
+        {mode === "edit" && accountId && (
+          <div className="mb-3">
+            <button
+              type="button"
+              className="bg-yellow-500 text-white rounded px-3 py-1 hover:bg-yellow-600"
+              onClick={() => {
+                const url = '/api/auth/threads/start' + (accountId ? `?accountId=${encodeURIComponent(accountId)}` : '');
+                window.open(url, '_blank');
+              }}
+            >
+              認可を再実行
+            </button>
+          </div>
+        )}
+
         <label className="block mt-2">Threads App ID (clientId)</label>
         <input
           className="mb-2 border rounded px-2 py-1 w-full"
