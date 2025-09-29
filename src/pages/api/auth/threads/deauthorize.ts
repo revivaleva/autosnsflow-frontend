@@ -50,7 +50,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (get.Item) {
         await ddb.send(new UpdateItemCommand({
           TableName: TBL_THREADS,
-          Key,
+          Key: key,
           UpdateExpression: 'REMOVE accessToken'
         }));
         console.log('[deauth] token removed for', userId);
