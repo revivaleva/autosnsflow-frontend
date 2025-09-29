@@ -18,13 +18,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   };
 
   let clientId = getEnv('THREADS_CLIENT_ID') || getEnv('THREADS_APP_ID') || "";
-  // Prefer production redirect if provided, otherwise use local override, then fallback to localhost
+  // Prefer production redirect if provided, otherwise use local override, then fallback to threadsbooster default
   const redirectUri =
     getEnv('THREADS_OAUTH_REDIRECT_PROD') ||
     getEnv('THREADS_OAUTH_REDIRECT_LOCAL') ||
-    (process.env.NODE_ENV === "production"
-      ? getEnv('THREADS_OAUTH_REDIRECT_PROD')
-      : "http://localhost:3000/api/auth/threads/callback");
+    'https://threadsbooster.jp/api/auth/threads/callback';
 
   // Try to resolve clientId from DB (account-specific), then user settings, then env
   try {
