@@ -40,7 +40,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    const tokenUrl = `https://graph.facebook.com/v16.0/oauth/access_token?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&client_secret=${encodeURIComponent(clientSecret)}&code=${encodeURIComponent(code)}`;
+    // code is validated above; use non-null assertion to satisfy TypeScript
+    const tokenUrl = `https://graph.facebook.com/v16.0/oauth/access_token?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&client_secret=${encodeURIComponent(clientSecret)}&code=${encodeURIComponent(code!)}`;
     const r = await fetch(tokenUrl, { method: 'GET' });
     const j = await r.json();
     if (!r.ok) return res.status(500).json({ error: 'token exchange failed', detail: j });
