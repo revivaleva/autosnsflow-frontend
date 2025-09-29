@@ -315,16 +315,7 @@ export default function SNSAccountsTable() {
               )}
               <td className="py-2 px-3">
                 <div className="flex items-center justify-center">
-                  <button
-                    className="bg-yellow-500 text-white rounded px-3 py-1 hover:bg-yellow-600 whitespace-nowrap"
-                    onClick={() => {
-                      const url = '/api/auth/threads/start' + (acc.accountId ? `?accountId=${encodeURIComponent(acc.accountId)}` : '');
-                      window.open(url, '_blank');
-                    }}
-                    title="Threads 認可を再取得"
-                  >
-                    再認可
-                  </button>
+              {/* 再認可ボタンは廃止。認可はアカウント編集モーダルで行います。 */}
                 </div>
               </td>
               {/* [DEL] 一覧の編集/削除ボタンは廃止 */}
