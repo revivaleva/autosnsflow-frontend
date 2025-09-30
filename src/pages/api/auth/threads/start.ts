@@ -14,7 +14,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const v = process.env[name as keyof NodeJS.ProcessEnv];
     if (!v) return undefined;
     if (String(v).trim() === "" || String(v).trim().toLowerCase() === "undefined") return undefined;
-    return v;
+    return String(v).trim();
   };
 
   // Do not rely on environment vars for clientId/clientSecret; prefer DB-stored per-account values
@@ -25,9 +25,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     getEnv('THREADS_OAUTH_REDIRECT_LOCAL') ||
     'https://threadsbooster.jp/api/auth/threads/callback';
 
-  // Defensive: ensure redirectUri is an absolute http(s) URL. If not, fall back to safe default.
+  // Defensive: trim then ensure redirectUri is an absolute http(s) URL. If not, fall back to safe default.
   try {
-    if (typeof redirectUri !== 'string' || !/^https?:\/\//i.test(redirectUri.trim())) {
+    redirectUri = String(redirectUri).trim();
+    if (typeof redirectUri !== 'string' || !/^https?:\/\//i.test(redirectUri)) {
       console.warn('[oauth:start] invalid redirectUri resolved, falling back to default', redirectUri);
       redirectUri = 'https://threadsbooster.jp/api/auth/threads/callback';
     }
@@ -83,16 +84,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     "threads_basic,threads_manage_insights,threads_manage_replies,threads_read_replies,threads_delete"
   );
   // Coerce values to string to satisfy TypeScript strictness for encodeURIComponent
-  const url = `https://threads.net/oauth/authorize?client_id=${encodeURIComponent(String(clientId))}&response_type=code&redirect_uri=${encodeURIComponent(String(redirectUri))}&scope=${scope}&state=${encodeURIComponent(String(state))}`;
+  // Threads requires the www host; use full www URL for authorize endpoint
+  const url = `https://www.threads.net/oauth/authorize?client_id=${encodeURIComponent(String(clientId))}&response_type=code&redirect_uri=${encodeURIComponent(String(redirectUri))}&scope=${scope}&state=${encodeURIComponent(String(state))}`;
   // If caller requested JSON (raw) or prefers JSON, return the auth URL instead of redirecting.
   // This allows the client to copy the auth_url to clipboard without performing a redirect fetch.
   if (req.query.raw === '1' || (req.headers.accept || '').includes('application/json')) {
     return res.status(200).json({ auth_url: url });
   }
   // Debug log: output resolved values and the URL so frontend/local dev can inspect
+  // NOTE: do not log any secrets
   console.log("[oauth:start] resolved", { accountId, clientId, redirectUri, state: stateObj });
   console.log("[oauth:start] auth_url: ", url);
   res.redirect(url);
+  return;
 }
 
 

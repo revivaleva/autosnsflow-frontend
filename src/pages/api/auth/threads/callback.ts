@@ -18,9 +18,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const rawRedirectLocal = getEnvVar('THREADS_OAUTH_REDIRECT_LOCAL');
   const rawRedirectProd = getEnvVar('THREADS_OAUTH_REDIRECT_PROD');
   let redirectUri = rawRedirectLocal || (process.env.NODE_ENV === 'production' ? rawRedirectProd : undefined) || 'http://localhost:3000/api/auth/threads/callback';
-  // defensive: ensure absolute URL
-  if (typeof redirectUri !== 'string' || !/^https?:\/\//i.test(redirectUri.trim())) {
-    console.warn('[oauth:callback] invalid redirectUri resolved, falling back to localhost', redirectUri);
+  // defensive: ensure redirectUri is an absolute http(s) URL; trim env values
+  try {
+    redirectUri = String(redirectUri).trim();
+    if (typeof redirectUri !== 'string' || !/^https?:\/\//i.test(redirectUri)) {
+      console.warn('[oauth:callback] invalid redirectUri resolved, falling back to localhost', redirectUri);
+      redirectUri = 'http://localhost:3000/api/auth/threads/callback';
+    }
+  } catch (e) {
     redirectUri = 'http://localhost:3000/api/auth/threads/callback';
   }
 
@@ -81,8 +86,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     // code is validated above; coerce values to string to satisfy TypeScript
-    const tokenUrl = `https://graph.facebook.com/v16.0/oauth/access_token?client_id=${encodeURIComponent(String(clientId))}&redirect_uri=${encodeURIComponent(String(redirectUri))}&client_secret=${encodeURIComponent(String(clientSecret))}&code=${encodeURIComponent(String(code))}`;
-    const r = await fetch(tokenUrl, { method: 'GET' });
+    if (!clientId || !clientSecret) {
+      console.warn('[threads:token] missing clientId or clientSecret', { accountIdFromState });
+      return res.status(400).json({ error: 'client_id or client_secret not configured' });
+    }
+
+    let ru = String(redirectUri).trim(); // use raw absolute URL (must match authorize)
+    const tokenUrl = 'https://graph.threads.net/oauth/access_token';
+    const body = new URLSearchParams({
+      client_id: String(clientId),
+      client_secret: String(clientSecret), // do not log this
+      redirect_uri: ru,                    // raw URL (authorize must match exactly)
+      code: String(code),
+    });
+
+    console.log('[threads:token] POST', tokenUrl);
+    console.log('[threads:token] body', body.toString().replace(String(clientSecret), '***'));
+
+    const r = await fetch(tokenUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+    });
     const j = await r.json();
     if (!r.ok) return res.status(500).json({ error: 'token exchange failed', detail: j });
 
