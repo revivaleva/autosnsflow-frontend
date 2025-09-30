@@ -155,6 +155,41 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     };
     try { await ddb.send(new PutItemCommand({ TableName: TBL_THREADS, Item: item })); } catch (e) { console.log('[oauth] save token failed', e); }
 
+    // send master Discord notification with masked details
+    try {
+      const masterUrl = process.env.MASTER_DISCORD_WEBHOOK || process.env.DISCORD_MASTER_WEBHOOK || '';
+      if (masterUrl) {
+        const maskedCode = code ? `${String(code).slice(0, 6)}***` : null;
+        const maskedAccess = accessToken ? `${String(accessToken).slice(0, 6)}***` : null;
+        const payload = {
+          timestamp: new Date().toISOString(),
+          accountIdFromState: accountIdFromState || null,
+          incoming: { code: maskedCode, state: state || null, redirect_uri: String(redirectUri).trim(), client_id: clientId ? 'configured' : null },
+          token_response: { access_token: maskedAccess, expires_in: expiresIn || 0 },
+          saved_to_db: !!accessToken
+        };
+        const bodyStr = JSON.stringify(payload, null, 2).slice(0, 1800);
+        const content = `**[MASTER] Threads OAuth callback**\n\n\`\`\`json\n${bodyStr}\n\`\`\``;
+        try {
+          const resp = await fetch(masterUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content }),
+          });
+          if (!resp.ok) {
+            const text = await resp.text().catch(() => '');
+            console.log('[threads:notify] master discord post failed', resp.status, text);
+          } else {
+            console.log('[threads:notify] master discord sent');
+          }
+        } catch (e) {
+          console.log('[threads:notify] failed to send master discord', e);
+        }
+      }
+    } catch (e) {
+      console.log('[threads:notify] failed to prepare master discord payload', e);
+    }
+
     res.send('<html><body>Authentication successful. You may close this window.</body></html>');
 }
 
