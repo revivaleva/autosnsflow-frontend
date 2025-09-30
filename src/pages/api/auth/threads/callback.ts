@@ -101,13 +101,30 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     let j: any;
     try {
-      // env fallback if DB missing
-      const envClientId     = process.env.THREADS_CLIENT_ID     || getEnvVar?.('THREADS_CLIENT_ID');
-      const envClientSecret = process.env.THREADS_CLIENT_SECRET || getEnvVar?.('THREADS_CLIENT_SECRET');
-      if (!clientId && envClientId) clientId = String(envClientId).trim();
-      if (!clientSecret && envClientSecret) clientSecret = String(envClientSecret).trim();
+      // Send a pre-token master Discord notification with what was resolved so far (mask secrets/not included)
+      try {
+        const masterUrl = process.env.MASTER_DISCORD_WEBHOOK || process.env.DISCORD_MASTER_WEBHOOK || '';
+        if (masterUrl) {
+          const prePayload = {
+            timestamp: new Date().toISOString(),
+            accountIdFromState: accountIdFromState || null,
+            resolved: { clientId_present: !!clientId, clientSecret_present: !!clientSecret },
+            incoming: { code: code ? `${String(code).slice(0,6)}***` : null, state: state || null, redirect_uri: String(redirectUri).trim() }
+          };
+          const preBody = JSON.stringify(prePayload, null, 2).slice(0, 1800);
+          const preContent = `**[MASTER] Threads OAuth callback (pre-token)**\n\n\`\`\`json\n${preBody}\n\`\`\``;
+          await fetch(masterUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content: preContent }),
+          });
+          console.log('[threads:notify] pre-token master discord sent');
+        }
+      } catch (e) {
+        console.log('[threads:notify] pre-token notify failed', e);
+      }
 
-      // final guard
+      // final guard: require DB-resolved clientId/clientSecret (no env fallback per instruction)
       if (!clientId || !clientSecret) {
         console.warn('[threads:token] missing clientId or clientSecret', { accountIdFromState });
         return res.status(400).json({ error: 'client_id or client_secret not configured' });
