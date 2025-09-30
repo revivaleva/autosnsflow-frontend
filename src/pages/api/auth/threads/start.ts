@@ -23,7 +23,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   let redirectUri =
     getEnv('THREADS_OAUTH_REDIRECT_PROD') ||
     getEnv('THREADS_OAUTH_REDIRECT_LOCAL') ||
-    'https://threadsbooster.jp/api/auth/threads/callback';
+    'http://localhost:3000/api/auth/threads/callback';
 
   // Defensive: trim then ensure redirectUri is an absolute http(s) URL. If not, fall back to safe default.
   try {
