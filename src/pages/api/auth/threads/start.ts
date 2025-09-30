@@ -50,7 +50,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (accountId && userId) {
       try {
         const out = await ddb.send(new GetItemCommand({ TableName: TBL_THREADS, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } } }));
-        const it: any = out.Item || {};
+        const it = (out as unknown as { Item?: Record<string, { S?: string }> }).Item || {};
         if (it.clientId && it.clientId.S) {
           clientId = it.clientId.S;
         }
@@ -63,7 +63,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (!clientId && userId) {
       try {
         const out = await ddb.send(new GetItemCommand({ TableName: TBL_SETTINGS, Key: { PK: { S: `USER#${userId}` }, SK: { S: "SETTINGS" } } }));
-        const it: any = out.Item || {};
+        const it = (out as unknown as { Item?: Record<string, { S?: string }> }).Item || {};
         if (it.defaultThreadsClientId && it.defaultThreadsClientId.S) clientId = it.defaultThreadsClientId.S;
       } catch (e) {
         console.log("[oauth:start] read settings failed", e);

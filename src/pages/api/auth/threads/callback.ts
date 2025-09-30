@@ -3,7 +3,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 // Remove dependency on 'node-fetch' to avoid build-time module resolution errors.
 import { createDynamoClient } from '@/lib/ddb';
 import crypto from 'crypto';
-import { GetItemCommand, PutItemCommand, ScanCommand } from '@aws-sdk/client-dynamodb';
+import { GetItemCommand, PutItemCommand, ScanCommand, QueryCommand } from '@aws-sdk/client-dynamodb';
 import { getEnvVar } from '@/lib/env';
 
 const ddb = createDynamoClient();
@@ -29,7 +29,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     redirectUri = 'http://localhost:3000/api/auth/threads/callback';
   }
 
-  // Prefer DB-stored clientId/clientSecret per-account; do not rely on env vars
+  // Prefer DB-stored clientId/clientSecret per-account; env fallback allowed
   let clientId = '';
   let clientSecret = '';
   // parse state
@@ -59,24 +59,39 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
       }
 
-      // If not found via cookie/user, scan the table to find the account item by SK
+      // If not found via cookie/user, try Query by SK using a GSI (avoid Scan). Fall back to Scan if Query/GSI unavailable.
       if (!found) {
         try {
-          const scan = await ddb.send(new ScanCommand({
+          const q = await ddb.send(new QueryCommand({
             TableName: TBL_THREADS,
-            FilterExpression: 'SK = :sk',
+            IndexName: 'GSI1', // GSI1 should have SK as partition key
+            KeyConditionExpression: 'SK = :sk',
             ExpressionAttributeValues: { ':sk': { S: `ACCOUNT#${accountIdFromState}` } },
             ProjectionExpression: 'clientId, clientSecret, PK, SK',
             Limit: 1,
           }));
-          const items = (scan as any).Items || [];
-          if (items.length > 0) {
-            const it = items[0] || {};
-            if (it.clientId && it.clientId.S) clientId = it.clientId.S;
-            if (it.clientSecret && it.clientSecret.S) clientSecret = it.clientSecret.S;
-          }
+          const it: any = (q as any).Items?.[0] || {};
+          if (it.clientId && it.clientId.S) clientId = it.clientId.S;
+          if (it.clientSecret && it.clientSecret.S) clientSecret = it.clientSecret.S;
         } catch (e) {
-          console.log('[oauth] scan for account failed', e);
+          console.log('[oauth] query by SK via GSI1 failed, falling back to Scan', e);
+          try {
+            const scan = await ddb.send(new ScanCommand({
+              TableName: TBL_THREADS,
+              FilterExpression: 'SK = :sk',
+              ExpressionAttributeValues: { ':sk': { S: `ACCOUNT#${accountIdFromState}` } },
+              ProjectionExpression: 'clientId, clientSecret, PK, SK',
+              Limit: 1,
+            }));
+            const items = (scan as any).Items || [];
+            if (items.length > 0) {
+              const it2 = items[0] || {};
+              if (it2.clientId && it2.clientId.S) clientId = it2.clientId.S;
+              if (it2.clientSecret && it2.clientSecret.S) clientSecret = it2.clientSecret.S;
+            }
+          } catch (e2) {
+            console.log('[oauth] scan for account failed', e2);
+          }
         }
       }
     } catch (e) {
@@ -84,32 +99,43 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   }
 
-  try {
-    // code is validated above; coerce values to string to satisfy TypeScript
-    if (!clientId || !clientSecret) {
-      console.warn('[threads:token] missing clientId or clientSecret', { accountIdFromState });
-      return res.status(400).json({ error: 'client_id or client_secret not configured' });
+    let j: any;
+    try {
+      // env fallback if DB missing
+      const envClientId     = process.env.THREADS_CLIENT_ID     || getEnvVar?.('THREADS_CLIENT_ID');
+      const envClientSecret = process.env.THREADS_CLIENT_SECRET || getEnvVar?.('THREADS_CLIENT_SECRET');
+      if (!clientId && envClientId) clientId = String(envClientId).trim();
+      if (!clientSecret && envClientSecret) clientSecret = String(envClientSecret).trim();
+
+      // final guard
+      if (!clientId || !clientSecret) {
+        console.warn('[threads:token] missing clientId or clientSecret', { accountIdFromState });
+        return res.status(400).json({ error: 'client_id or client_secret not configured' });
+      }
+
+      const ru = String(redirectUri).trim(); // use raw absolute URL (must match authorize)
+      const tokenUrl = 'https://graph.threads.net/oauth/access_token';
+      const body = new URLSearchParams({
+        client_id: String(clientId),
+        client_secret: String(clientSecret), // do not log this
+        redirect_uri: ru,                    // raw URL (authorize must match exactly)
+        code: String(code),
+      });
+
+      console.log('[threads:token] POST', tokenUrl);
+      console.log('[threads:token] body', body.toString().replace(String(clientSecret || ''), '***'));
+
+      const r = await fetch(tokenUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body,
+      });
+      j = await r.json();
+      if (!r.ok) return res.status(500).json({ error: 'token exchange failed', detail: j });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: String(e) });
     }
-
-    let ru = String(redirectUri).trim(); // use raw absolute URL (must match authorize)
-    const tokenUrl = 'https://graph.threads.net/oauth/access_token';
-    const body = new URLSearchParams({
-      client_id: String(clientId),
-      client_secret: String(clientSecret), // do not log this
-      redirect_uri: ru,                    // raw URL (authorize must match exactly)
-      code: String(code),
-    });
-
-    console.log('[threads:token] POST', tokenUrl);
-    console.log('[threads:token] body', body.toString().replace(String(clientSecret), '***'));
-
-    const r = await fetch(tokenUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body,
-    });
-    const j = await r.json();
-    if (!r.ok) return res.status(500).json({ error: 'token exchange failed', detail: j });
 
     // j contains access_token and expires_in
     const accessToken = j.access_token;
@@ -130,10 +156,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     try { await ddb.send(new PutItemCommand({ TableName: TBL_THREADS, Item: item })); } catch (e) { console.log('[oauth] save token failed', e); }
 
     res.send('<html><body>Authentication successful. You may close this window.</body></html>');
-  } catch (e) {
-    console.error(e);
-    return res.status(500).json({ error: String(e) });
-  }
 }
 
 
