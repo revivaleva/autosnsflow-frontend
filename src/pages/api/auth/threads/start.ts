@@ -17,12 +17,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return v;
   };
 
-  let clientId = getEnv('THREADS_CLIENT_ID') || getEnv('THREADS_APP_ID') || "";
+  // Do not rely on environment vars for clientId/clientSecret; prefer DB-stored per-account values
+  let clientId = "";
   // Prefer production redirect if provided, otherwise use local override, then fallback to threadsbooster default
-  const redirectUri =
+  let redirectUri =
     getEnv('THREADS_OAUTH_REDIRECT_PROD') ||
     getEnv('THREADS_OAUTH_REDIRECT_LOCAL') ||
     'https://threadsbooster.jp/api/auth/threads/callback';
+
+  // Defensive: ensure redirectUri is an absolute http(s) URL. If not, fall back to safe default.
+  try {
+    if (typeof redirectUri !== 'string' || !/^https?:\/\//i.test(redirectUri.trim())) {
+      console.warn('[oauth:start] invalid redirectUri resolved, falling back to default', redirectUri);
+      redirectUri = 'https://threadsbooster.jp/api/auth/threads/callback';
+    }
+  } catch (e) {
+    redirectUri = 'https://threadsbooster.jp/api/auth/threads/callback';
+  }
 
   // Try to resolve clientId from DB (account-specific), then user settings, then env
   try {
