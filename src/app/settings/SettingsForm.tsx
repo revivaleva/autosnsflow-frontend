@@ -22,6 +22,8 @@ type Settings = {
   parentDelete: boolean;
   // 一覧でアプリ列を表示するか
   enableAppColumn?: boolean;
+  defaultThreadsClientId?: string;
+  defaultThreadsClientSecret?: string;
 };
 
 const DEFAULTS: Settings = {
@@ -37,6 +39,8 @@ const DEFAULTS: Settings = {
   doublePostDeleteDelay: "60",
   parentDelete: false,
   enableAppColumn: true,
+  defaultThreadsClientId: "",
+  defaultThreadsClientSecret: "",
 };
 
 export default function SettingsForm() {
@@ -65,6 +69,8 @@ export default function SettingsForm() {
             doublePostDelete: !!s.doublePostDelete,
             doublePostDeleteDelay: String(s.doublePostDeleteDelay ?? "60"),
             parentDelete: !!s.parentDelete,
+            defaultThreadsClientId: s.defaultThreadsClientId ?? "",
+            defaultThreadsClientSecret: s.defaultThreadsClientSecret ?? "",
           });
         }
       } finally {
@@ -236,6 +242,25 @@ export default function SettingsForm() {
             <option value="true">表示する</option>
             <option value="false">表示しない</option>
           </select>
+        </div>
+
+        <div>
+          <label className="block text-sm text-gray-600">既定の Threads App ID</label>
+          <input
+            className="mt-1 w-full border rounded-md px-3 py-2"
+            value={values.defaultThreadsClientId ?? ""}
+            onChange={(e) => setValues({ ...values, defaultThreadsClientId: e.target.value })}
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm text-gray-600">既定の Threads App Secret</label>
+          <input
+            className="mt-1 w-full border rounded-md px-3 py-2"
+            type="password"
+            value={values.defaultThreadsClientSecret ?? ""}
+            onChange={(e) => setValues({ ...values, defaultThreadsClientSecret: e.target.value })}
+          />
         </div>
 
         <div className="flex items-center gap-4">
