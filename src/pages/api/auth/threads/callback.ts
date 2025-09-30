@@ -36,7 +36,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   // Determine clientId/secret: if state contains accountId, try to read account-specific clientId/clientSecret from DB, else fall back to user default env
   const rawRedirectLocal = getEnvVar('THREADS_OAUTH_REDIRECT_LOCAL');
-  const rawRedirectProd = getEnvVar('NEXT_PUBLIC_THREADS_OAUTH_REDIRECT_PROD');
+  // Prefer NEXT_PUBLIC_* for client-exposed production redirect, but fall back to server-only key if not set
+  const rawRedirectProd = getEnvVar('NEXT_PUBLIC_THREADS_OAUTH_REDIRECT_PROD') || getEnvVar('THREADS_OAUTH_REDIRECT_PROD');
   let redirectUri = rawRedirectLocal || (process.env.NODE_ENV === 'production' ? rawRedirectProd : undefined) || 'http://localhost:3000/api/auth/threads/callback';
   // defensive: ensure redirectUri is an absolute http(s) URL; trim env values
   try {

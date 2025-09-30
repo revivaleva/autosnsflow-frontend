@@ -20,8 +20,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   // Do not rely on environment vars for clientId/clientSecret; prefer DB-stored per-account values
   let clientId = "";
   // Prefer production redirect if provided, otherwise use local override, then fallback to threadsbooster default
+  // Prefer NEXT_PUBLIC_* for client-exposed production redirect, but fall back to server-only key if not set
   let redirectUri =
-    getEnv('NEXT_PUBLIC_THREADS_OAUTH_REDIRECT_PROD') ||
+    getEnv('NEXT_PUBLIC_THREADS_OAUTH_REDIRECT_PROD') || getEnv('THREADS_OAUTH_REDIRECT_PROD') ||
     getEnv('THREADS_OAUTH_REDIRECT_LOCAL') ||
     'http://localhost:3000/api/auth/threads/callback';
 
