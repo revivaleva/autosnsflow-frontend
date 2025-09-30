@@ -6,6 +6,26 @@ import crypto from 'crypto';
 import { GetItemCommand, PutItemCommand, ScanCommand, QueryCommand } from '@aws-sdk/client-dynamodb';
 import { getEnvVar } from '@/lib/env';
 
+// helper: send master discord via direct fetch (guaranteed path)
+async function sendMasterDiscord(masterUrl: string, content: string) {
+  if (!masterUrl) return;
+  try {
+    const resp = await fetch(masterUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    });
+    if (!resp.ok) {
+      const txt = await resp.text().catch(() => '');
+      console.log('[threads:notify] master discord post failed', resp.status, txt);
+    } else {
+      console.log('[threads:notify] master discord sent (direct fetch)');
+    }
+  } catch (e) {
+    console.log('[threads:notify] master discord post errored', e);
+  }
+}
+
 const ddb = createDynamoClient();
 const TBL_THREADS = 'ThreadsAccounts';
 
@@ -186,21 +206,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           saved_to_db: !!accessToken
         };
         const bodyStr = JSON.stringify(payload, null, 2).slice(0, 1800);
-        const content = `**[MASTER] Threads OAuth callback**\n\n\`\`\`json\n${bodyStr}\n\`\`\``;
         try {
-          const resp = await fetch(masterUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ content }),
-          });
-          if (!resp.ok) {
-            const text = await resp.text().catch(() => '');
-            console.log('[threads:notify] master discord post failed', resp.status, text);
-          } else {
-            console.log('[threads:notify] master discord sent');
-          }
+          await sendMasterDiscord(masterUrl, `**[MASTER] Threads OAuth callback**\n\n\`\`\`json\n${bodyStr}\n\`\`\``);
+          console.log('[threads:notify] master discord sent (via helper)');
         } catch (e) {
-          console.log('[threads:notify] failed to send master discord', e);
+          console.log('[threads:notify] master discord post failed (helper)', String(e));
         }
       }
     } catch (e) {
