@@ -14,7 +14,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const v = process.env[name as keyof NodeJS.ProcessEnv];
     if (!v) return undefined;
     if (String(v).trim() === "" || String(v).trim().toLowerCase() === "undefined") return undefined;
-    return v;
+    return String(v).trim();
   };
 
   // Do not rely on environment vars for clientId/clientSecret; prefer DB-stored per-account values
@@ -96,6 +96,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   console.log("[oauth:start] resolved", { accountId, clientId, redirectUri, state: stateObj });
   console.log("[oauth:start] auth_url: ", url);
   res.redirect(url);
+  return;
 }
 
 

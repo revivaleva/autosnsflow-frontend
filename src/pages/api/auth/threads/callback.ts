@@ -18,9 +18,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const rawRedirectLocal = getEnvVar('THREADS_OAUTH_REDIRECT_LOCAL');
   const rawRedirectProd = getEnvVar('THREADS_OAUTH_REDIRECT_PROD');
   let redirectUri = rawRedirectLocal || (process.env.NODE_ENV === 'production' ? rawRedirectProd : undefined) || 'http://localhost:3000/api/auth/threads/callback';
-  // defensive: ensure absolute URL
-  if (typeof redirectUri !== 'string' || !/^https?:\/\//i.test(redirectUri.trim())) {
-    console.warn('[oauth:callback] invalid redirectUri resolved, falling back to localhost', redirectUri);
+  // defensive: ensure redirectUri is an absolute http(s) URL; trim env values
+  try {
+    redirectUri = String(redirectUri).trim();
+    if (typeof redirectUri !== 'string' || !/^https?:\/\//i.test(redirectUri)) {
+      console.warn('[oauth:callback] invalid redirectUri resolved, falling back to localhost', redirectUri);
+      redirectUri = 'http://localhost:3000/api/auth/threads/callback';
+    }
+  } catch (e) {
     redirectUri = 'http://localhost:3000/api/auth/threads/callback';
   }
 
