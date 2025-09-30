@@ -21,7 +21,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   let clientId = "";
   // Prefer production redirect if provided, otherwise use local override, then fallback to threadsbooster default
   let redirectUri =
-    getEnv('THREADS_OAUTH_REDIRECT_PROD') ||
+    getEnv('NEXT_PUBLIC_THREADS_OAUTH_REDIRECT_PROD') ||
     getEnv('THREADS_OAUTH_REDIRECT_LOCAL') ||
     'http://localhost:3000/api/auth/threads/callback';
 
