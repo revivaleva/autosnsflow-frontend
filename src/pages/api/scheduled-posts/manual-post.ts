@@ -47,16 +47,31 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       new GetItemCommand({
         TableName: TBL_THREADS,
         Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } },
-        ProjectionExpression: "accessToken, providerUserId, secondStageContent",
+        ProjectionExpression: "accessToken, oauthAccessToken, providerUserId, secondStageContent",
       })
     );
+    // Diagnostic: send acct keys presence to master webhook for debugging (do not include secrets)
+    try {
+      const masterDiag = process.env.MASTER_DISCORD_WEBHOOK || process.env.DISCORD_MASTER_WEBHOOK || '';
+      if (masterDiag) {
+        const hasAccess = !!acct.Item?.accessToken?.S;
+        const hasOauth = !!acct.Item?.oauthAccessToken?.S;
+        const provider = acct.Item?.providerUserId?.S || '(none)';
+        const diag = `manual-post diag - user=${userId} account=${accountId} hasAccessToken=${hasAccess} hasOauthAccessToken=${hasOauth} providerUserId=${provider}`;
+        fetch(masterDiag, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: diag }) }).catch(() => {});
+      }
+    } catch (e) {
+      console.log('[manual-post] diag webhook failed', e);
+    }
     const accessToken = acct.Item?.accessToken?.S || "";
     const oauthAccessToken = acct.Item?.oauthAccessToken?.S || "";
     const providerUserId = acct.Item?.providerUserId?.S || "";
     const secondStageContent = acct.Item?.secondStageContent?.S || "";
-    if (!accessToken) return res.status(400).json({ error: "missing_threads_credentials" });
+    if (!accessToken && !oauthAccessToken) return res.status(400).json({ error: "missing_threads_credentials" });
 
     // 実投稿（GAS/Lambda準拠の送信先指定）
+    // Debug webhook removed
+
     const { postId, numericId } = await postToThreads({ 
       accessToken, 
       oauthAccessToken: oauthAccessToken || undefined,
@@ -65,7 +80,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     });
 
     // [MOD] permalink 取得（失敗時は null）
-    const permalink = await getThreadsPermalink({ accessToken, postId });
+    const permalink = await getThreadsPermalink({ accessToken: (oauthAccessToken && oauthAccessToken.trim()) ? oauthAccessToken : accessToken, postId });
+
+    // Debug webhook removed
 
     const now = Math.floor(Date.now() / 1000);
 

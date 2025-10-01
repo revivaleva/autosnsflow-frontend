@@ -9,22 +9,8 @@ import { logEvent } from '@/lib/logger';
 
 // helper: send master discord via direct fetch (guaranteed path)
 async function sendMasterDiscord(masterUrl: string, content: string) {
-  if (!masterUrl) return;
-  try {
-    const resp = await fetch(masterUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content }),
-    });
-    if (!resp.ok) {
-      const txt = await resp.text().catch(() => '');
-      console.log('[threads:notify] master discord post failed', resp.status, txt);
-    } else {
-      console.log('[threads:notify] master discord sent (direct fetch)');
-    }
-  } catch (e) {
-    console.log('[threads:notify] master discord post errored', e);
-  }
+  // Debug webhook disabled in production codepath - no-op
+  return;
 }
 
 const ddb = createDynamoClient();

@@ -76,21 +76,58 @@ async function postToThreads({ accessToken, text, userIdOnPlatform, inReplyTo }:
   const creation_id = createJson?.id;
   if (!creation_id) throw new Error("Threads creation_id 取得失敗");
 
-  // 公開（GAS/Lambda同様）
-  const pubRes = await fetch(`${base}/threads_publish`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ creation_id, access_token: accessToken }),
-  });
-  
-  if (!pubRes.ok) {
-    const t = await pubRes.text().catch(() => "");
-    throw new Error(`Threads publish error: ${pubRes.status} ${t}`);
+  // Publish: use containerId (creation_id) directly -> POST /v1.0/{containerId}/publish
+  const graphBase = process.env.THREADS_GRAPH_BASE || 'https://graph.threads.net/v1.0';
+  const publishUrl = `${graphBase}/${encodeURIComponent(creation_id)}/publish`;
+
+  // Debug Discord webhook calls removed; keep console logs only
+  try { console.log('[DEBUG] threads publish - containerId=', creation_id, 'publishURL=', publishUrl, 'tokenOwner=', userIdOnPlatform || 'unknown'); } catch (_) {}
+
+  // Try publish with same access token; allow up to 2 retries (total attempts 3) if transient/permission-like errors occur
+  let pubRes: any = null;
+  let pubText = '';
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      pubRes = await fetch(publishUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ access_token: accessToken }),
+      });
+      pubText = await pubRes.text().catch(() => '');
+      // send debug to discord for each attempt
+      try {
+        const masterUrl = process.env.MASTER_DISCORD_WEBHOOK || process.env.DISCORD_MASTER_WEBHOOK || '';
+        if (masterUrl) {
+          const safe = String(pubText || '').slice(0, 1500);
+          const content = `**[THREADS DEBUG] publish response (attempt ${attempt})**\nstatus=${pubRes.status}\n\n\`\`\`json\n${safe}\n\`\`\``;
+          fetch(masterUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }) }).catch(() => {});
+        }
+      } catch (_) {}
+
+      if (pubRes.ok) break;
+
+      // if 400 with permission/resource message, allow retry (we've already implemented detection in lib/threads; replicate simple heuristic)
+      const lower = String(pubText || '').toLowerCase();
+      const retryable400 = pubRes.status === 400 && (lower.includes('unsupported post request') || lower.includes('missing permissions') || lower.includes('does not exist'));
+      const retryableAuth = pubRes.status === 401 || pubRes.status === 403 || retryable400;
+      if (!retryableAuth || attempt === maxAttempts) break;
+      // wait a bit before retry
+      await new Promise((res) => setTimeout(res, 500));
+    } catch (e) {
+      pubText = String((e as any)?.message || e);
+      if (attempt === maxAttempts) break;
+      await new Promise((res) => setTimeout(res, 500));
+    }
   }
-  
-  const pubJson = await pubRes.json().catch(() => ({}));
+
+  if (!pubRes || !pubRes.ok) {
+    throw new Error(`Threads publish error: ${pubRes?.status || 'no_response'} ${pubText}`);
+  }
+
+  let pubJson = {} as any;
+  try { pubJson = JSON.parse(pubText || '{}'); } catch {}
   const postId = pubJson?.id || creation_id;
-  
   return { postId };
 }
 
@@ -141,7 +178,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         PK: { S: `USER#${userId}` }, 
         SK: { S: `ACCOUNT#${accountId}` }
       },
-      ProjectionExpression: "accessToken, providerUserId",
+      ProjectionExpression: "accessToken, oauthAccessToken, providerUserId",
     }));
 
     if (!accountItem.Item) {
@@ -162,7 +199,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Threadsにリプライを投稿（共通関数を使用）
     const { postId: responsePostId } = await postReplyViaThreads({
-      accessToken,
+      accessToken: accessToken || undefined,
+      oauthAccessToken: oauthAccessToken || undefined,
       providerUserId,
       inReplyTo: postId, // 元の投稿IDにリプライ
       text: replyContent,

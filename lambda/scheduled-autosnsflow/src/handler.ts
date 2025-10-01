@@ -310,10 +310,8 @@ async function getDiscordWebhooks(userId = USER_ID) {
 }
 
 async function postDiscordLog({ userId = USER_ID, content, isError = false }: any) {
-  const { normal, error } = await getDiscordWebhookSets(userId);
-  // 厳密ルーティング: 通常は normal のみ、エラーは error のみ（相互フォールバックしない）
-  const urls = isError ? error : normal;
-  await postDiscord(urls, content);
+  // Debug Discord logging removed
+  return;
 }
 
 async function getDiscordWebhookSets(userId = USER_ID) {
@@ -2328,10 +2326,11 @@ async function postToThreads({ accessToken, text, userIdOnPlatform, inReplyTo = 
 
   // --- 公開（公式ドキュメント準拠） ---
   // 🔧 公式ドキュメント準拠: Publish は /{threads-user-id}/threads_publish を使用
-  const pubRes = await fetch(`${base}/${encodeURIComponent(userIdOnPlatform)}/threads_publish`, {
+  // Publish must use /me/threads_publish with form-urlencoded body { creation_id }
+  const pubRes = await fetch(`${base}/me/threads_publish?access_token=${encodeURIComponent(accessToken)}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ creation_id, access_token: accessToken }),
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: `creation_id=${encodeURIComponent(creation_id)}`,
   });
   if (!pubRes.ok) {
     const t = await pubRes.text().catch(() => "");
@@ -2900,11 +2899,7 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
   } catch (e) {
     const errStr = String(e);
     await putLog({ userId, type: "second-stage", accountId: acct.accountId, targetId: sk, status: "error", message: "2段階投稿に失敗", detail: { error: errStr, parentPostId: firstPostId } });
-    await postDiscordLog({
-      userId,
-      isError: true,
-      content: `**[ERROR second-stage] ${acct.displayName || acct.accountId}**\n${errStr.slice(0, 800)}`
-    });
+    // Debug Discord logging removed
     if (debugMode) {
       try {
         await postDiscordMaster(`**[TEST second-stage ERROR] ${acct.displayName || acct.accountId}**\nparent=${firstPostId}\n${errStr.slice(0, 1800)}`);
