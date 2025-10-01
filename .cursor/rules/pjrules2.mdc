@@ -151,3 +151,18 @@ WSL で実行し、cx_run / git_to 以外での多段ワンライナー提案は
 globs:
 alwaysApply: true
 ---
+
+### ログ保存ポリシー（ExecutionLogs / CloudWatch の使い分け）
+
+- **ExecutionLogs (DynamoDB)**: ユーザー単位でダッシュボードに表示する必要がある **ユーザーアクション修正が必要なエラーのみ** を保存する。例: 投稿に失敗した、返信投稿に失敗した、本文生成に失敗した等。これらは `putLog(..., status: 'error')` で保存されるべきである。
+- **CloudWatch Logs**: 定期実行・運用ログ・集計ログ・ユーザー未特定のデバッグ情報は CloudWatch に出力する（`console.log`, `console.warn`, `console.error` を使用）。大量ログの保存には CloudWatch を利用し、Insights での集計を前提とする。
+- **デバッグ用の一時的テーブル保存**: 一時的にテーブルへ保存したいデバッグログは `persistDebugLog(args)` を使って明示的に保存する。これは運用中に一時的に有効化して結果を追跡するために使う。永続化のオン/オフは `ALLOW_DEBUG_EXEC_LOGS` 環境変数でも制御できる。
+- **putLog の振る舞い**:
+  - デフォルト: `status === 'error' && userId` の場合にのみ ExecutionLogs に保存。`persist` フラグで強制保存、`ALLOW_DEBUG_EXEC_LOGS` 環境変数でデバッグログを許可可能。
+  - `info` / `skip` 等のステータスは基本的に DynamoDB へは保存しない（代わりに CloudWatch に出力）。
+
+### 運用手順
+
+- デバッグ目的で `persistDebugLog` を使用する場合は、使用後に必ず `persistDebugLog` の呼び出し箇所を削除または `persist=false` に戻すこと。
+- ExecutionLogs の肥大化を防ぐため、将来的に TTL を導入する（`expiresAt` 属性を追加して自動削除する）。このタスクは TODO に登録済み。
+

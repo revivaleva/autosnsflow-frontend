@@ -845,7 +845,20 @@ async function putLog({
   status = "info",
   message = "",
   detail = {},
+  persist = false, // explicit force-persist flag for debug
 }: any) {
+  // Persistence policy:
+  // - persist if explicit persist=true
+  // - persist if status === 'error' and userId is present (user-actionable errors)
+  // - if ALLOW_DEBUG_EXEC_LOGS env is set, persist non-error logs too
+  const allowDebug = (process.env.ALLOW_DEBUG_EXEC_LOGS === 'true' || process.env.ALLOW_DEBUG_EXEC_LOGS === '1');
+  const shouldPersist = Boolean(persist) || (status === 'error' && !!userId) || (allowDebug && status !== 'skip');
+
+  if (!shouldPersist) {
+    try { console.log('[debug] putLog skipped persist', { userId, type, status, message }); } catch (_) {}
+    return;
+  }
+
   const item = {
     PK: { S: `USER#${userId}` },
     SK: { S: `LOG#${Date.now()}#${crypto.randomUUID()}` },
@@ -862,6 +875,16 @@ async function putLog({
   } catch (e) {
     const error = e as Error;
     console.log("[warn] putLog skipped:", String(error?.name || error));
+  }
+}
+
+// デバッグ用に強制的に ExecutionLogs テーブルへ保存するユーティリティ
+// 使用例: await persistDebugLog({ userId, type: 'debug-event', message: '詳細', detail: { ... } })
+async function persistDebugLog(args: any) {
+  try {
+    return await putLog({ ...args, persist: true });
+  } catch (e) {
+    console.log('[warn] persistDebugLog failed:', String(e));
   }
 }
 
@@ -1579,6 +1602,12 @@ export const handler = async (event: any = {}) => {
 
     // If no userId was specified, perform full-table prune
     if (!singleUser) {
+      // Safety: require explicit confirmFull flag to run full-table destructive prune
+      const confirmFull = !!event.confirmFull;
+      if (!confirmFull) {
+        await postDiscordMaster(`**[PRUNE] full-table prune skipped: confirmFull flag not set**`);
+        return { statusCode: 400, body: JSON.stringify({ error: 'confirmFull flag required for full-table prune; use dryRun or provide userId for safe operations' }) };
+      }
       try {
         const allDeleted = await pruneOldScheduledPostsAll();
         // also perform full-table execution logs prune

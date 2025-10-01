@@ -98,8 +98,16 @@ async function putLog({
   userId = "", type, accountId = "", targetId = "", status = "info", message = "", detail = {}
 }: any) {
   try {
+    const allowDebug = (process.env.ALLOW_DEBUG_EXEC_LOGS === 'true' || process.env.ALLOW_DEBUG_EXEC_LOGS === '1');
+    const uid = userId || "unknown";
+    const shouldPersist = (status === 'error' && uid !== "unknown") || allowDebug;
+    if (!shouldPersist) {
+      try { console.log('[debug] putLog skipped persist (fetch-replies)', { userId: uid, type, status, message }); } catch(_) {}
+      return;
+    }
+
     const item = {
-      PK: { S: `USER#${userId || "unknown"}` },
+      PK: { S: `USER#${uid}` },
       SK: { S: `LOG#${Date.now()}#${Math.random().toString(36).slice(2,10)}` },
       type: { S: type || "system" },
       accountId: { S: accountId || "" },
