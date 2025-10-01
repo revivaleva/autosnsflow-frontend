@@ -148,27 +148,7 @@ export default function DashboardPage() {
             </div>
           </Modal>
         )}
-        {/* テスト用: MASTER_DISCORD_WEBHOOK を表示するワンタイムボタン（削除対象） */}
-        <section>
-          <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4">
-            <h3 className="text-sm font-medium mb-2">テスト: 環境変数検証</h3>
-            <button
-              className="rounded-md border px-3 py-1.5 text-sm hover:bg-gray-50"
-              onClick={async () => {
-                try {
-                  const r = await fetch('/api/debug/master-webhook');
-                  const j = await r.json();
-                  alert(`MASTER_DISCORD_WEBHOOK=${j.value}`);
-                } catch (e: any) {
-                  alert('取得失敗: ' + String(e));
-                }
-              }}
-            >
-              MASTER_DISCORD_WEBHOOK を表示
-            </button>
-            <div className="mt-2 text-xs text-gray-400">このボタンはデバッグ用です。不要になったら削除してください。</div>
-          </div>
-        </section>
+        {/* テスト用 UI は削除済み */}
       </div>
     </AppLayout>
   );

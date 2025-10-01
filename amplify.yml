@@ -55,9 +55,6 @@ frontend:
         # Write necessary server env vars into .env.production so Next.js SSR/API can access them via process.env
         - |
           printf "THREADS_OAUTH_REDIRECT_PROD=%s\n" "$THREADS_OAUTH_REDIRECT_PROD" >> .env.production
-          printf "THREADS_OAUTH_REDIRECT_LOCAL=%s\n" "$THREADS_OAUTH_REDIRECT_LOCAL" >> .env.production
-          printf "THREADS_CLIENT_ID=%s\n" "$THREADS_CLIENT_ID" >> .env.production
-          printf "THREADS_CLIENT_SECRET=%s\n" "$THREADS_CLIENT_SECRET" >> .env.production
           printf "TBL_THREADS_ACCOUNTS=%s\n" "$TBL_THREADS_ACCOUNTS" >> .env.production
           printf "TBL_SETTINGS=%s\n" "$TBL_SETTINGS" >> .env.production
           printf "MASTER_DISCORD_WEBHOOK=%s\n" "$MASTER_DISCORD_WEBHOOK" >> .env.production
