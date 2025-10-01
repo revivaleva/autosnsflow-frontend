@@ -8,6 +8,7 @@ export async function postReplyViaThreads({
 }: { accessToken: string; providerUserId: string; inReplyTo?: string; text: string; }): Promise<{ postId: string }> {
   const { postId } = await postToThreads({
     accessToken,
+    // oauthAccessToken will be looked up by callers if needed; callers that have it can pass it here
     text,
     userIdOnPlatform: providerUserId,
     inReplyTo,

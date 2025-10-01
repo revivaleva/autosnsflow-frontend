@@ -18,6 +18,7 @@ import { fetchThreadsAccountsFull } from "@autosnsflow/backend-core";
 
 const ddb = createDynamoClient();
 const TBL = process.env.TBL_THREADS_ACCOUNTS || "ThreadsAccounts";
+const TBL_SETTINGS = process.env.TBL_SETTINGS || "UserSettings";
 
 // [KEEP] PATCH用の更新許可フィールドは現状のまま
 const UPDATABLE_FIELDS = new Set([
@@ -121,8 +122,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         createdAt: { N: now },
         updatedAt: { N: now },
       };
-      if (clientId) item.clientId = { S: String(clientId) };
-      if (clientSecret) item.clientSecret = { S: String(clientSecret) };
+      // If clientId/clientSecret not provided or empty, try to fallback to user default settings
+      if (clientId) {
+        item.clientId = { S: String(clientId) };
+      }
+      if (clientSecret) {
+        item.clientSecret = { S: String(clientSecret) };
+      }
+      if (!item.clientId || !item.clientSecret) {
+        try {
+          const out = await ddb.send(new GetItemCommand({ TableName: TBL_SETTINGS, Key: { PK: { S: `USER#${userId}` }, SK: { S: 'SETTINGS' } }, ProjectionExpression: 'defaultThreadsClientId,defaultThreadsClientSecret' }));
+          const s: any = (out as any).Item || {};
+          if (!item.clientId && s.defaultThreadsClientId && s.defaultThreadsClientId.S) {
+            item.clientId = { S: s.defaultThreadsClientId.S };
+          }
+          if (!item.clientSecret && s.defaultThreadsClientSecret && s.defaultThreadsClientSecret.S) {
+            item.clientSecret = { S: s.defaultThreadsClientSecret.S };
+          }
+        } catch (e) {
+          console.log('[threads-accounts] fallback settings read failed', e);
+        }
+      }
 
       await ddb.send(new PutItemCommand({
         TableName: TBL,
@@ -152,8 +172,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if ("username" in body) setStr("username", body.username);
       if ("displayName" in body) setStr("displayName", body.displayName);
       if ("accessToken" in body) setStr("accessToken", body.accessToken); // [ADD]
-      if ("clientId" in body) setStr("clientId", body.clientId);
-      if ("clientSecret" in body) setStr("clientSecret", body.clientSecret);
+      // If clientId/clientSecret fields are present but empty, attempt to fallback to user default settings
+      let effectiveClientId: any = undefined;
+      let effectiveClientSecret: any = undefined;
+      if ("clientId" in body) effectiveClientId = body.clientId;
+      if ("clientSecret" in body) effectiveClientSecret = body.clientSecret;
+      if (("clientId" in body && (!effectiveClientId || String(effectiveClientId).trim() === "")) || ("clientSecret" in body && (!effectiveClientSecret || String(effectiveClientSecret).trim() === ""))) {
+        try {
+          const out = await ddb.send(new GetItemCommand({ TableName: TBL_SETTINGS, Key: { PK: { S: `USER#${userId}` }, SK: { S: 'SETTINGS' } }, ProjectionExpression: 'defaultThreadsClientId,defaultThreadsClientSecret' }));
+          const s: any = (out as any).Item || {};
+          if (("clientId" in body) && (!effectiveClientId || String(effectiveClientId).trim() === "") && s.defaultThreadsClientId && s.defaultThreadsClientId.S) {
+            effectiveClientId = s.defaultThreadsClientId.S;
+          }
+          if (("clientSecret" in body) && (!effectiveClientSecret || String(effectiveClientSecret).trim() === "") && s.defaultThreadsClientSecret && s.defaultThreadsClientSecret.S) {
+            effectiveClientSecret = s.defaultThreadsClientSecret.S;
+          }
+        } catch (e) {
+          console.log('[threads-accounts] fallback settings read failed', e);
+        }
+      }
+      if ("clientId" in body) setStr("clientId", effectiveClientId);
+      if ("clientSecret" in body) setStr("clientSecret", effectiveClientSecret);
 
       // トグル/メタ
       if ("autoPost" in body) setStr("autoPost", !!body.autoPost);

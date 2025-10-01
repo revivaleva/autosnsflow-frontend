@@ -3,7 +3,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 // Remove dependency on 'node-fetch' to avoid build-time module resolution errors.
 import { createDynamoClient } from '@/lib/ddb';
 import crypto from 'crypto';
-import { GetItemCommand, PutItemCommand, ScanCommand, QueryCommand } from '@aws-sdk/client-dynamodb';
+import { GetItemCommand, PutItemCommand, ScanCommand, QueryCommand, UpdateItemCommand } from '@aws-sdk/client-dynamodb';
 import { getEnvVar } from '@/lib/env';
 import { logEvent } from '@/lib/logger';
 
@@ -185,15 +185,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const userId = req.cookies['__session'] || `local-${crypto.randomUUID()}`;
     const accountId = accountIdFromState || `threads_${crypto.randomUUID().slice(0,8)}`;
 
-    // Save token to ThreadsAccounts table (merge with existing item)
-    const item = {
-      PK: { S: `USER#${userId}` },
-      SK: { S: `ACCOUNT#${accountId}` },
-      accessToken: { S: String(accessToken) },
-      tokenExpiresAt: { N: String(Math.floor(Date.now()/1000) + expiresIn) },
-      createdAt: { N: String(Math.floor(Date.now()/1000)) }
-    };
-    try { await ddb.send(new PutItemCommand({ TableName: TBL_THREADS, Item: item })); } catch (e) { console.log('[oauth] save token failed', e); }
+    // Save OAuth-issued token to a separate attribute to avoid overwriting existing accessToken used by posting
+    try {
+      await ddb.send(new UpdateItemCommand({
+        TableName: TBL_THREADS,
+        Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } },
+        UpdateExpression: 'SET oauthAccessToken = :at, oauthTokenExpiresAt = :te, oauthSavedAt = :now',
+        ExpressionAttributeValues: {
+          ':at': { S: String(accessToken) },
+          ':te': { N: String(Math.floor(Date.now()/1000) + expiresIn) },
+          ':now': { N: String(Math.floor(Date.now()/1000)) },
+        },
+      }));
+    } catch (e) { console.log('[oauth] save oauth token failed', e); }
 
     // send master Discord notification with masked details
     try {
@@ -206,7 +210,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           accountIdFromState: accountIdFromState || null,
           incoming: { code: maskedCode, state: state || null, redirect_uri: String(redirectUri).trim(), client_id: clientId ? 'configured' : null },
           token_response: { access_token: maskedAccess, expires_in: expiresIn || 0 },
-          saved_to_db: !!accessToken
+          saved_to: accessToken ? 'oauthAccessToken' : null
         };
         const bodyStr = JSON.stringify(payload, null, 2).slice(0, 1800);
         try {

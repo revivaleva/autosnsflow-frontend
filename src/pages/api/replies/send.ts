@@ -149,6 +149,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     const accessToken = accountItem.Item.accessToken?.S;
+    const oauthAccessToken = accountItem.Item.oauthAccessToken?.S;
     const providerUserId = accountItem.Item.providerUserId?.S;
 
     if (!accessToken || !providerUserId) {

@@ -4,11 +4,13 @@
 
 export async function postToThreads({
   accessToken,
+  oauthAccessToken,
   text,
   userIdOnPlatform,
   inReplyTo,
 }: {
   accessToken: string;
+  oauthAccessToken?: string;
   text: string;
   userIdOnPlatform?: string;
   inReplyTo?: string;
@@ -45,18 +47,35 @@ export async function postToThreads({
     console.log(`[DEBUG] inReplyTo: ${inReplyTo}`);
     console.log(`[DEBUG] リプライモード: ${inReplyTo ? 'YES' : 'NO'}`);
 
+    // try primary token first
+    body.access_token = accessToken;
     let r = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    
-    // フォールバックは行わない
+
+    // If token error and oauthAccessToken available, retry once with oauthAccessToken
+    if (!r.ok && (r.status === 401 || r.status === 403) && oauthAccessToken && oauthAccessToken !== accessToken) {
+      try {
+        console.log('[INFO] postToThreads: primary token rejected, retrying with oauthAccessToken');
+        body.access_token = oauthAccessToken;
+        const r2 = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        r = r2;
+      } catch (e) {
+        // fall through to error handling
+      }
+    }
+
     if (!r.ok) {
       const errText = await r.text().catch(() => "");
       throw new Error(`threads_create_failed: ${r.status} ${errText}`);
     }
-    
+
     const tx = await r.text().catch(() => "");
     if (!r.ok) throw new Error(`threads_create_failed: ${r.status} ${tx}`);
     let j: any = {};
@@ -76,11 +95,26 @@ export async function postToThreads({
     console.log(`[DEBUG] 公開エンドポイント: ${publishEndpoint}`);
     console.log(`[DEBUG] 公開creationId: ${creationId}`);
     
-    const r = await fetch(publishEndpoint, {
+    // try publish with primary token
+    let r = await fetch(publishEndpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ creation_id: creationId, access_token: accessToken }),
     });
+
+    if (!r.ok && (r.status === 401 || r.status === 403) && oauthAccessToken && oauthAccessToken !== accessToken) {
+      try {
+        console.log('[INFO] postToThreads: publish token rejected, retrying with oauthAccessToken');
+        const r2 = await fetch(publishEndpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ creation_id: creationId, access_token: oauthAccessToken }),
+        });
+        r = r2;
+      } catch (e) {
+        // continue to error handling
+      }
+    }
     const tx = await r.text().catch(() => "");
     if (!r.ok) throw new Error(`threads_publish_failed: ${r.status} ${tx}`);
     let j: any = {};

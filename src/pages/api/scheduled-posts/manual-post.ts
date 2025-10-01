@@ -51,6 +51,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       })
     );
     const accessToken = acct.Item?.accessToken?.S || "";
+    const oauthAccessToken = acct.Item?.oauthAccessToken?.S || "";
     const providerUserId = acct.Item?.providerUserId?.S || "";
     const secondStageContent = acct.Item?.secondStageContent?.S || "";
     if (!accessToken) return res.status(400).json({ error: "missing_threads_credentials" });
@@ -58,6 +59,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // 実投稿（GAS/Lambda準拠の送信先指定）
     const { postId, numericId } = await postToThreads({ 
       accessToken, 
+      oauthAccessToken: oauthAccessToken || undefined,
       text: content,
       userIdOnPlatform: providerUserId 
     });
