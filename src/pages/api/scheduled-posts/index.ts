@@ -30,6 +30,14 @@ async function putLog({
   message = "",
   detail = {},
 }: any) {
+  // Follow same persistence policy as lambda putLog
+  const allowDebug = (process.env.ALLOW_DEBUG_EXEC_LOGS === 'true' || process.env.ALLOW_DEBUG_EXEC_LOGS === '1');
+  const shouldPersist = (status === 'error' && !!userId) || allowDebug;
+  if (!shouldPersist) {
+    try { console.log('[debug] putLog skipped persist', { userId, type, status, message }); } catch (_) {}
+    return;
+  }
+
   const item = {
     PK: { S: `USER#${userId}` },
     SK: { S: `LOG#${Date.now()}#${crypto.randomUUID()}` },

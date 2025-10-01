@@ -9,6 +9,13 @@ const TBL_SCHEDULED = "ScheduledPosts";
 const TBL_LOGS = "ExecutionLogs";
 
 async function putLog({ userId = "unknown", type, accountId = "", targetId = "", status = "info", message = "", detail = {} }: any) {
+  const allowDebug = (process.env.ALLOW_DEBUG_EXEC_LOGS === 'true' || process.env.ALLOW_DEBUG_EXEC_LOGS === '1');
+  const shouldPersist = (status === 'error' && !!userId) || allowDebug;
+  if (!shouldPersist) {
+    try { console.log('[debug] putLog skipped persist', { userId, type, status, message }); } catch (_) {}
+    return;
+  }
+
   const item = {
     PK: { S: `USER#${userId}` },
     SK: { S: `LOG#${Date.now()}#${Math.random().toString(36).slice(2, 9)}` },

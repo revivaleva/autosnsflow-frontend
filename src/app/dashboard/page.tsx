@@ -148,6 +148,7 @@ export default function DashboardPage() {
             </div>
           </Modal>
         )}
+        {/* テスト用 UI は削除済み */}
       </div>
     </AppLayout>
   );
