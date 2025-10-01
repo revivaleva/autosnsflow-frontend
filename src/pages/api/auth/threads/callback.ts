@@ -121,19 +121,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   }
 
-    // Ensure every callback access is recorded (always persist to ExecutionLogs)
-    try {
-      await logEvent('threads_callback_access', {
-        accountIdFromState: accountIdFromState || null,
-        codePresent: !!code,
-        statePresent: !!state,
-        userCookie: req.cookies['__session'] || null,
-        redirectUri: String(redirectUri).trim(),
-      });
-    } catch (e) {
-      console.log('[oauth] initial logEvent failed', e);
-    }
-
     let j: any;
     try {
       // Send a pre-token master Discord notification with what was resolved so far (mask secrets/not included)
