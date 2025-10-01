@@ -116,15 +116,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           }
         }
       }
-      // ddb.send() return typing can be broad; cast to any to access .Item safely
-      const get = await ddb.send(new (require('@aws-sdk/client-dynamodb').GetItemCommand)({ TableName: TBL_THREADS, Key: { PK: { S: `USER#${req.cookies['__session'] || 'local'}` }, SK: { S: `ACCOUNT#${accountIdFromState}` } } })) as any;
-      const it = (get && get.Item) ? get.Item : {};
-      if (it.clientId && it.clientId.S) clientId = it.clientId.S;
-      if (it.clientSecret && it.clientSecret.S) clientSecret = it.clientSecret.S;
     } catch (e) {
       console.log('[oauth] read account client failed', e);
     }
   }
+
+    // Ensure every callback access is recorded (always persist to ExecutionLogs)
+    try {
+      await logEvent('threads_callback_access', {
+        accountIdFromState: accountIdFromState || null,
+        codePresent: !!code,
+        statePresent: !!state,
+        userCookie: req.cookies['__session'] || null,
+        redirectUri: String(redirectUri).trim(),
+      });
+    } catch (e) {
+      console.log('[oauth] initial logEvent failed', e);
+    }
 
     let j: any;
     try {
