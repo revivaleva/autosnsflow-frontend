@@ -41,7 +41,8 @@ export default function LoginPage() {
         if (nextRaw) {
           try {
             const u = new URL(nextRaw, window.location.origin);
-            if (u.origin === window.location.origin) {
+            // ignore if target would be login/logout/auth/callback to avoid loops
+            if (u.origin === window.location.origin && !u.pathname.startsWith('/login') && !u.pathname.startsWith('/logout') && !u.pathname.startsWith('/auth/callback')) {
               target = u.pathname + u.search + u.hash;
             }
           } catch (_) {

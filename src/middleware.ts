@@ -53,12 +53,25 @@ export function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
+  // Diagnostic logging for unexpected redirect loops
+  try {
+    console.log('[middleware] unauthenticated redirect -> login', { pathname, search: String(searchParams) });
+  } catch (_) {}
+
   const url = req.nextUrl.clone();
   url.pathname = "/login";
-  url.searchParams.set(
-    "next",
-    pathname + (searchParams.toString() ? `?${searchParams}` : "")
-  );
+
+  // If the env var FORCE_SIMPLE_LOGIN_REDIRECT=1 is set, do not include next param (safer fallback)
+  const forceSimple = typeof process !== 'undefined' && String(process.env.FORCE_SIMPLE_LOGIN_REDIRECT || '') === '1';
+  if (!forceSimple) {
+    url.searchParams.set(
+      "next",
+      pathname + (searchParams.toString() ? `?${searchParams}` : "")
+    );
+  } else {
+    try { console.log('[middleware] FORCE_SIMPLE_LOGIN_REDIRECT enabled - not setting next param'); } catch (_) {}
+  }
+
   return NextResponse.redirect(url);
 }
 
