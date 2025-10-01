@@ -108,6 +108,38 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (req.method === "POST") {
       const { accountId, username, displayName, accessToken = "", clientId, clientSecret } = safeBody(req.body);
       if (!accountId) return res.status(400).json({ error: "accountId required" });
+      // Prevent creating the same SK for different users: check if any existing item with SK ACCOUNT#<accountId> exists for a different PK
+      try {
+        const q = await ddb.send(new QueryCommand({
+          TableName: TBL,
+          IndexName: 'GSI1',
+          KeyConditionExpression: 'SK = :sk',
+          ExpressionAttributeValues: { ':sk': { S: `ACCOUNT#${accountId}` } },
+          ProjectionExpression: 'PK',
+          Limit: 1,
+        }));
+        const existing = (q as any).Items || [];
+        if (existing.length > 0) {
+          const pk = existing[0].PK?.S || '';
+          const existingUser = pk.startsWith('USER#') ? pk.replace(/^USER#/, '') : pk;
+          if (existingUser !== userId) {
+            return res.status(409).json({ error: 'accountId already registered for another user' });
+          }
+        }
+      } catch (e) {
+        // if query by GSI fails (no index), fall back to a scan with caution
+        try {
+          const scan = await ddb.send(new ScanCommand({ TableName: TBL, FilterExpression: 'SK = :sk', ExpressionAttributeValues: { ':sk': { S: `ACCOUNT#${accountId}` } }, ProjectionExpression: 'PK', Limit: 1 }));
+          const items = (scan as any).Items || [];
+          if (items.length > 0) {
+            const pk = items[0].PK?.S || '';
+            const existingUser = pk.startsWith('USER#') ? pk.replace(/^USER#/, '') : pk;
+            if (existingUser !== userId) return res.status(409).json({ error: 'accountId already registered for another user' });
+          }
+        } catch (e2) {
+          console.log('[threads-accounts] account uniqueness check failed', e2);
+        }
+      }
       const now = `${Math.floor(Date.now() / 1000)}`;
       const item: any = {
         PK: { S: `USER#${userId}` },
@@ -144,6 +176,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
       }
 
+      // Ensure we are not creating duplicate account items with mismatched PKs.
+      // Use conditional Put: only create when the exact PK/SK doesn't exist.
       await ddb.send(new PutItemCommand({
         TableName: TBL,
         Item: item,

@@ -65,6 +65,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   } catch (e) {
     // ignore
   }
+  // resolvedUserId: the USER id prefix (without USER#) of the account item we found in the table
+  let resolvedUserId: string | null = null;
   if (accountIdFromState) {
     try {
       // First try to read by cookie-associated user (fast path)
@@ -76,6 +78,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           const it = (get as any).Item || {};
           if (it.clientId && it.clientId.S) { clientId = it.clientId.S; found = true; }
           if (it.clientSecret && it.clientSecret.S) { clientSecret = it.clientSecret.S; }
+          // record resolved user id when read by cookie
+          if (it && it.PK && it.PK.S) {
+            const pk = String(it.PK.S || '');
+            if (pk.startsWith('USER#')) resolvedUserId = pk.replace(/^USER#/, '');
+            else resolvedUserId = pk;
+          }
         } catch (e) {
           console.log('[oauth] read account by cookie failed', e);
         }
@@ -95,6 +103,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           const it: any = (q as any).Items?.[0] || {};
           if (it.clientId && it.clientId.S) clientId = it.clientId.S;
           if (it.clientSecret && it.clientSecret.S) clientSecret = it.clientSecret.S;
+          // capture resolved user id from item PK if present
+          if (it && it.PK && it.PK.S) {
+            const pk = String(it.PK.S || '');
+            if (pk.startsWith('USER#')) resolvedUserId = pk.replace(/^USER#/, '');
+            else resolvedUserId = pk;
+          }
         } catch (e) {
           console.log('[oauth] query by SK via GSI1 failed, falling back to Scan', e);
           try {
@@ -110,6 +124,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               const it2 = items[0] || {};
               if (it2.clientId && it2.clientId.S) clientId = it2.clientId.S;
               if (it2.clientSecret && it2.clientSecret.S) clientSecret = it2.clientSecret.S;
+              if (it2 && it2.PK && it2.PK.S) {
+                const pk = String(it2.PK.S || '');
+                if (pk.startsWith('USER#')) resolvedUserId = pk.replace(/^USER#/, '');
+                else resolvedUserId = pk;
+              }
             }
           } catch (e2) {
             console.log('[oauth] scan for account failed', e2);
@@ -181,15 +200,51 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const accessToken = j.access_token;
     const expiresIn = Number(j.expires_in || 0);
 
-    // Map to current user/account if possible
-    const userId = req.cookies['__session'] || `local-${crypto.randomUUID()}`;
-    const accountId = accountIdFromState || `threads_${crypto.randomUUID().slice(0,8)}`;
+    // Identify existing account item by SK (ACCOUNT#<id>) and update that record's oauth fields
+    const accountId = accountIdFromState;
+    if (!accountId) {
+      console.warn('[oauth] no accountIdFromState to attach token to');
+      return res.status(400).json({ error: 'account_id not present in state' });
+    }
 
-    // Save OAuth-issued token to a separate attribute to avoid overwriting existing accessToken used by posting
+    // Try to find the item we should update. Prefer resolvedUserId captured earlier (fast path).
+    let targetUserId: string | null = resolvedUserId || null;
+    try {
+      if (!targetUserId) {
+        // Try GSI1 lookup by SK
+        try {
+          const q = await ddb.send(new QueryCommand({
+            TableName: TBL_THREADS,
+            IndexName: 'GSI1',
+            KeyConditionExpression: 'SK = :sk',
+            ExpressionAttributeValues: { ':sk': { S: `ACCOUNT#${accountId}` } },
+            ProjectionExpression: 'PK',
+            Limit: 1,
+          }));
+          const it: any = (q as any).Items?.[0] || null;
+          if (it && it.PK && it.PK.S) {
+            const pk = String(it.PK.S || '');
+            if (pk.startsWith('USER#')) targetUserId = pk.replace(/^USER#/, '');
+            else targetUserId = pk;
+          }
+        } catch (e) {
+          console.log('[oauth] query by SK to resolve target user failed', e);
+        }
+      }
+    } catch (e) {
+      console.log('[oauth] resolve target user failed', e);
+    }
+
+    if (!targetUserId) {
+      console.warn('[oauth] could not resolve existing account by SK; refusing to create new PKed item', { accountIdFromState });
+      return res.status(400).json({ error: 'account not found to attach oauth token' });
+    }
+
+    // Save OAuth-issued token to a separate attribute on the existing account item to avoid creating new PK
     try {
       await ddb.send(new UpdateItemCommand({
         TableName: TBL_THREADS,
-        Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } },
+        Key: { PK: { S: `USER#${targetUserId}` }, SK: { S: `ACCOUNT#${accountId}` } },
         UpdateExpression: 'SET oauthAccessToken = :at, oauthTokenExpiresAt = :te, oauthSavedAt = :now',
         ExpressionAttributeValues: {
           ':at': { S: String(accessToken) },
@@ -197,7 +252,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           ':now': { N: String(Math.floor(Date.now()/1000)) },
         },
       }));
-    } catch (e) { console.log('[oauth] save oauth token failed', e); }
+    } catch (e) { console.log('[oauth] save oauth token failed', e); return res.status(500).json({ error: 'save_oauth_failed' }); }
 
     // send master Discord notification with masked details
     try {
