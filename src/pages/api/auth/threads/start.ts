@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { createDynamoClient } from "@/lib/ddb";
+import { logEvent } from '@/lib/logger';
 import { verifyUserFromRequest } from "@/lib/auth";
 import { GetItemCommand } from "@aws-sdk/client-dynamodb";
 
@@ -96,6 +97,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   // NOTE: do not log any secrets
   console.log("[oauth:start] resolved", { accountId, clientId, redirectUri, state: stateObj });
   console.log("[oauth:start] auth_url: ", url);
+  try {
+    await logEvent('threads_start', { redirectUri, hasProd: !!process.env.THREADS_OAUTH_REDIRECT_PROD, q: req.query });
+  } catch (e) {
+    console.log('[oauth:start] logEvent failed', e);
+  }
   res.redirect(url);
   return;
 }

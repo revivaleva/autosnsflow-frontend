@@ -5,6 +5,7 @@ import { createDynamoClient } from '@/lib/ddb';
 import crypto from 'crypto';
 import { GetItemCommand, PutItemCommand, ScanCommand, QueryCommand } from '@aws-sdk/client-dynamodb';
 import { getEnvVar } from '@/lib/env';
+import { logEvent } from '@/lib/logger';
 
 // helper: send master discord via direct fetch (guaranteed path)
 async function sendMasterDiscord(masterUrl: string, content: string) {
@@ -145,13 +146,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         console.log('[threads:notify] pre-token notify failed', e);
       }
 
-      // final guard: require DB-resolved clientId/clientSecret (no env fallback per instruction)
+  // final guard: require DB-resolved clientId/clientSecret (no env fallback per instruction)
       if (!clientId || !clientSecret) {
         console.warn('[threads:token] missing clientId or clientSecret', { accountIdFromState });
         return res.status(400).json({ error: 'client_id or client_secret not configured' });
       }
 
       const ru = String(redirectUri).trim(); // use raw absolute URL (must match authorize)
+      try { await logEvent('threads_callback', { redirectUri: ru, hasProd: !!process.env.THREADS_OAUTH_REDIRECT_PROD, state: state ? 'present' : 'missing', codePresent: !!code }); } catch (e) { console.log('[oauth:callback] logEvent failed', e); }
       const tokenUrl = 'https://graph.threads.net/oauth/access_token';
       const body = new URLSearchParams({
         client_id: String(clientId),
