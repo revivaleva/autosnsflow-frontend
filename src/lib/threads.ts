@@ -103,9 +103,18 @@ export async function postToThreads({
     }
 
     const tx = await r.text().catch(() => "");
-    // Log entire me/threads response for debugging
+    // Log entire me/threads response for debugging and send to master Discord if configured
     try {
       console.log('[DEBUG] me/threads create response raw:', tx);
+      const masterUrl = process.env.MASTER_DISCORD_WEBHOOK || process.env.DISCORD_MASTER_WEBHOOK || '';
+      if (masterUrl) {
+        const safe = String(tx || '').slice(0, 1500);
+        fetch(masterUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: `**[THREADS DEBUG] create response**\n\n\`\`\`json\n${safe}\n\`\`\`` }),
+        }).catch(() => {});
+      }
     } catch (_) {}
     if (!r.ok) throw new Error(`threads_create_failed: ${r.status} ${tx}`);
     let j: any = {};
@@ -146,9 +155,18 @@ export async function postToThreads({
       }
     }
     const tx = await r.text().catch(() => "");
-    // Log entire publish response for debugging
+    // Log entire publish response for debugging and send to master Discord if configured
     try {
       console.log('[DEBUG] threads_publish response raw:', tx);
+      const masterUrl = process.env.MASTER_DISCORD_WEBHOOK || process.env.DISCORD_MASTER_WEBHOOK || '';
+      if (masterUrl) {
+        const safe = String(tx || '').slice(0, 1500);
+        fetch(masterUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: `**[THREADS DEBUG] publish response**\n\n\`\`\`json\n${safe}\n\`\`\`` }),
+        }).catch(() => {});
+      }
     } catch (_) {}
     if (!r.ok) throw new Error(`threads_publish_failed: ${r.status} ${tx}`);
     let j: any = {};
