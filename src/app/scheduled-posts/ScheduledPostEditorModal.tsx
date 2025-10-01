@@ -712,13 +712,14 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
           />
         </div>
 
-        <div className="mt-4">
+        <div className="mt-4 relative">
           <label className="block text-sm font-medium">本文テキスト</label>
           <textarea
             className="mt-1 w-full min-h-[160px] border rounded-md px-3 py-2"
             value={content}
             onChange={(e) => setContent(e.target.value)}
           />
+          <div className="absolute left-3 bottom-3 text-xs text-gray-500">{String(content || '').length} 文字</div>
         </div>
 
         <div className="flex justify-end gap-2 mt-5">

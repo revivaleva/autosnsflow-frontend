@@ -36,3 +36,8 @@ aws lambda add-permission \
   --region "${REGION}" || true
 
 echo "完了：${SCHEDULE} で ${FUNCTION_NAME} を起動します。"
+
+# 追加: daily prune 用のルールを作るためのヘルパー呼び出し例
+# 使い方（1日1回深夜に実行する例）:
+#   bash create-or-update-schedule.sh ap-northeast-1 scheduled-autosnsflow "cron(0 1 * * ? *)"
+# 上記はUTC 01:00（JST 10:00）となるため、JST 深夜 00:00 にしたい場合は cron(0 15 * * ? *) を使用

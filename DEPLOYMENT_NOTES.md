@@ -87,3 +87,61 @@ mv next.config.ts next.config.mjs
 - `lambda`: Lambda関数開発・デプロイ用
 
 **注意**: `lambda`ブランチの変更は自動的にLambda関数にデプロイされます。
+
+### 7. 追加ルール（Threads OAuth / 削除機能）
+
+- Threads OAuth を利用するには各アカウントごとの App ID と App Secret が必要になる場合があります。運用上は以下を満たしてください。
+  - **固定のコールバックURL** を Facebook App の `Valid OAuth Redirect URIs` に登録しておくこと（例: `https://your-domain.com/api/auth/threads/callback` / `http://localhost:3000/api/auth/threads/callback`）。
+  - フロントエンドからは `/api/auth/threads/start?accountId=<id>` を呼ぶだけで、サーバ側が該当アカウントの client_id を選択してリダイレクトします。
+  - アプリの `threads_delete` 権限を使用する場合はユーザーの再同意（re-consent）が必要です。
+
+- 投稿削除の運用ルール:
+  - 削除は Threads の API 制限（1アカウントあたり24時間で最大100件）を尊重すること。
+
+### 8. Threads OAuth — GSI 追加案・作業ログ・環境変数／DBカラム
+
+- **GSI 追加案（推奨）**:
+  - 目的: `ACCOUNT#<id>` を SK に持つアイテムを高速に検索できるようにするため。
+  - 提案: ThreadsAccounts テーブルに GSI を追加する。
+    - GSI 名称例: `GSI_bySK`
+    - パーティションキー: `SK` (S)
+    - ソートキー: `PK` (S) または不要なら省略
+    - Projection: `clientId, clientSecret, PK, SK`（必要に応じて他フィールドを追加）
+  - 理由: 現状の実装では cookie が無いコールバック時にテーブル全走査（Scan）でフォールバックしていますが、GSI を使えば Query により効率的かつ低コストに該当アカウントを見つけられます。
+
+- **現在の作業ログ（このリポジトリ上で行った変更のまとめ）**:
+  - `src/lib/env.ts` に `getEnvVar` を追加（"undefined" や空文字を未設定扱いに正規化）。
+  - `src/pages/api/auth/threads/start.ts` の `clientId` 解決を DB 優先に変更（環境変数依存を削除）。
+  - `src/pages/api/auth/threads/callback.ts` を DB 優先に変更し、
+    - cookie（`__session`）経由の GET で該当アカウントを読み取り、
+    - cookie が無い／見つからない場合は GSI 未導入環境向けに Scan でフォールバックする実装を追加。
+  - `src/pages/api/auth/threads/start.ts` と `callback.ts` で `redirect_uri` の検証（絶対URLかどうか）を追加。
+
+- **残タスク（推奨）**:
+  - DynamoDB に GSI を追加して `Scan` フォールバックを廃止する。
+  - ステージングに push → OAuth フロー（start → callback → token exchange）の動作確認。
+
+- **今回作成／使用している環境変数（主要）**:
+  - `THREADS_OAUTH_REDIRECT_PROD` — 本番用コールバック URL（絶対URLであること）
+  - `THREADS_OAUTH_REDIRECT_LOCAL` — ローカル/開発用コールバック URL
+  - `TBL_THREADS_ACCOUNTS` — ThreadsAccounts テーブル名（デフォルト `ThreadsAccounts`）
+  - `TBL_SETTINGS` — UserSettings テーブル名（デフォルト `UserSettings`）
+  - `AUTOSNSFLOW_ACCESS_KEY_ID`, `AUTOSNSFLOW_SECRET_ACCESS_KEY` — サーバ固定 AWS クレデンシャル（存在する場合のみ利用）
+
+- **DynamoDB の主要カラム（ThreadsAccounts テーブル）**:
+  - `PK`: 例 `USER#<userId>`（文字列）
+  - `SK`: 例 `ACCOUNT#<accountId>`（文字列）
+  - `clientId` (S) — Threads App ID（アプリ単位・任意）
+  - `clientSecret` (S) — Threads App Secret（アプリ単位・任意、機密）
+  - `accessToken` (S) — 取得したアクセストークン
+  - `tokenExpiresAt` (N) — UNIX 秒での有効期限
+  - `createdAt` (N)
+  - その他: `providerUserId`, `displayName`, `autoPost` など既存のフィールド
+
+- **運用上の注意**:
+  - Meta（Threads）アプリ設定の `Valid OAuth Redirect URIs` に、本番の `THREADS_OAUTH_REDIRECT_PROD` を事前に登録しておくこと。
+  - Scan を使うフォールバックは一時的措置と考え、GSI を追加して Query に切り替えることを推奨します。
+
+  - UI からの削除は二重確認を必須とし、削除実行後は `ExecutionLogs` に結果を残すこと。
+  - 大量削除を行う場合は即時100件まで削除し、残件は専用キュー (`DeletionQueue`) に保管して24時間後に再試行する（`daily-prune` を hourly に変更して利用することも検討）。
+

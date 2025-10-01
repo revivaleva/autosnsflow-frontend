@@ -70,6 +70,17 @@ const sanitizeItem = (it: any) => {
   return out;
 };
 
+// Normalize DynamoDB epoch value to seconds.
+// Handles values stored in seconds or milliseconds.
+function normalizeEpochSec(raw: any): number {
+  if (raw === null || typeof raw === 'undefined') return 0;
+  const v = Number(raw);
+  if (!isFinite(v)) return 0;
+  // Heuristic: if value looks like milliseconds (> 1e12), convert to seconds
+  if (v > 1e12) return Math.floor(v / 1000);
+  return Math.floor(v);
+}
+
 const isValidUrl = (s: any) => {
   try {
     if (!s || typeof s !== 'string') return false;
@@ -670,6 +681,8 @@ async function createScheduledPost(userId: any, { acct, group, type, whenJst, ov
     content: { S: "" },
     // スパースGSI用の属性（候補のみインデックスされるよう、候補時に文字列で accountId を保存）
     needsContentAccount: { S: acct.accountId },
+    // nextGenerateAt を明示的に0にして GSI に入るようにする
+    nextGenerateAt: { N: "0" },
     scheduledAt: { N: String(toEpochSec(whenJst)) },
     postedAt: { N: "0" },
     status: { S: "scheduled" },
@@ -1097,14 +1110,14 @@ export const handler = async (event: any = {}) => {
                 }));
               } catch (e) {
                 if (!isGsiMissing(e)) throw e;
+                // Fallback: scan user's PK-prefixed scheduled posts instead of relying on legacy GSI
                 q = await ddb.send(new QueryCommand({
                   TableName: TBL_SCHEDULED,
-                  IndexName: GSI_SCH_BY_ACC_TIME,
-                  KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
-                  ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
-                  ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, generateLockedAt",
+                  KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+                  ExpressionAttributeValues: { ":pk": { S: `USER#${userId}` }, ":pfx": { S: "SCHEDULEDPOST#" } },
+                  ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, needsContentAccount",
                   ScanIndexForward: true,
-                  Limit: 100
+                  Limit: 200
                 }));
               }
 
@@ -1169,14 +1182,14 @@ export const handler = async (event: any = {}) => {
                 }));
               } catch (e) {
                 if (!isGsiMissing(e)) throw e;
+                // Fallback: use PK query to enumerate user's scheduled posts
                 q = await ddb.send(new QueryCommand({
                   TableName: TBL_SCHEDULED,
-                  IndexName: GSI_SCH_BY_ACC_TIME,
-                  KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
-                  ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
-                  ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, generateLockedAt",
+                  KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+                  ExpressionAttributeValues: { ":pk": { S: `USER#${userId}` }, ":pfx": { S: "SCHEDULEDPOST#" } },
+                  ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, needsContentAccount",
                   ScanIndexForward: true,
-                  Limit: limit
+                  Limit: limit * 2
                 }));
               }
 
@@ -1406,23 +1419,7 @@ export const handler = async (event: any = {}) => {
           }
           break;
         }
-        case "getScheduledPost": {
-          // Return full scheduled post item for given PK/SK or scheduledPostId (for debugging)
-          try {
-            const pk = event.pk || `USER#${userId}`;
-            const sk = event.sk || (event.scheduledPostId ? `SCHEDULEDPOST#${event.scheduledPostId}` : null);
-            if (!pk || !sk) {
-              results.push({ accountId: acct.accountId, getScheduledPost: { error: 'missing pk/sk or scheduledPostId' } });
-              break;
-            }
-            const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } } }));
-            const rec = unmarshall(full.Item || {});
-            results.push({ accountId: acct.accountId, getScheduledPost: { found: !!full.Item, item: rec } });
-          } catch (e) {
-            results.push({ accountId: acct.accountId, getScheduledPost: { error: String(e) } });
-          }
-          break;
-        }
+        // removed debug action
           default:
             results.push({ accountId: acct?.accountId || "-", error: "unknown action" });
         }
@@ -1488,6 +1485,104 @@ export const handler = async (event: any = {}) => {
     );
 
     return { statusCode: 200, body: JSON.stringify({ processedUsers: userIds.length, userSucceeded, totals }) };
+  }
+
+  // daily prune: delete scheduled posts older than 7 days
+  // NOTE: caller can request full-table operation by omitting event.userId
+  if (job === "daily-prune" || job === "prune") {
+    // Options:
+    // - event.dryRun (boolean): true = do not delete, only count and log candidates
+    // - event.userId (string): if provided, only run for that user
+    const dryRun = !!event.dryRun;
+    const singleUser = event.userId || null;
+    const deletePosted = !!event.deletePosted; // if true, perform deletion of posted records
+    const confirmPostedDelete = !!event.confirm; // safety: require confirm=true to actually delete posted items
+
+    const userIds = singleUser ? [singleUser] : await getActiveUserIds();
+    // If no userId specified, also compute pre-filter total across the whole table
+    let preFilterTotal: number | null = null;
+    if (!singleUser) {
+      try {
+        preFilterTotal = await countAllScheduledPosts();
+        await postDiscordMaster(`**[PRUNE] pre-filter total items across table: ${preFilterTotal}**`);
+      } catch (e) {
+        console.log('[warn] countAllScheduledPosts failed:', e);
+      }
+    }
+    let totalDeleted = 0;
+    let totalCandidates = 0;
+    let totalScanned = 0;
+    for (const uid of userIds) {
+      try {
+        // If deletePosted mode is requested, only allow single-user operations for safety
+        if (deletePosted) {
+          if (!singleUser) {
+            // skip global posted-deletion for safety
+            await putLog({ userId: uid, type: "prune", status: "error", message: "deletePosted requested but no userId specified; skipping" });
+            continue;
+          }
+          if (dryRun) {
+            const res = await countPostedCandidates(uid);
+            const cands = res?.candidates || 0;
+            const scanned = res?.scanned || 0;
+            await putLog({ userId: uid, type: "prune", status: "info", message: `dry-run deletePosted: ${cands} candidates (scanned=${scanned})` });
+            totalCandidates += cands;
+            totalScanned += scanned;
+            continue;
+          }
+          // non-dry-run: require explicit confirmation to perform posted deletion
+          if (!confirmPostedDelete) {
+            await putLog({ userId: uid, type: "prune", status: "warn", message: "deletePosted requested but not confirmed (confirm=false); skipping" });
+            continue;
+          }
+          const del = await deletePostedForUser(uid);
+          totalDeleted += Number(del || 0);
+          continue;
+        }
+        if (dryRun) {
+          const res = await countPruneCandidates(uid);
+          const cands = res?.candidates || 0;
+          const scanned = res?.scanned || 0;
+          totalCandidates += cands;
+          totalScanned += scanned;
+          await putLog({ userId: uid, type: "prune", status: "info", message: `dry-run: ${cands} 削除候補 (scanned=${scanned})` });
+          continue;
+        }
+        const c = await pruneOldScheduledPosts(uid);
+        totalDeleted += Number(c || 0);
+      } catch (e) {
+        console.log("[warn] daily-prune failed for", uid, e);
+        await putLog({ userId: uid, type: "prune", status: "error", message: "daily prune failed", detail: { error: String(e) } });
+      }
+    }
+
+    if (dryRun) {
+      const finishedAt = Date.now();
+      // build totals object expected by formatMasterMessage
+      const t = { candidates: totalCandidates, scanned: totalScanned, deleted: 0, preFilterTotal } as any;
+      await postDiscordMaster(formatMasterMessage({ job: "daily-prune", startedAt, finishedAt, userTotal: userIds.length, userSucceeded: 0, totals: t }));
+      return { statusCode: 200, body: JSON.stringify({ dryRun: true, preFilterTotal, candidates: totalCandidates, scanned: totalScanned }) };
+    }
+
+    // If no userId was specified, perform full-table prune
+    if (!singleUser) {
+      try {
+        const allDeleted = await pruneOldScheduledPostsAll();
+        const finishedAt = Date.now();
+        const t = { candidates: totalCandidates, scanned: totalScanned, deleted: allDeleted, preFilterTotal } as any;
+        await postDiscordMaster(formatMasterMessage({ job: "daily-prune", startedAt, finishedAt, userTotal: userIds.length, userSucceeded, totals: t }));
+        return { statusCode: 200, body: JSON.stringify({ deleted: allDeleted, preFilterTotal }) };
+      } catch (e) {
+        console.log('[warn] full-table prune failed:', e);
+        await postDiscordMaster(`**[PRUNE] full-table prune failed**`);
+        return { statusCode: 500, body: JSON.stringify({ error: String(e) }) };
+      }
+    }
+
+    const finishedAt = Date.now();
+    const t = { candidates: totalCandidates, scanned: totalScanned, deleted: totalDeleted, preFilterTotal } as any;
+    await postDiscordMaster(formatMasterMessage({ job: "daily-prune", startedAt, finishedAt, userTotal: userIds.length, userSucceeded, totals: t }));
+    return { statusCode: 200, body: JSON.stringify({ deleted: totalDeleted }) };
   }
 
   // every-5min（デフォルト）
@@ -2710,15 +2805,10 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
     const pid = getS(f.postId) || "";
     const nid = getS(f.numericPostId) || "";
     const pat = getN(f.postedAt) || "";
-    // verbose debug: log the raw secondStageWanted attribute and full item
-    try { console.log('[second-stage] candidate full.Item raw:', JSON.stringify(full.Item || {})); } catch (e) {}
     // secondStageWanted を尊重：存在すれば true のもののみ対象、未指定なら従来通り
     const ssw = (typeof f.secondStageWanted !== 'undefined') ? (f.secondStageWanted?.BOOL === true || String(f.secondStageWanted?.S || '').toLowerCase() === 'true') : undefined;
-    // verbose: log computed ssw
-    try { console.log('[second-stage] computed secondStageWanted (ssw):', { ssw }); } catch (e) {}
-    // Require explicit secondStageWanted === true to be eligible. If unset (undefined), treat as not eligible to avoid accidental runs.
+    // Require explicit secondStageWanted === true to be eligible.
     const ok = st === "posted" && pid && (!dp || dp !== "done") && apg.includes("自動投稿") && Number(pat || 0) <= threshold && (ssw === true);
-    try { console.log('[second-stage] candidate ok evaluation', { st, pid, dp, apg, pat, ssw, ok }); } catch (e) {}
     if (debugMode && debugTried.length < 5) debugTried.push({ ksk, st, dp, apg, pid, nid, pat, ok });
     if (ok) { found = { kpk, ksk, pid, nid, pat }; break; }
   }
@@ -2830,13 +2920,15 @@ async function runHourlyJobForUser(userId: any) {
       { label: "スキップ", value: skippedAccounts },
     ]);
   } catch (e) { /* ignore logging errors */ }
+  // `metrics` が空（= 実行なし）の場合は簡略化して 'hourly：実行なし' のみ送る
   const metrics = formatNonZeroLine([
     { label: "予約投稿作成", value: createdCount, suffix: " 件" },
     { label: "返信取得", value: fetchedReplies, suffix: " 件" },
     { label: "返信下書き", value: replyDrafts, suffix: " 件" },
     { label: "スキップ", value: skippedAccounts },
-  ]);
-  await postDiscordLog({ userId, content: `**[定期実行レポート] ${now} (hourly)**\n${metrics}` });
+  ], "hourly");
+  const content = metrics === "hourly：実行なし" ? metrics : `**[定期実行レポート] ${now} (hourly)**\n${metrics}`;
+  await postDiscordLog({ userId, content });
   return { userId, createdCount, fetchedReplies, replyDrafts, skippedAccounts };
 }
 
@@ -2857,6 +2949,8 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
   try {
     console.log('[gen] processPendingGenerationsForAccount start', { userId, accountId: acct.accountId, limit });
     let q;
+    // fetchLimit: how many candidates to fetch from GSI/PK before sorting and applying the user-requested `limit`
+    const fetchLimit = Math.max(Number(limit) * 10, 100);
     try {
       q = await ddb.send(new QueryCommand({
         TableName: TBL_SCHEDULED,
@@ -2865,7 +2959,7 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
         ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
         ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, generateLockedAt",
         ScanIndexForward: true,
-        Limit: 50
+        Limit: fetchLimit
       }));
     } catch (e) {
       // If the sparse GSI is missing, emit notification and fall back to legacy index
@@ -2883,18 +2977,34 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
         ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
         ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts",
         ScanIndexForward: true,
-        Limit: 50
+        Limit: fetchLimit
       }));
     }
 
     const items = (q.Items || []);
     console.log('[gen] query returned candidate keys', { count: items.length });
+
+    // Prefetch full items so we can sort by scheduledAt (oldest first)
+    const candidates: any[] = [];
     for (const it of items) {
+      const pk = getS(it.PK) || '';
+      const sk = getS(it.SK) || '';
+      try {
+        const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } } }));
+        const rec = unmarshall(full.Item || {});
+        candidates.push({ pk, sk, rec });
+      } catch (e) {
+        console.log('[gen] prefetch GetItem failed', { pk, sk, err: String(e) });
+      }
+    }
+
+    // Sort by scheduledAt ascending (oldest first)
+    candidates.sort((a, b) => Number(a.rec?.scheduledAt || 0) - Number(b.rec?.scheduledAt || 0));
+
+    for (const c of candidates) {
       if (generated >= limit) break;
-      const pk = getS(it.PK) || ''; const sk = getS(it.SK) || '';
+      const pk = c.pk; const sk = c.sk; const rec = c.rec || {};
       console.log('[gen] evaluating candidate', { pk, sk });
-      const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } } }));
-      const rec = unmarshall(full.Item || {});
       const contentEmpty = !rec.content || String(rec.content || '').trim() === '';
       console.log('[gen] candidate record', { pk, sk, scheduledAt: rec.scheduledAt || null, contentEmpty, nextGenerateAt: rec.nextGenerateAt || null, generateAttempts: rec.generateAttempts || 0, generateLock: rec.generateLock || null });
       // 定期実行は「本文が空のデータ」のみに対して生成を行う
@@ -2929,12 +3039,11 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
         }));
         console.log('[gen] lock acquired', { pk, sk });
       } catch (e) {
-        // ロック取得失敗 -> 他プロセスで処理中
         console.log('[gen] lock acquire failed, skipping', { pk, sk, err: String(e) });
         continue;
       }
 
-      // 生成処理（既存の generateAndAttachContent と同等の処理を呼ぶ）
+      // 生成処理
       try {
         await generateAndAttachContent(userId, acct, sk.replace(/^SCHEDULEDPOST#/, ''), rec.theme || '', await getUserSettings(userId));
         generated++;
@@ -2949,7 +3058,7 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
         }));
       }
 
-      // 正常終了または失敗後にロックをクリア（成功時は generateAndAttachContent 内で content を更新しているはず）
+      // 正常終了または失敗後にロックをクリア
       try {
         await ddb.send(new UpdateItemCommand({
           TableName: TBL_SCHEDULED,
@@ -3022,9 +3131,9 @@ async function runFiveMinJobForUser(userId: any) {
     { label: "リプ返信", value: totalReply },
     { label: "2段階投稿", value: totalTwo },
     { label: "失効(rate-limit)", value: rateSkipped },
-  ]);
-  const base = `**[定期実行レポート] ${now} (every-5min)**\n${metrics}`;
-  await postDiscordLog({ userId, content: base });
+  ], "every-5min");
+  const content = metrics === "every-5min：実行なし" ? metrics : `**[定期実行レポート] ${now} (every-5min)**\n${metrics}`;
+  await postDiscordLog({ userId, content });
   return { userId, totalAuto, totalReply, totalTwo, rateSkipped };
 }
 
@@ -3216,6 +3325,240 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
   }
 }
 
+// 指定ユーザーの予約投稿で、scheduledAt が 7 日以上前かつ未投稿のものを物理削除する
+async function pruneOldScheduledPosts(userId: any) {
+  try {
+    const sevenDaysAgo = Math.floor(Date.now() / 1000) - (7 * 24 * 60 * 60);
+    // Use GSI if available for account-based queries, otherwise scan PK
+    let lastKey: any = undefined;
+    let totalDeleted = 0;
+    // Per-Threads-account deletion limit to avoid large single-run deletes
+    const perAccountLimit = Number(process.env.PER_ACCOUNT_PRUNE_LIMIT || 20);
+    // track deletes per Threads accountId (accountId field inside scheduled items)
+    const deletedByAccount: Record<string, number> = {};
+    do {
+      const q = await ddb.send(new QueryCommand({
+        TableName: TBL_SCHEDULED,
+        KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+        ExpressionAttributeValues: { 
+          ":pk": { S: `USER#${userId}` },
+          ":pfx": { S: "SCHEDULEDPOST#" },
+        },
+        // include accountId so we can enforce per-Threads-account caps
+        ProjectionExpression: "PK, SK, scheduledAt, status, isDeleted, accountId",
+        Limit: 1000,
+        ExclusiveStartKey: lastKey,
+      }));
+
+      for (const it of (q.Items || [])) {
+        try {
+          const scheduledAt = normalizeEpochSec(getN(it.scheduledAt) || 0);
+          // NOTE: per request, do not filter by status or isDeleted — delete purely by scheduledAt age
+          if (!scheduledAt) continue;
+          if (scheduledAt <= sevenDaysAgo) {
+            const acctId = getS(it.accountId) || "__unknown__";
+            const cur = deletedByAccount[acctId] || 0;
+            if (cur >= perAccountLimit) {
+              // reached cap for this Threads account
+              continue;
+            }
+            await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: it.PK, SK: it.SK } }));
+            totalDeleted++;
+            deletedByAccount[acctId] = cur + 1;
+          }
+        } catch (e) {
+          console.log("[warn] prune delete failed for item", e);
+        }
+      }
+
+      // If every seen account has reached cap, we can stop early. This is a heuristic — if new accounts may appear later, the loop continues.
+      const allReached = Object.values(deletedByAccount).every(v => v >= perAccountLimit) && Object.keys(deletedByAccount).length > 0;
+      if (allReached) {
+        break;
+      }
+
+      lastKey = q.LastEvaluatedKey;
+    } while (lastKey);
+
+    if (totalDeleted > 0) {
+      await putLog({ userId, type: "prune", status: "info", message: `古い予約投稿 ${totalDeleted} 件を削除しました` });
+    }
+    return totalDeleted;
+  } catch (e) {
+    console.log("[warn] pruneOldScheduledPosts failed:", e);
+    throw e;
+  }
+}
+
+// 削除候補の件数だけを数える dry-run 用関数
+async function countPruneCandidates(userId: any) {
+  try {
+    const sevenDaysAgo = Math.floor(Date.now() / 1000) - (7 * 24 * 60 * 60);
+    let lastKey: any = undefined;
+    let totalCandidates = 0;
+    let totalScanned = 0;
+    do {
+      const q = await ddb.send(new QueryCommand({
+        TableName: TBL_SCHEDULED,
+        KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+        ExpressionAttributeValues: { 
+          ":pk": { S: `USER#${userId}` },
+          ":pfx": { S: "SCHEDULEDPOST#" },
+        },
+        ProjectionExpression: "scheduledAt, status, isDeleted",
+        Limit: 1000,
+        ExclusiveStartKey: lastKey,
+      }));
+
+      // Emit debug for first N items to help troubleshooting
+      const dbgItems = (q.Items || []).slice(0, 20).map((it: any) => ({
+        PK: undefined,
+        SK: undefined,
+        scheduledAtRaw: it.scheduledAt?.N || null,
+        scheduledAtNorm: normalizeEpochSec(getN(it.scheduledAt) || 0),
+        status: it.status?.S || null,
+        isDeleted: typeof it.isDeleted !== 'undefined' ? it.isDeleted?.BOOL === true : null,
+      }));
+      try { console.log('[PRUNE-DBG] sample items for user', userId, dbgItems); } catch (_) {}
+
+      for (const it of (q.Items || [])) {
+        try {
+          const scheduledAt = normalizeEpochSec(getN(it.scheduledAt) || 0);
+          totalScanned++;
+          // NOTE: per request, do not filter by status or isDeleted — count purely by scheduledAt age
+          if (!scheduledAt) continue;
+          if (scheduledAt <= sevenDaysAgo) totalCandidates++;
+        } catch (e) {
+          // continue
+        }
+      }
+
+      lastKey = q.LastEvaluatedKey;
+    } while (lastKey);
+
+    return { candidates: totalCandidates, scanned: totalScanned };
+  } catch (e) {
+    console.log("[warn] countPruneCandidates failed:", e);
+    throw e;
+  }
+}
+
+// Count ALL scheduled posts in the table (pre-filter total)
+async function countAllScheduledPosts() {
+  try {
+    let lastKey: any = undefined;
+    let total = 0;
+    do {
+      const q = await ddb.send(new ScanCommand({
+        TableName: TBL_SCHEDULED,
+        ProjectionExpression: "PK",
+        ExclusiveStartKey: lastKey,
+        Limit: 1000,
+      }));
+      total += (q.Count || 0);
+      lastKey = q.LastEvaluatedKey;
+    } while (lastKey);
+    return total;
+  } catch (e) {
+    console.log('[warn] countAllScheduledPosts failed:', e);
+    throw e;
+  }
+}
+
+// Full-table prune helper: iterate all users and run pruneOldScheduledPosts
+async function pruneOldScheduledPostsAll() {
+  try {
+    const userIds = await getActiveUserIds();
+    let totalDeleted = 0;
+    for (const uid of userIds) {
+      const c = await pruneOldScheduledPosts(uid);
+      totalDeleted += Number(c || 0);
+    }
+    return totalDeleted;
+  } catch (e) {
+    console.log('[warn] pruneOldScheduledPostsAll failed:', e);
+    throw e;
+  }
+}
+
+// Count posted records for dry-run deletePosted mode
+async function countPostedCandidates(userId: any) {
+  try {
+    let lastKey: any = undefined;
+    let totalCandidates = 0;
+    let totalScanned = 0;
+    do {
+      const q = await ddb.send(new QueryCommand({
+        TableName: TBL_SCHEDULED,
+        KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+        ExpressionAttributeValues: { 
+          ":pk": { S: `USER#${userId}` },
+          ":pfx": { S: "SCHEDULEDPOST#" },
+        },
+        ProjectionExpression: "scheduledAt, status, isDeleted, postedAt",
+        ExclusiveStartKey: lastKey,
+      }));
+
+      for (const it of (q.Items || [])) {
+        try {
+          totalScanned++;
+          const status = getS(it.status) || "";
+          const isDeleted = it.isDeleted?.BOOL === true;
+          const postedAt = normalizeEpochSec(getN(it.postedAt) || 0);
+          // postedAt > 0 or status === 'posted' indicates posted
+          if (isDeleted) continue;
+          if (postedAt > 0 || status === 'posted') totalCandidates++;
+        } catch (e) {}
+      }
+
+      lastKey = q.LastEvaluatedKey;
+    } while (lastKey);
+
+    return { candidates: totalCandidates, scanned: totalScanned };
+  } catch (e) {
+    console.log("[warn] countPostedCandidates failed:", e);
+    throw e;
+  }
+}
+
+// Physically delete posted records for a specific user
+async function deletePostedForUser(userId: any) {
+  try {
+    let lastKey: any = undefined;
+    let totalDeleted = 0;
+    do {
+      const q = await ddb.send(new QueryCommand({
+        TableName: TBL_SCHEDULED,
+        KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+        ExpressionAttributeValues: { 
+          ":pk": { S: `USER#${userId}` },
+          ":pfx": { S: "SCHEDULEDPOST#" },
+        },
+        ProjectionExpression: "PK,SK,postedAt,status,isDeleted",
+        ExclusiveStartKey: lastKey,
+      }));
+
+      for (const it of (q.Items || [])) {
+        try {
+          const postedAt = Number(getN(it.postedAt) || 0);
+          const status = getS(it.status) || "";
+          const isDeleted = it.isDeleted?.BOOL === true;
+          if (isDeleted) continue;
+          if (postedAt > 0 || status === 'posted') {
+            await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: it.PK, SK: it.SK } }));
+            totalDeleted++;
+          }
+        } catch (e) { console.log('[warn] deletePosted failed for item', e); }
+      }
+
+      lastKey = q.LastEvaluatedKey;
+    } while (lastKey);
+
+    if (totalDeleted > 0) await putLog({ userId, type: 'prune', status: 'info', message: `deleted posted ${totalDeleted} items` });
+    return totalDeleted;
+  } catch (e) { console.log('[warn] deletePostedForUser failed:', e); throw e; }
+}
+
 /// ========== マスタ通知（集計サマリ） ==========
 function getMasterWebhookUrl() {
   return process.env.MASTER_DISCORD_WEBHOOK || process.env.DISCORD_MASTER_WEBHOOK || "";
@@ -3235,11 +3578,14 @@ async function postDiscordMaster(content: any) {
 }
 
 // ====== 通知: 非ゼロの項目だけを結合し、全てゼロなら「実行なし」
-function formatNonZeroLine(items: Array<{ label: string; value: number; suffix?: string }>) {
+function formatNonZeroLine(items: Array<{ label: string; value: number; suffix?: string }>, job?: string) {
   const parts = items
     .filter(i => (Number(i.value) || 0) > 0)
     .map(i => `${i.label}: ${i.value}${i.suffix || ''}`);
-  return parts.length > 0 ? parts.join(" / ") : "実行なし";
+  if (parts.length > 0) return parts.join(" / ");
+  // 簡略表示: ジョブ名が与えられれば `${job}：実行なし` を返す
+  if (job) return `${job}：実行なし`;
+  return "実行なし";
 }
 
 function formatMasterMessage({ job, startedAt, finishedAt, userTotal, userSucceeded, totals }: any) {
@@ -3260,6 +3606,26 @@ function formatMasterMessage({ job, startedAt, finishedAt, userTotal, userSuccee
       `所要時間: ${durSec}s`
     ].join("\n");
   }
+
+  if (job === "daily-prune" || job === "prune") {
+    const totalRecords = Number(totals?.preFilterTotal || 0);
+    const targetRecords = Number(totals?.candidates || 0);
+    const deleted = Number(totals?.deleted || 0);
+    const remaining = Math.max(0, targetRecords - deleted);
+    const line = [
+      `スキャンユーザー数: ${userTotal}`,
+      `全レコード数: ${totalRecords}`,
+      `対象レコード数: ${targetRecords}`,
+      `削除済レコード数: ${deleted}`,
+      `残対象レコード数: ${remaining}`,
+    ].join(" / ");
+    return [
+      `**[MASTER] 定期実行サマリ ${iso} (daily-prune)**`,
+      line,
+      `所要時間: ${durSec}s`
+    ].join("\n");
+  }
+
   const line = formatNonZeroLine([
     { label: "自動投稿 合計", value: totals.totalAuto },
     { label: "リプ返信 合計", value: totals.totalReply },

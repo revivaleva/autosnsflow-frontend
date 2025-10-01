@@ -93,6 +93,9 @@ export default function SNSAccountModal({
   const [displayName, setDisplayName] = useState("");
   const [accountId, setAccountId] = useState("");
   const [accessToken, setAccessToken] = useState("");
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
+  const [clientSecretMasked, setClientSecretMasked] = useState(false);
   const [characterImage, setCharacterImage] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [groupId, setGroupId] = useState("");
@@ -105,6 +108,7 @@ export default function SNSAccountModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [copyModalOpen, setCopyModalOpen] = useState(false);
+  const [authUrlFallback, setAuthUrlFallback] = useState<string | null>(null);
   const [aiPreviewModalOpen, setAiPreviewModalOpen] = useState(false);
   const [aiPersonaDetail, setAiPersonaDetail] = useState("");
   const [aiPersonaSimple, setAiPersonaSimple] = useState("");
@@ -124,6 +128,18 @@ export default function SNSAccountModal({
       setDisplayName(account.displayName || "");
       setAccountId(account.accountId || "");
       setAccessToken(account.accessToken || "");
+      // clientId may be stored under different keys depending on migration; try several fallbacks
+      setClientId(
+        account.clientId || account.client_id || account.CLIENT_ID || (account?.client && account.client.id) || ""
+      );
+
+      // For security, do not preload actual clientSecret into the editable field.
+      // API may return clientSecret (legacy) or hasClientSecret flag; check both.
+      const hasSecret = !!(
+        account.clientSecret || account.client_secret || account.hasClientSecret || account.has_client_secret || (account?.client && account.client.secret)
+      );
+      setClientSecret("");
+      setClientSecretMasked(hasSecret);
       setGroupId(account.autoPostGroupId || "");
       // ▼【追加】不正なJSON文字列で落ちないようガード
       try {
@@ -139,6 +155,9 @@ export default function SNSAccountModal({
       setDisplayName("");
       setAccountId("");
       setAccessToken("");
+      setClientId("");
+      setClientSecret("");
+      setClientSecretMasked(false);
       setGroupId("");
       setPersonaMode("detail");
       setPersonaSimple("");
@@ -156,6 +175,8 @@ export default function SNSAccountModal({
     setDisplayName("");
     setAccountId("");
     setAccessToken("");
+    setClientId(acc.clientId || "");
+    setClientSecret(acc.clientSecret || "");
     setGroupId("");
     setCharacterImage(acc.characterImage || "");
     setPersonaMode(acc.personaMode || "detail");
@@ -306,6 +327,24 @@ export default function SNSAccountModal({
           body: JSON.stringify({ accountId: originalAccountId }),
         });
       }
+      // 新規作成時: 同一 accountId の存在チェック
+      if (mode === "create") {
+        try {
+          const checkRes = await fetch(`/api/threads-accounts`, { credentials: "include" });
+          if (checkRes.ok) {
+            const checkData = await checkRes.json();
+            const existing = (checkData.items || checkData.accounts || []).find((a: any) => String(a.accountId || a.username || "") === String(accountId));
+            if (existing) {
+              setError("既に登録されたアカウントです");
+              setSaving(false);
+              return;
+            }
+          }
+        } catch (e) {
+          // チェック失敗は無視して続行（APIエラーがある場合は後続のConditionExpressionで弾かれる）
+          console.log("dup-check failed:", e);
+        }
+      }
       const method = mode === "create" ? "POST" : "PUT";
       const res = await fetch("/api/threads-accounts", {
         method,
@@ -315,6 +354,8 @@ export default function SNSAccountModal({
           accountId,
           displayName,
           accessToken: accessToken,
+          clientId: clientId || undefined,
+          clientSecret: clientSecret || undefined,
           createdAt:
             mode === "create"
               ? Math.floor(Date.now() / 1000)
@@ -408,6 +449,87 @@ export default function SNSAccountModal({
           value={accessToken}
           onChange={(e) => setAccessToken(e.target.value)}
         />
+
+        {/* 認可ボタン（編集時のみ表示） */}
+        {mode === "edit" && accountId && (
+          <div className="mb-3 flex flex-col gap-2">
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className="bg-yellow-500 text-white rounded px-3 py-1 hover:bg-yellow-600"
+                onClick={async () => {
+                  const apiUrl = '/api/auth/threads/start' + (accountId ? `?accountId=${encodeURIComponent(accountId)}` : '');
+                  try {
+                    const r = await fetch(apiUrl + '&raw=1', { headers: { Accept: 'application/json' } });
+                    const j = await r.json().catch(() => ({}));
+                    const authUrl = j.auth_url || apiUrl;
+                    try {
+                      await navigator.clipboard.writeText(authUrl);
+                      alert('認可URLをクリップボードにコピーしました');
+                      setAuthUrlFallback(null);
+                    } catch (e) {
+                      setAuthUrlFallback(authUrl);
+                    }
+                  } catch (e) {
+                    // フェッチ失敗時は従来の挙動に戻す
+                    const fallbackUrl = apiUrl;
+                    try { await navigator.clipboard.writeText(fallbackUrl); alert('認可URLをクリップボードにコピーしました'); setAuthUrlFallback(null); }
+                    catch { setAuthUrlFallback(fallbackUrl); }
+                  }
+                }}
+              >
+                認可URLをコピー
+              </button>
+            </div>
+            {authUrlFallback && (
+              <div className="text-sm">
+                <div className="mb-1">クリップボードにコピーできませんでした。下のリンクをクリックして開くか、手動でコピーしてください。</div>
+                <div className="flex gap-2 items-center">
+                  <input className="flex-1 border rounded px-2 py-1" readOnly value={authUrlFallback} />
+                  <a className="text-blue-600 underline" href={authUrlFallback} target="_blank" rel="noreferrer">開く</a>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        <label className="block mt-2">Threads App ID (clientId)</label>
+        <input
+          className="mb-2 border rounded px-2 py-1 w-full"
+          value={clientId}
+          onChange={(e) => setClientId(e.target.value)}
+          placeholder="未設定の場合は空欄"
+        />
+
+        <label className="block">Threads App Secret (clientSecret)</label>
+        {clientSecretMasked ? (
+          <div className="mb-2 flex items-center gap-2">
+            <input
+              className="flex-1 border rounded px-2 py-1 w-full bg-gray-50"
+              readOnly
+              value={'********'}
+            />
+            <button
+              type="button"
+              className="px-3 py-1 border rounded bg-white hover:bg-gray-50"
+              onClick={() => {
+                // allow user to replace the masked secret
+                setClientSecretMasked(false);
+                setClientSecret("");
+              }}
+            >
+              変更
+            </button>
+          </div>
+        ) : (
+          <input
+            className="mb-2 border rounded px-2 py-1 w-full"
+            type="password"
+            value={clientSecret}
+            onChange={(e) => setClientSecret(e.target.value)}
+            placeholder="登録済みのシークレットを上書きするにはここに入力"
+          />
+        )}
 
         <label className="block">キャラクターイメージ</label>
         <div className="flex gap-2 mb-2">

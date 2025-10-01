@@ -39,6 +39,10 @@ export default function ScheduledPostsTable() {
   const [repliesModalItems, setRepliesModalItems] = useState<ReplyType[]>([]);
   // [ADD] bulk selection
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  // Per-account toggle for enabling app-open on account name
+  const [appEnabledByAccount, setAppEnabledByAccount] = useState<Record<string, boolean>>({});
+  // show app column according to user settings
+  const [showAppColumn, setShowAppColumn] = useState<boolean>(false);
 
   const toggleSelect = (id: string) => {
     setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -215,29 +219,58 @@ export default function ScheduledPostsTable() {
 
   // 削除（新）: 未投稿は物理削除、投稿済は実投稿削除 + 論理削除
   const handleDelete = async (id: string) => {
-    if (!window.confirm("削除しますか？")) return;
+    // Double confirmation (不可逆確認 → 最終確認)
+    if (!window.confirm("この操作は取り消せません。投稿を完全に削除します。続行しますか？")) return;
+    if (!window.confirm("最終確認：本当にこの投稿を削除しますか？")) return;
+
+    console.debug('[UI][delete] clicked', { scheduledPostId: id });
+
+    const post = posts.find(p => p.scheduledPostId === id);
+    if (!post) {
+      console.error('[UI][delete] post not found', { scheduledPostId: id });
+      return alert("投稿が見つかりませんでした");
+    }
+    const numeric = (post as any).numericPostId;
+    console.debug('[UI][delete] post data', { scheduledPostId: id, numericPostId: numeric, accountId: post.accountId });
+    if (!numeric) {
+      console.warn('[UI][delete] numericPostId missing', { scheduledPostId: id });
+      return alert("numericPostId が存在しないため削除できません");
+    }
+
+    // set deleting state
+    setBulkDeleting(true);
     try {
-      const resp = await fetch(`/api/scheduled-posts`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ scheduledPostId: id, isDeleted: true }),
+      const payload = { scheduledPostId: id, numericPostId: String(numeric), accountId: post.accountId };
+      console.debug('[UI][delete] calling API', payload);
+      const resp = await fetch('/api/threads/delete-post', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(payload)
       });
-      const data = await resp.json().catch(() => ({}));
-      if (!resp.ok || !data?.ok) {
-        throw new Error(data?.error || resp.statusText || "削除に失敗しました");
+      console.debug('[UI][delete] api response status', resp.status);
+      const j = await resp.json().catch(() => ({}));
+      console.debug('[UI][delete] api response body', j);
+      if (!resp.ok || !j?.ok) {
+        console.error('[UI][delete] api reported error', { status: resp.status, body: j });
+        throw new Error(j?.error || '削除に失敗しました');
       }
 
-      // 未投稿はサーバ側で物理削除される -> クライアント側でも一覧から除外
-      if (data.deleted && !(posts.find(p => p.scheduledPostId === id)?.status === "posted")) {
+      // physical delete: remove from UI if server deleted
+      if (j.deletedCount && j.deletedCount > 0) {
+        console.info('[UI][delete] deleted scheduled post', { scheduledPostId: id, deletedCount: j.deletedCount });
         setPosts(prev => prev.filter(p => p.scheduledPostId !== id));
-        return;
+      } else {
+        console.info('[UI][delete] marked isDeleted', { scheduledPostId: id });
+        setPosts(prev => prev.map(p => p.scheduledPostId === id ? { ...p, isDeleted: true } : p));
       }
 
-      // 投稿済みは論理削除 -> isDeleted を true にしてグレーアウト表示
-      setPosts((prev) => prev.map((p) => (p.scheduledPostId === id ? { ...p, isDeleted: true, deletedAt: data.deletedAt || p.deletedAt } : p)));
+      alert(`削除完了: 削除数=${j.deletedCount || 0} 残=${j.remaining || 0}`);
     } catch (e: any) {
+      console.error('[UI][delete] failed', e);
       alert(`削除に失敗しました: ${e.message || String(e)}`);
+    } finally {
+      setBulkDeleting(false);
     }
   };
 
@@ -405,6 +438,25 @@ export default function ScheduledPostsTable() {
     }
   };
 
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch('/api/user-settings', { credentials: 'include', cache: 'no-store' });
+        if (r.ok) {
+          const j = await r.json();
+          const s = j?.settings || j || {};
+          setShowAppColumn(!!s.enableAppColumn);
+        }
+      } catch (_) {}
+    })();
+    const listener = (e: Event) => {
+      const ce = e as CustomEvent<Record<string, unknown>>;
+      setShowAppColumn(!!ce.detail?.enableAppColumn);
+    };
+    try { window.addEventListener('userSettingsUpdated', listener); } catch (_) {}
+    return () => { try { window.removeEventListener('userSettingsUpdated', listener); } catch (_) {} };
+  }, []);
+
   if (loading) return <div className="p-6 text-center">読み込み中...</div>;
 
   return (
@@ -520,6 +572,16 @@ export default function ScheduledPostsTable() {
             </option>
           ))}
         </select>
+        <select
+          className="border rounded p-1"
+          value={accountFilter}
+          onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setAccountFilter(e.target.value)}
+        >
+          <option value="">全てのアカウント</option>
+          {accountIds.map((id) => (
+            <option key={id} value={id}>{id}</option>
+          ))}
+        </select>
         <button
           className="border rounded px-2 py-1"
           onClick={() => {
@@ -556,6 +618,7 @@ export default function ScheduledPostsTable() {
               <th className="border p-1" style={{ width: 120 }}>二段階投稿削除</th>
               <th className="border p-1" style={{ width: 120 }}>投稿削除</th>
               <th className="border p-1" style={{ width: 90 }}>リプ状況</th>
+              {showAppColumn && <th className="border p-1" style={{ width: 120 }}>アプリ</th>}
               <th className="border p-1" style={{ width: 180 }}>アクション</th>
             </tr>
           </thead>
@@ -583,8 +646,27 @@ export default function ScheduledPostsTable() {
                     )}
                   </td>
                   <td className="border p-1">
-                    <div className="text-sm font-medium">{post.accountName}</div>
-                    <div className="text-xs text-gray-500 break-words">{post.accountId}</div>
+                    {showAppColumn && appEnabledByAccount[post.accountId] ? (
+                      <div>
+                        <a
+                          href={`/#/account/${encodeURIComponent(post.accountId)}`}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            try { window.location.href = `autosnsflow://account/${encodeURIComponent(post.accountId)}`; } catch (_) {}
+                            window.location.href = `/#/account/${encodeURIComponent(post.accountId)}`;
+                          }}
+                          className="text-sm font-medium text-blue-600 underline"
+                        >
+                          {post.accountName}
+                        </a>
+                        <div className="text-xs text-gray-500 break-words">{post.accountId}</div>
+                      </div>
+                    ) : (
+                      <div>
+                        <div className="text-sm font-medium">{post.accountName}</div>
+                        <div className="text-xs text-gray-500 break-words">{post.accountId}</div>
+                      </div>
+                    )}
                   </td>
                   <td className="border p-1">
                     {post.scheduledAt
@@ -723,6 +805,16 @@ export default function ScheduledPostsTable() {
                       {repliesStatus}
                     </button>
                   </td>
+                  {showAppColumn && (
+                    <td className="border p-1 text-center">
+                      <button
+                        className={`px-2 py-1 rounded text-sm ${appEnabledByAccount[post.accountId] ? 'bg-green-500 text-white' : 'bg-gray-200'}`}
+                        onClick={(e) => { e.stopPropagation(); setAppEnabledByAccount(prev => ({ ...prev, [post.accountId]: !prev[post.accountId] })); }}
+                      >
+                        {appEnabledByAccount[post.accountId] ? 'ON' : 'OFF'}
+                      </button>
+                    </td>
+                  )}
                   <td className="border p-1 space-x-1">
                     {post.status !== "posted" && !post.isDeleted && (
                       <button
@@ -738,7 +830,8 @@ export default function ScheduledPostsTable() {
                     {/* 即時二段階投稿ボタン */}
                     {post.status === "posted" && 
                      post.doublePostStatus === "waiting" && 
-                     !post.isDeleted && (
+                     !post.isDeleted && 
+                     (post.secondStageWanted !== false) && ( // hide button if explicitly '投稿無し'
                       <button
                         className={`text-white px-2 py-1 rounded text-xs ${
                           secondStagePostingId === post.scheduledPostId 
@@ -774,7 +867,7 @@ export default function ScheduledPostsTable() {
             })}
             {sortedPosts.length === 0 && (
               <tr>
-                <td colSpan={11} className="text-center text-gray-500 p-4">
+                <td colSpan={showAppColumn ? 12 : 11} className="text-center text-gray-500 p-4">
                   データがありません
                 </td>
               </tr>

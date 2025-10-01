@@ -36,6 +36,8 @@ export default function SNSAccountsTable() {
 
   // [ADD] 更新中アカウントの制御（多重クリック防止＆UI無効化）
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  // 表示制御: 設定でアプリ列を非表示にできる
+  const [showAppColumn, setShowAppColumn] = useState<boolean>(true);
 
   // /src/app/accounts/SNSAccountsTable.tsx
   // [FIX] GET応答が {accounts} / {items} 両方来ても動くように
@@ -62,13 +64,27 @@ export default function SNSAccountsTable() {
       }
       
       let accounts = (data.items ?? data.accounts) ?? [];
+      // If a search filter is present in localStorage (for local testing), apply it
+      try {
+        const filterId = localStorage.getItem('accounts.filterId') || '';
+        if (filterId) accounts = accounts.filter((a: unknown) => {
+          const rec = a as { accountId?: unknown; username?: unknown };
+          const id = rec.accountId ?? rec.username ?? '';
+          return String(id).includes(filterId);
+        });
+      } catch {}
       // 登録日(createdAt)の降順でソート（新しい順）
-      accounts = accounts.sort((a: any, b: any) => (b.createdAt || 0) - (a.createdAt || 0));
+      accounts = accounts.sort((a: unknown, b: unknown) => {
+        const aa = (a as { createdAt?: number }).createdAt || 0;
+        const bb = (b as { createdAt?: number }).createdAt || 0;
+        return bb - aa;
+      });
       console.log("Parsed accounts:", accounts); // [DEBUG]
       setAccounts(accounts);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("アカウント読み込みエラー:", error);
-      alert(`アカウント読み込みに失敗しました: ${error.message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      alert(`アカウント読み込みに失敗しました: ${message}`);
       setAccounts([]);
     } finally {
       setLoading(false);
@@ -80,10 +96,41 @@ export default function SNSAccountsTable() {
     loadAccounts();
   }, []);
 
+  // ユーザー設定からアプリ列表示フラグを取得
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch('/api/user-settings', { credentials: 'include', cache: 'no-store' });
+        if (r.ok) {
+          const j = await r.json();
+          const s = j?.settings || j || {};
+          setShowAppColumn(!!s.enableAppColumn);
+        }
+      } catch (_) {}
+    })();
+    const listener = (e: Event) => {
+      const ce = e as CustomEvent<Record<string, unknown>>;
+      setShowAppColumn(!!ce.detail?.enableAppColumn);
+    };
+    try { window.addEventListener('userSettingsUpdated', listener); } catch (_) {}
+    return () => { try { window.removeEventListener('userSettingsUpdated', listener); } catch (_) {} };
+  }, []);
+
   // テキストのトリミング（2段階投稿の長文を短縮表示用）
-  const truncate = (text: string, max = 30) => {
+  // maxChars: 一行あたりの最大文字数、maxLines: 表示する最大行数
+  const truncate = (text: string, maxChars = 30, maxLines = 2) => {
     if (!text) return "";
-    return text.length > max ? `${text.slice(0, max)}…` : text;
+    const lines = text.split(/\n/);
+    const shown: string[] = [];
+    for (let i = 0; i < Math.min(lines.length, maxLines); i++) {
+      const line = lines[i];
+      shown.push(line.length > maxChars ? `${line.slice(0, maxChars)}…` : line);
+    }
+    // 複数行を結合して残りがある場合は省略記号で示す
+    if (lines.length > maxLines) {
+      return shown.join("\n") + "…";
+    }
+    return shown.join("\n");
   };
 
   // 楽観的UIトグル（対象はブール値のみ）
@@ -103,7 +150,7 @@ export default function SNSAccountsTable() {
 
     try {
       // [FIX] サーバー側の期待に合わせてトップレベルにブール値を渡す
-      const payload: Record<string, any> = { accountId: acc.accountId, [field]: newVal };
+      const payload: Record<string, unknown> = { accountId: acc.accountId, [field]: newVal };
       const resp = await fetch("/api/threads-accounts", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -159,7 +206,11 @@ export default function SNSAccountsTable() {
     }
   };
 
-  if (loading) return <div className="text-center py-8">読み込み中...</div>;
+  if (loading) {
+    return (
+      <div className="text-center py-8">読み込み中...</div>
+    );
+  }
 
   return (
     <div className="max-w-5xl mx-auto mt-10">
@@ -196,7 +247,7 @@ export default function SNSAccountsTable() {
             <th className="py-2 px-3 w-36">状態</th>
             {/* ▼追加カラム：2段階投稿の有無／冒頭プレビュー */}
             <th className="py-2 px-3 w-52 text-left">2段階投稿</th>
-            <th className="py-2 px-3 w-40">アプリ</th>
+            {showAppColumn && <th className="py-2 px-3 w-40">アプリ</th>}
             {/* [DEL] 操作列（編集/削除）は廃止 */}
           </tr>
         </thead>
@@ -245,20 +296,26 @@ export default function SNSAccountsTable() {
               <td className="py-2 px-3">{acc.statusMessage || ""}</td>
               <td className="py-2 px-3 text-left">
                 {acc.secondStageContent && acc.secondStageContent.trim().length > 0
-                  ? truncate(acc.secondStageContent, 30)
+                  ? (
+                      <div className="text-sm" style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', whiteSpace: 'normal' }}>
+                        {truncate(acc.secondStageContent, 30, 2)}
+                      </div>
+                    )
                   : "—"}
               </td>
-              <td className="py-2 px-3">
-                <div className="flex items-center justify-center">
-                  <button
-                    className="bg-indigo-500 text-white rounded px-3 py-1 hover:bg-indigo-600"
-                    onClick={() => handleOpenInApp(acc)}
-                    title="アプリで開く"
-                  >
-                    アプリで開く
-                  </button>
-                </div>
-              </td>
+              {showAppColumn && (
+                <td className="py-2 px-3">
+                  <div className="flex items-center justify-center">
+                    <button
+                      className="bg-indigo-500 text-white rounded px-3 py-1 hover:bg-indigo-600 whitespace-nowrap"
+                      onClick={() => handleOpenInApp(acc)}
+                      title="アプリ"
+                    >
+                      アプリ
+                    </button>
+                  </div>
+                </td>
+              )}
               {/* [DEL] 一覧の編集/削除ボタンは廃止 */}
             </tr>
           ))}

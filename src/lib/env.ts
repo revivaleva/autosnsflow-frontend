@@ -32,6 +32,17 @@ export const env = {
     process.env.AUTOSNSFLOW_SECRET_ACCESS_KEY || "",   // [ADD]
 } as const;
 
+// Helper: normalize environment variable retrieval
+// Treat undefined, empty string, or literal "undefined" (string) as not set
+export function getEnvVar(name: string): string | undefined {
+  const v = process.env[name as keyof NodeJS.ProcessEnv];
+  if (!v) return undefined;
+  const s = String(v).trim();
+  if (!s) return undefined;
+  if (s.toLowerCase() === "undefined") return undefined;
+  return s;
+}
+
 export type ClientEnvStatus = {
   ok: boolean;
   missing: string[];
