@@ -9,6 +9,7 @@ import {
   UpdateItemCommand,
   DeleteItemCommand,
   GetItemCommand,
+  ScanCommand,
 } from "@aws-sdk/client-dynamodb";
 import { createDynamoClient } from "@/lib/ddb";
 import { verifyUserFromRequest } from "@/lib/auth";
