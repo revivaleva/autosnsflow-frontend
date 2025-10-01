@@ -55,6 +55,13 @@ export async function postToThreads({
       body: JSON.stringify(body),
     });
 
+    // helper: decide whether a 400 response indicates token/permission-like issue worth retrying with oauth token
+    const shouldRetryOn400 = (txt: string) => {
+      if (!txt) return false;
+      const t = String(txt || '').toLowerCase();
+      return t.includes('unsupported post request') || t.includes('missing permissions') || t.includes('does not support this operation') || t.includes('does not exist');
+    };
+
     // If token error and oauthAccessToken available, retry once with oauthAccessToken
     if (!r.ok && (r.status === 401 || r.status === 403) && oauthAccessToken && oauthAccessToken !== accessToken) {
       try {
@@ -71,9 +78,28 @@ export async function postToThreads({
       }
     }
 
+    // If still not ok, consider retrying on some 400 responses that indicate permission/resource issues
     if (!r.ok) {
       const errText = await r.text().catch(() => "");
-      throw new Error(`threads_create_failed: ${r.status} ${errText}`);
+      if (r.status === 400 && oauthAccessToken && oauthAccessToken !== accessToken && shouldRetryOn400(errText)) {
+        try {
+          console.log('[INFO] postToThreads: detected 400 that may be permission/resource-related, retrying with oauthAccessToken');
+          body.access_token = oauthAccessToken;
+          const r3 = await fetch(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          r = r3;
+        } catch (e) {
+          // fall through
+        }
+      }
+
+      if (!r.ok) {
+        const finalText = await r.text().catch(() => errText || "");
+        throw new Error(`threads_create_failed: ${r.status} ${finalText}`);
+      }
     }
 
     const tx = await r.text().catch(() => "");
