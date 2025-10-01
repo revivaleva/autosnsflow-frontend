@@ -103,6 +103,10 @@ export async function postToThreads({
     }
 
     const tx = await r.text().catch(() => "");
+    // Log entire me/threads response for debugging
+    try {
+      console.log('[DEBUG] me/threads create response raw:', tx);
+    } catch (_) {}
     if (!r.ok) throw new Error(`threads_create_failed: ${r.status} ${tx}`);
     let j: any = {};
     try { j = JSON.parse(tx); } catch {}
@@ -142,6 +146,10 @@ export async function postToThreads({
       }
     }
     const tx = await r.text().catch(() => "");
+    // Log entire publish response for debugging
+    try {
+      console.log('[DEBUG] threads_publish response raw:', tx);
+    } catch (_) {}
     if (!r.ok) throw new Error(`threads_publish_failed: ${r.status} ${tx}`);
     let j: any = {};
     try { j = JSON.parse(tx); } catch {}
