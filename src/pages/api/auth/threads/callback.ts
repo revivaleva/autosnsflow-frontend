@@ -1,6 +1,9 @@
 import type { NextApiRequest, NextApiResponse } from "next";
+<<<<<<< HEAD
 // Use global fetch available in Node 18+ (build environment uses Node 20)
 // Remove dependency on 'node-fetch' to avoid build-time module resolution errors.
+=======
+>>>>>>> lambda
 import { createDynamoClient } from '@/lib/ddb';
 import crypto from 'crypto';
 import { GetItemCommand, PutItemCommand, ScanCommand, QueryCommand } from '@aws-sdk/client-dynamodb';
@@ -67,6 +70,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
   if (accountIdFromState) {
     try {
+<<<<<<< HEAD
       // First try to read by cookie-associated user (fast path)
       const cookieUser = req.cookies['__session'];
       let found = false;
@@ -116,6 +120,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           }
         }
       }
+=======
+      // ddb.send() return typing can be broad; cast to any to access .Item safely
+      const get = await ddb.send(new (require('@aws-sdk/client-dynamodb').GetItemCommand)({ TableName: TBL_THREADS, Key: { PK: { S: `USER#${req.cookies['__session'] || 'local'}` }, SK: { S: `ACCOUNT#${accountIdFromState}` } } })) as any;
+      const it = (get && get.Item) ? get.Item : {};
+      if (it.clientId && it.clientId.S) clientId = it.clientId.S;
+      if (it.clientSecret && it.clientSecret.S) clientSecret = it.clientSecret.S;
+>>>>>>> lambda
     } catch (e) {
       console.log('[oauth] read account client failed', e);
     }

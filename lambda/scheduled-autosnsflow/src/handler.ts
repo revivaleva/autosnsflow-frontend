@@ -1512,6 +1512,9 @@ export const handler = async (event: any = {}) => {
     let totalDeleted = 0;
     let totalCandidates = 0;
     let totalScanned = 0;
+    // ExecutionLogs counters
+    let totalLogCandidates = 0;
+    let totalLogDeleted = 0;
     for (const uid of userIds) {
       try {
         // If deletePosted mode is requested, only allow single-user operations for safety
@@ -1543,13 +1546,23 @@ export const handler = async (event: any = {}) => {
           const res = await countPruneCandidates(uid);
           const cands = res?.candidates || 0;
           const scanned = res?.scanned || 0;
+          // count log candidates as well
+          let logCands = 0;
+          try { logCands = await countPruneExecutionLogs(uid); } catch (_) { logCands = 0; }
           totalCandidates += cands;
           totalScanned += scanned;
-          await putLog({ userId: uid, type: "prune", status: "info", message: `dry-run: ${cands} 削除候補 (scanned=${scanned})` });
+          totalLogCandidates += Number(logCands || 0);
+          await putLog({ userId: uid, type: "prune", status: "info", message: `dry-run: ${cands} 削除候補 (scanned=${scanned}), logs=${logCands}` });
           continue;
         }
         const c = await pruneOldScheduledPosts(uid);
         totalDeleted += Number(c || 0);
+        // 実行ログも削除
+        try {
+          const dl = await pruneOldExecutionLogs(uid);
+          totalDeleted += Number(dl || 0);
+          totalLogDeleted += Number(dl || 0);
+        } catch (e) { console.log('[warn] pruneOldExecutionLogs failed for', uid, e); }
       } catch (e) {
         console.log("[warn] daily-prune failed for", uid, e);
         await putLog({ userId: uid, type: "prune", status: "error", message: "daily prune failed", detail: { error: String(e) } });
@@ -1568,10 +1581,13 @@ export const handler = async (event: any = {}) => {
     if (!singleUser) {
       try {
         const allDeleted = await pruneOldScheduledPostsAll();
+        // also perform full-table execution logs prune
+        let allLogDeleted = 0;
+        try { allLogDeleted = await pruneOldExecutionLogsAll(); } catch (_) { allLogDeleted = 0; }
         const finishedAt = Date.now();
-        const t = { candidates: totalCandidates, scanned: totalScanned, deleted: allDeleted, preFilterTotal } as any;
+        const t = { candidates: totalCandidates, scanned: totalScanned, deleted: allDeleted, preFilterTotal, logDeleted: allLogDeleted } as any;
         await postDiscordMaster(formatMasterMessage({ job: "daily-prune", startedAt, finishedAt, userTotal: userIds.length, userSucceeded, totals: t }));
-        return { statusCode: 200, body: JSON.stringify({ deleted: allDeleted, preFilterTotal }) };
+        return { statusCode: 200, body: JSON.stringify({ deleted: allDeleted, logDeleted: allLogDeleted, preFilterTotal }) };
       } catch (e) {
         console.log('[warn] full-table prune failed:', e);
         await postDiscordMaster(`**[PRUNE] full-table prune failed**`);
@@ -3386,6 +3402,102 @@ async function pruneOldScheduledPosts(userId: any) {
     return totalDeleted;
   } catch (e) {
     console.log("[warn] pruneOldScheduledPosts failed:", e);
+    throw e;
+  }
+}
+
+// 指定ユーザーの実行ログ（ExecutionLogs）で、createdAt が 7 日以上前のものを削除する
+async function pruneOldExecutionLogs(userId: any) {
+  try {
+    const sevenDaysAgo = Math.floor(Date.now() / 1000) - (7 * 24 * 60 * 60);
+    let lastKey: any = undefined;
+    let totalDeleted = 0;
+    do {
+      const q = await ddb.send(new QueryCommand({
+        TableName: TBL_LOGS,
+        KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+        ExpressionAttributeValues: {
+          ":pk": { S: `USER#${userId}` },
+          ":pfx": { S: "LOG#" },
+        },
+        ProjectionExpression: "PK,SK,createdAt",
+        Limit: 1000,
+        ExclusiveStartKey: lastKey,
+      }));
+
+      for (const it of (q.Items || [])) {
+        try {
+          const createdAt = Number(it.createdAt?.N || 0);
+          if (createdAt && createdAt <= sevenDaysAgo) {
+            await ddb.send(new DeleteItemCommand({ TableName: TBL_LOGS, Key: { PK: it.PK, SK: it.SK } }));
+            totalDeleted++;
+          }
+        } catch (e) {
+          console.log('[warn] prune log delete failed for item', e);
+        }
+      }
+
+      lastKey = q.LastEvaluatedKey;
+    } while (lastKey);
+
+    if (totalDeleted > 0) {
+      await putLog({ userId, type: "prune", status: "info", message: `古い実行ログ ${totalDeleted} 件を削除しました` });
+    }
+    return totalDeleted;
+  } catch (e) {
+    console.log('[warn] pruneOldExecutionLogs failed:', e);
+    throw e;
+  }
+}
+
+// 削除候補の件数だけを数える dry-run 用関数（ExecutionLogs）
+async function countPruneExecutionLogs(userId: any) {
+  try {
+    const sevenDaysAgo = Math.floor(Date.now() / 1000) - (7 * 24 * 60 * 60);
+    let lastKey: any = undefined;
+    let totalCandidates = 0;
+    do {
+      const q = await ddb.send(new QueryCommand({
+        TableName: TBL_LOGS,
+        KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+        ExpressionAttributeValues: {
+          ":pk": { S: `USER#${userId}` },
+          ":pfx": { S: "LOG#" },
+        },
+        ProjectionExpression: "createdAt",
+        Limit: 1000,
+        ExclusiveStartKey: lastKey,
+      }));
+
+      for (const it of (q.Items || [])) {
+        try {
+          const createdAt = Number(it.createdAt?.N || 0);
+          if (createdAt && createdAt <= sevenDaysAgo) totalCandidates++;
+        } catch (_) { /* continue */ }
+      }
+
+      lastKey = q.LastEvaluatedKey;
+    } while (lastKey);
+
+    return totalCandidates;
+  } catch (e) {
+    console.log('[warn] countPruneExecutionLogs failed:', e);
+    throw e;
+  }
+}
+
+// Full-table prune helper: iterate all users and run pruneOldExecutionLogs
+async function pruneOldExecutionLogsAll() {
+  try {
+    const userIds = await getActiveUserIds();
+    let totalDeleted = 0;
+    for (const uid of userIds) {
+      const c = await pruneOldExecutionLogs(uid);
+      totalDeleted += Number(c || 0);
+    }
+    return totalDeleted;
+  } catch (e) {
+    console.log('[warn] pruneOldExecutionLogsAll failed:', e);
     throw e;
   }
 }
