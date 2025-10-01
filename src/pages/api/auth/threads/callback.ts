@@ -196,9 +196,33 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(500).json({ error: String(e) });
     }
 
-    // j contains access_token and expires_in
-    const accessToken = j.access_token;
-    const expiresIn = Number(j.expires_in || 0);
+    // j contains access_token and expires_in (may be short-lived)
+    let accessToken = j.access_token;
+    let expiresIn = Number(j.expires_in || 0);
+
+    // Try to exchange short-lived token for long-lived one if available
+    try {
+      if (accessToken && clientSecret) {
+        const exchUrl = `https://graph.threads.net/access_token?grant_type=th_exchange_token&client_secret=${encodeURIComponent(String(clientSecret))}&access_token=${encodeURIComponent(String(accessToken))}`;
+        console.log('[threads:token] attempting long-lived token exchange', exchUrl);
+        try {
+          const exchResp = await fetch(exchUrl);
+          const exchJson = await exchResp.json().catch(() => ({}));
+          if (exchResp.ok && exchJson?.access_token) {
+            accessToken = exchJson.access_token;
+            expiresIn = Number(exchJson.expires_in || expiresIn || 0);
+            console.log('[threads:token] long-lived exchange succeeded - expires_in=', expiresIn);
+            j = exchJson; // keep unified response for logging
+          } else {
+            console.log('[threads:token] long-lived exchange not available or failed', exchResp.status, exchJson);
+          }
+        } catch (ee) {
+          console.log('[threads:token] long-lived exchange request failed', ee);
+        }
+      }
+    } catch (e) {
+      console.log('[threads:token] long-lived exchange flow error', e);
+    }
 
     // Identify existing account item by SK (ACCOUNT#<id>) and update that record's oauth fields
     const accountId = accountIdFromState;
@@ -253,6 +277,38 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         },
       }));
     } catch (e) { console.log('[oauth] save oauth token failed', e); return res.status(500).json({ error: 'save_oauth_failed' }); }
+
+    // Try to obtain providerUserId (Threads user id) and save it as providerUserId on the same item
+    try {
+      if (accessToken) {
+        try {
+          const meUrl = `https://graph.threads.net/v1.0/me?fields=id,username&access_token=${encodeURIComponent(String(accessToken))}`;
+          const meResp = await fetch(meUrl);
+          if (meResp.ok) {
+            const meJson = await meResp.json().catch(() => ({}));
+            const pid = meJson?.id || null;
+            if (pid) {
+              await ddb.send(new UpdateItemCommand({
+                TableName: TBL_THREADS,
+                Key: { PK: { S: `USER#${targetUserId}` }, SK: { S: `ACCOUNT#${accountId}` } },
+                UpdateExpression: 'SET providerUserId = :pid',
+                ExpressionAttributeValues: { ':pid': { S: String(pid) } },
+              }));
+              console.log('[oauth] providerUserId saved', { accountId, providerUserId: pid });
+            } else {
+              console.log('[oauth] providerUserId not present in /me response', meJson);
+            }
+          } else {
+            const txt = await meResp.text().catch(() => '');
+            console.log('[oauth] /me request failed', meResp.status, txt);
+          }
+        } catch (e) {
+          console.log('[oauth] fetch /me failed', e);
+        }
+      }
+    } catch (e) {
+      console.log('[oauth] providerUserId save flow failed', e);
+    }
 
     // send master Discord notification with masked details
     try {
