@@ -249,6 +249,9 @@ export default async function handler(
         isDeleted: { BOOL: false },
         createdAt: { N: String(Math.floor(Date.now() / 1000)) },
         timeRange: { S: body.timeRange ?? "" },
+        // GSI 登録用マーカー: 未投稿かつ scheduled の場合に accountId を設定し、
+        // PendingByAccTime GSI に載せる
+        pendingForAutoPostAccount: { S: body.accountId ?? "" },
         // 二段階投稿希望フラグを保存（デフォルト false）
         secondStageWanted: { BOOL: !!(body as any).secondStageWanted },
         // スロット/予約単位で二段階削除を有効化するフラグ（日時は保存しない）
