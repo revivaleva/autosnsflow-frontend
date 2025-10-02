@@ -897,6 +897,28 @@ const MASTER_DISCORD_WEBHOOK = process.env.MASTER_DISCORD_WEBHOOK || "";
 export const handler = async (event: any = {}) => {
   const job = event?.job || "every-5min";
 
+  // If caller provided a userId for hourly/5min jobs, run only that user's flow
+  // and return a test-oriented response including which accounts were targeted.
+  if (event?.userId && (job === 'hourly' || job === 'every-5min')) {
+    const userId = event.userId;
+    try {
+      const accounts = await getThreadsAccounts(userId);
+      const accountIds = (accounts || []).map((a: any) => a.accountId).filter(Boolean);
+      if (job === 'hourly') {
+        console.log('[TEST] Running hourly job for single user:', userId, 'accounts=', accountIds);
+        const res = await runHourlyJobForUser(userId);
+        return { statusCode: 200, body: JSON.stringify({ testInvocation: true, job: 'hourly', userId, accountIds, result: res }) };
+      } else {
+        console.log('[TEST] Running every-5min job for single user:', userId, 'accounts=', accountIds);
+        const res = await runFiveMinJobForUser(userId);
+        return { statusCode: 200, body: JSON.stringify({ testInvocation: true, job: 'every-5min', userId, accountIds, result: res }) };
+      }
+    } catch (e) {
+      console.log('[TEST] user-specific job failed:', String(e));
+      return { statusCode: 500, body: JSON.stringify({ testInvocation: true, job, userId: event?.userId, error: String(e) }) };
+    }
+  }
+
   if (job === "test") {
     const userId = event?.userId || process.env.USER_ID || USER_ID;
     const action = event.action || "";
