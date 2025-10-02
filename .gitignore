@@ -64,4 +64,4 @@ amplifytools.xcconfig
 
 lambda/**/bundle.zip
 lambda/**/out.json
-packages/**/package-lock.json
+packages/**/package-lock.json.cursor/

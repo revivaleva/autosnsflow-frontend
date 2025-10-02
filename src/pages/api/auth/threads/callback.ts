@@ -3,28 +3,14 @@ import type { NextApiRequest, NextApiResponse } from "next";
 // Remove dependency on 'node-fetch' to avoid build-time module resolution errors.
 import { createDynamoClient } from '@/lib/ddb';
 import crypto from 'crypto';
-import { GetItemCommand, PutItemCommand, ScanCommand, QueryCommand } from '@aws-sdk/client-dynamodb';
+import { GetItemCommand, PutItemCommand, ScanCommand, QueryCommand, UpdateItemCommand } from '@aws-sdk/client-dynamodb';
 import { getEnvVar } from '@/lib/env';
 import { logEvent } from '@/lib/logger';
 
 // helper: send master discord via direct fetch (guaranteed path)
 async function sendMasterDiscord(masterUrl: string, content: string) {
-  if (!masterUrl) return;
-  try {
-    const resp = await fetch(masterUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content }),
-    });
-    if (!resp.ok) {
-      const txt = await resp.text().catch(() => '');
-      console.log('[threads:notify] master discord post failed', resp.status, txt);
-    } else {
-      console.log('[threads:notify] master discord sent (direct fetch)');
-    }
-  } catch (e) {
-    console.log('[threads:notify] master discord post errored', e);
-  }
+  // Debug webhook disabled in production codepath - no-op
+  return;
 }
 
 const ddb = createDynamoClient();
@@ -65,6 +51,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   } catch (e) {
     // ignore
   }
+  // resolvedUserId: the USER id prefix (without USER#) of the account item we found in the table
+  let resolvedUserId: string | null = null;
   if (accountIdFromState) {
     try {
       // First try to read by cookie-associated user (fast path)
@@ -76,6 +64,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           const it = (get as any).Item || {};
           if (it.clientId && it.clientId.S) { clientId = it.clientId.S; found = true; }
           if (it.clientSecret && it.clientSecret.S) { clientSecret = it.clientSecret.S; }
+          // record resolved user id when read by cookie
+          if (it && it.PK && it.PK.S) {
+            const pk = String(it.PK.S || '');
+            if (pk.startsWith('USER#')) resolvedUserId = pk.replace(/^USER#/, '');
+            else resolvedUserId = pk;
+          }
         } catch (e) {
           console.log('[oauth] read account by cookie failed', e);
         }
@@ -95,6 +89,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           const it: any = (q as any).Items?.[0] || {};
           if (it.clientId && it.clientId.S) clientId = it.clientId.S;
           if (it.clientSecret && it.clientSecret.S) clientSecret = it.clientSecret.S;
+          // capture resolved user id from item PK if present
+          if (it && it.PK && it.PK.S) {
+            const pk = String(it.PK.S || '');
+            if (pk.startsWith('USER#')) resolvedUserId = pk.replace(/^USER#/, '');
+            else resolvedUserId = pk;
+          }
         } catch (e) {
           console.log('[oauth] query by SK via GSI1 failed, falling back to Scan', e);
           try {
@@ -110,6 +110,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               const it2 = items[0] || {};
               if (it2.clientId && it2.clientId.S) clientId = it2.clientId.S;
               if (it2.clientSecret && it2.clientSecret.S) clientSecret = it2.clientSecret.S;
+              if (it2 && it2.PK && it2.PK.S) {
+                const pk = String(it2.PK.S || '');
+                if (pk.startsWith('USER#')) resolvedUserId = pk.replace(/^USER#/, '');
+                else resolvedUserId = pk;
+              }
             }
           } catch (e2) {
             console.log('[oauth] scan for account failed', e2);
@@ -120,19 +125,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       console.log('[oauth] read account client failed', e);
     }
   }
-
-    // Ensure every callback access is recorded (always persist to ExecutionLogs)
-    try {
-      await logEvent('threads_callback_access', {
-        accountIdFromState: accountIdFromState || null,
-        codePresent: !!code,
-        statePresent: !!state,
-        userCookie: req.cookies['__session'] || null,
-        redirectUri: String(redirectUri).trim(),
-      });
-    } catch (e) {
-      console.log('[oauth] initial logEvent failed', e);
-    }
 
     let j: any;
     try {
@@ -190,23 +182,119 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(500).json({ error: String(e) });
     }
 
-    // j contains access_token and expires_in
-    const accessToken = j.access_token;
-    const expiresIn = Number(j.expires_in || 0);
+    // j contains access_token and expires_in (may be short-lived)
+    let accessToken = j.access_token;
+    let expiresIn = Number(j.expires_in || 0);
 
-    // Map to current user/account if possible
-    const userId = req.cookies['__session'] || `local-${crypto.randomUUID()}`;
-    const accountId = accountIdFromState || `threads_${crypto.randomUUID().slice(0,8)}`;
+    // Try to exchange short-lived token for long-lived one if available
+    try {
+      if (accessToken && clientSecret) {
+        const exchUrl = `https://graph.threads.net/access_token?grant_type=th_exchange_token&client_secret=${encodeURIComponent(String(clientSecret))}&access_token=${encodeURIComponent(String(accessToken))}`;
+        console.log('[threads:token] attempting long-lived token exchange', exchUrl);
+        try {
+          const exchResp = await fetch(exchUrl);
+          const exchJson = await exchResp.json().catch(() => ({}));
+          if (exchResp.ok && exchJson?.access_token) {
+            accessToken = exchJson.access_token;
+            expiresIn = Number(exchJson.expires_in || expiresIn || 0);
+            console.log('[threads:token] long-lived exchange succeeded - expires_in=', expiresIn);
+            j = exchJson; // keep unified response for logging
+          } else {
+            console.log('[threads:token] long-lived exchange not available or failed', exchResp.status, exchJson);
+          }
+        } catch (ee) {
+          console.log('[threads:token] long-lived exchange request failed', ee);
+        }
+      }
+    } catch (e) {
+      console.log('[threads:token] long-lived exchange flow error', e);
+    }
 
-    // Save token to ThreadsAccounts table (merge with existing item)
-    const item = {
-      PK: { S: `USER#${userId}` },
-      SK: { S: `ACCOUNT#${accountId}` },
-      accessToken: { S: String(accessToken) },
-      tokenExpiresAt: { N: String(Math.floor(Date.now()/1000) + expiresIn) },
-      createdAt: { N: String(Math.floor(Date.now()/1000)) }
-    };
-    try { await ddb.send(new PutItemCommand({ TableName: TBL_THREADS, Item: item })); } catch (e) { console.log('[oauth] save token failed', e); }
+    // Identify existing account item by SK (ACCOUNT#<id>) and update that record's oauth fields
+    const accountId = accountIdFromState;
+    if (!accountId) {
+      console.warn('[oauth] no accountIdFromState to attach token to');
+      return res.status(400).json({ error: 'account_id not present in state' });
+    }
+
+    // Try to find the item we should update. Prefer resolvedUserId captured earlier (fast path).
+    let targetUserId: string | null = resolvedUserId || null;
+    try {
+      if (!targetUserId) {
+        // Try GSI1 lookup by SK
+        try {
+          const q = await ddb.send(new QueryCommand({
+            TableName: TBL_THREADS,
+            IndexName: 'GSI1',
+            KeyConditionExpression: 'SK = :sk',
+            ExpressionAttributeValues: { ':sk': { S: `ACCOUNT#${accountId}` } },
+            ProjectionExpression: 'PK',
+            Limit: 1,
+          }));
+          const it: any = (q as any).Items?.[0] || null;
+          if (it && it.PK && it.PK.S) {
+            const pk = String(it.PK.S || '');
+            if (pk.startsWith('USER#')) targetUserId = pk.replace(/^USER#/, '');
+            else targetUserId = pk;
+          }
+        } catch (e) {
+          console.log('[oauth] query by SK to resolve target user failed', e);
+        }
+      }
+    } catch (e) {
+      console.log('[oauth] resolve target user failed', e);
+    }
+
+    if (!targetUserId) {
+      console.warn('[oauth] could not resolve existing account by SK; refusing to create new PKed item', { accountIdFromState });
+      return res.status(400).json({ error: 'account not found to attach oauth token' });
+    }
+
+    // Save OAuth-issued token to a separate attribute on the existing account item to avoid creating new PK
+    try {
+      await ddb.send(new UpdateItemCommand({
+        TableName: TBL_THREADS,
+        Key: { PK: { S: `USER#${targetUserId}` }, SK: { S: `ACCOUNT#${accountId}` } },
+        UpdateExpression: 'SET oauthAccessToken = :at, oauthTokenExpiresAt = :te, oauthSavedAt = :now',
+        ExpressionAttributeValues: {
+          ':at': { S: String(accessToken) },
+          ':te': { N: String(Math.floor(Date.now()/1000) + expiresIn) },
+          ':now': { N: String(Math.floor(Date.now()/1000)) },
+        },
+      }));
+    } catch (e) { console.log('[oauth] save oauth token failed', e); return res.status(500).json({ error: 'save_oauth_failed' }); }
+
+    // Try to obtain providerUserId (Threads user id) and save it as providerUserId on the same item
+    try {
+      if (accessToken) {
+        try {
+          const meUrl = `https://graph.threads.net/v1.0/me?fields=id,username&access_token=${encodeURIComponent(String(accessToken))}`;
+          const meResp = await fetch(meUrl);
+          if (meResp.ok) {
+            const meJson = await meResp.json().catch(() => ({}));
+            const pid = meJson?.id || null;
+            if (pid) {
+              await ddb.send(new UpdateItemCommand({
+                TableName: TBL_THREADS,
+                Key: { PK: { S: `USER#${targetUserId}` }, SK: { S: `ACCOUNT#${accountId}` } },
+                UpdateExpression: 'SET providerUserId = :pid',
+                ExpressionAttributeValues: { ':pid': { S: String(pid) } },
+              }));
+              console.log('[oauth] providerUserId saved', { accountId, providerUserId: pid });
+            } else {
+              console.log('[oauth] providerUserId not present in /me response', meJson);
+            }
+          } else {
+            const txt = await meResp.text().catch(() => '');
+            console.log('[oauth] /me request failed', meResp.status, txt);
+          }
+        } catch (e) {
+          console.log('[oauth] fetch /me failed', e);
+        }
+      }
+    } catch (e) {
+      console.log('[oauth] providerUserId save flow failed', e);
+    }
 
     // send master Discord notification with masked details
     try {
@@ -219,7 +307,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           accountIdFromState: accountIdFromState || null,
           incoming: { code: maskedCode, state: state || null, redirect_uri: String(redirectUri).trim(), client_id: clientId ? 'configured' : null },
           token_response: { access_token: maskedAccess, expires_in: expiresIn || 0 },
-          saved_to_db: !!accessToken
+          saved_to: accessToken ? 'oauthAccessToken' : null
         };
         const bodyStr = JSON.stringify(payload, null, 2).slice(0, 1800);
         try {

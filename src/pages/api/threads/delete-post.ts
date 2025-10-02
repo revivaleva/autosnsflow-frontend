@@ -50,10 +50,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (!numericPostId || !accountId) return res.status(400).json({ error: "numericPostId and accountId are required" });
 
     // fetch account accessToken
-    const acc = await ddb.send(new GetItemCommand({ TableName: TBL_THREADS, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } }, ProjectionExpression: "accessToken" }));
+    const acc = await ddb.send(new GetItemCommand({ TableName: TBL_THREADS, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } }, ProjectionExpression: "accessToken, oauthAccessToken" }));
     const accessToken = acc.Item?.accessToken?.S || "";
-    if (!accessToken) {
-      await putLog({ userId, type: "delete-post", accountId, targetId: numericPostId, status: "error", message: "accessToken missing" });
+    const oauthAccessToken = acc.Item?.oauthAccessToken?.S || "";
+    const usedToken = (oauthAccessToken && oauthAccessToken.trim()) ? oauthAccessToken : accessToken;
+    if (!usedToken) {
+      await putLog({ userId, type: "delete-post", accountId, targetId: numericPostId, status: "error", message: "accessToken and oauthAccessToken missing" });
       return res.status(400).json({ ok: false, error: "account access token missing" });
     }
 
@@ -84,8 +86,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       console.log('[warn] count today deletes failed', e);
     }
 
-    // Call Threads delete API
-    const url = `https://graph.threads.net/v1.0/${encodeURIComponent(numericPostId)}?access_token=${encodeURIComponent(accessToken)}`;
+    // Call Threads delete API (prefer oauthAccessToken)
+    const url = `https://graph.threads.net/v1.0/${encodeURIComponent(numericPostId)}?access_token=${encodeURIComponent(usedToken)}`;
     console.log("[delete-post] calling threads delete", { url: url.slice(0, 120) });
     const resp = await fetch(url, { method: "DELETE" });
     const text = await resp.text();

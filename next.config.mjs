@@ -3,8 +3,6 @@
 // このファイルは next.config.mjs または next.config.js として保存する必要があります
 // 参考: https://docs.aws.amazon.com/amplify/latest/userguide/troubleshooting-ssr-deployment.html
 
-import dotenv from 'dotenv';
-dotenv.config({ path: '.env.production' });
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 try {

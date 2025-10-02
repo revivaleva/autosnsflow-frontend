@@ -308,7 +308,7 @@ export default function SNSAccountModal({
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setSaving(true);
     setError("");
@@ -317,16 +317,32 @@ export default function SNSAccountModal({
       setSaving(false);
       return;
     }
+    // clientId/clientSecret 必須組合せチェック: どちらか一方のみ入力されている場合は保存不可
     try {
-      // 編集時にIDが変わった場合は旧データを削除
-      if (mode === "edit" && originalAccountId && originalAccountId !== accountId) {
-        await fetch("/api/threads-accounts", {
-          method: "DELETE",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include",
-          body: JSON.stringify({ accountId: originalAccountId }),
-        });
+      const hasClientId = Boolean(String(clientId || "").trim());
+      // clientSecretMasked が true の場合は既存のシークレットが存在するとみなす
+      const hasClientSecret = clientSecretMasked ? true : Boolean(String(clientSecret || "").trim());
+      if (hasClientId !== hasClientSecret) {
+        const msg = "clientId と clientSecret は両方入力するか両方空にしてください。片方だけでは保存できません。";
+        // 明示的なアラートで同期的にユーザーに伝える
+        alert(msg);
+        setError(msg);
+        setSaving(false);
+        return;
       }
+    } catch (e) {
+      // ignore
+    }
+      try {
+        // 編集時にIDが変わった場合は旧データを削除
+        if (mode === "edit" && originalAccountId && originalAccountId !== accountId) {
+          await fetch("/api/threads-accounts", {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ accountId: originalAccountId }),
+          });
+        }
       // 新規作成時: 同一 accountId の存在チェック
       if (mode === "create") {
         try {
@@ -530,6 +546,16 @@ export default function SNSAccountModal({
             placeholder="登録済みのシークレットを上書きするにはここに入力"
           />
         )}
+
+        <div className="text-sm text-gray-600 mb-3">
+          <div>※ clientId / clientSecret を両方とも空にすると、ユーザー設定のデフォルトが使用されます。</div>
+          <div>※ clientId と clientSecret のどちらか一方だけを入力した場合は保存できません。両方を入力してください。</div>
+        </div>
+
+        <div className="text-sm text-gray-600 mb-3">
+          <div>※ clientId / clientSecret を両方とも空にすると、ユーザー設定のデフォルトが使用されます。</div>
+          <div>※ clientId と clientSecret のどちらか一方だけを入力した場合は保存できません。両方を入力してください。</div>
+        </div>
 
         <label className="block">キャラクターイメージ</label>
         <div className="flex gap-2 mb-2">

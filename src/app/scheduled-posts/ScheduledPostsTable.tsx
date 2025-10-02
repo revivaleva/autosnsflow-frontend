@@ -102,6 +102,8 @@ export default function ScheduledPostsTable() {
 
   // [ADD] 即時投稿の実行中フラグ（多重押し防止）
   const [postingId, setPostingId] = useState<string>("");
+  // Loading overlay for immediate actions
+  const [loadingOverlayOpen, setLoadingOverlayOpen] = useState<boolean>(false);
   
   // [ADD] 即時二段階投稿の実行中フラグ（多重押し防止）
   const [secondStagePostingId, setSecondStagePostingId] = useState<string>("");
@@ -407,6 +409,7 @@ export default function ScheduledPostsTable() {
     if (!confirm("即時投稿を実行しますか？")) return;
     try {
       setPostingId(p.scheduledPostId); // [FIX] 実行中フラグON
+      setLoadingOverlayOpen(true);
       const resp = await fetch("/api/scheduled-posts/manual-post", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -435,6 +438,7 @@ export default function ScheduledPostsTable() {
       );
     } finally {
       setPostingId(""); // [FIX] 実行中フラグOFF
+      setLoadingOverlayOpen(false);
     }
   };
 

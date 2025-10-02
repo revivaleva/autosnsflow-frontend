@@ -83,7 +83,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const stateObj = { s: Math.random().toString(36).slice(2), a: accountId || null };
   const state = Buffer.from(JSON.stringify(stateObj)).toString("base64");
   const scope = encodeURIComponent(
-    "threads_basic,threads_manage_insights,threads_manage_replies,threads_read_replies,threads_delete"
+    "threads_basic,threads_manage_insights,threads_manage_replies,threads_read_replies,threads_delete,threads_content_publish"
   );
   // Coerce values to string to satisfy TypeScript strictness for encodeURIComponent
   // Threads requires the www host; use full www URL for authorize endpoint

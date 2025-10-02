@@ -9,6 +9,7 @@ import {
   UpdateItemCommand,
   DeleteItemCommand,
   GetItemCommand,
+  ScanCommand,
 } from "@aws-sdk/client-dynamodb";
 import { createDynamoClient } from "@/lib/ddb";
 import { verifyUserFromRequest } from "@/lib/auth";
@@ -18,6 +19,7 @@ import { fetchThreadsAccountsFull } from "@autosnsflow/backend-core";
 
 const ddb = createDynamoClient();
 const TBL = process.env.TBL_THREADS_ACCOUNTS || "ThreadsAccounts";
+const TBL_SETTINGS = process.env.TBL_SETTINGS || "UserSettings";
 
 // [KEEP] PATCH用の更新許可フィールドは現状のまま
 const UPDATABLE_FIELDS = new Set([
@@ -107,6 +109,38 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (req.method === "POST") {
       const { accountId, username, displayName, accessToken = "", clientId, clientSecret } = safeBody(req.body);
       if (!accountId) return res.status(400).json({ error: "accountId required" });
+      // Prevent creating the same SK for different users: check if any existing item with SK ACCOUNT#<accountId> exists for a different PK
+      try {
+        const q = await ddb.send(new QueryCommand({
+          TableName: TBL,
+          IndexName: 'GSI1',
+          KeyConditionExpression: 'SK = :sk',
+          ExpressionAttributeValues: { ':sk': { S: `ACCOUNT#${accountId}` } },
+          ProjectionExpression: 'PK',
+          Limit: 1,
+        }));
+        const existing = (q as any).Items || [];
+        if (existing.length > 0) {
+          const pk = existing[0].PK?.S || '';
+          const existingUser = pk.startsWith('USER#') ? pk.replace(/^USER#/, '') : pk;
+          if (existingUser !== userId) {
+            return res.status(409).json({ error: 'accountId already registered for another user' });
+          }
+        }
+      } catch (e) {
+        // if query by GSI fails (no index), fall back to a scan with caution
+        try {
+          const scan = await ddb.send(new ScanCommand({ TableName: TBL, FilterExpression: 'SK = :sk', ExpressionAttributeValues: { ':sk': { S: `ACCOUNT#${accountId}` } }, ProjectionExpression: 'PK', Limit: 1 }));
+          const items = (scan as any).Items || [];
+          if (items.length > 0) {
+            const pk = items[0].PK?.S || '';
+            const existingUser = pk.startsWith('USER#') ? pk.replace(/^USER#/, '') : pk;
+            if (existingUser !== userId) return res.status(409).json({ error: 'accountId already registered for another user' });
+          }
+        } catch (e2) {
+          console.log('[threads-accounts] account uniqueness check failed', e2);
+        }
+      }
       const now = `${Math.floor(Date.now() / 1000)}`;
       const item: any = {
         PK: { S: `USER#${userId}` },
@@ -121,9 +155,30 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         createdAt: { N: now },
         updatedAt: { N: now },
       };
-      if (clientId) item.clientId = { S: String(clientId) };
-      if (clientSecret) item.clientSecret = { S: String(clientSecret) };
+      // If clientId/clientSecret not provided or empty, try to fallback to user default settings
+      if (clientId) {
+        item.clientId = { S: String(clientId) };
+      }
+      if (clientSecret) {
+        item.clientSecret = { S: String(clientSecret) };
+      }
+      if (!item.clientId || !item.clientSecret) {
+        try {
+          const out = await ddb.send(new GetItemCommand({ TableName: TBL_SETTINGS, Key: { PK: { S: `USER#${userId}` }, SK: { S: 'SETTINGS' } }, ProjectionExpression: 'defaultThreadsClientId,defaultThreadsClientSecret' }));
+          const s: any = (out as any).Item || {};
+          if (!item.clientId && s.defaultThreadsClientId && s.defaultThreadsClientId.S) {
+            item.clientId = { S: s.defaultThreadsClientId.S };
+          }
+          if (!item.clientSecret && s.defaultThreadsClientSecret && s.defaultThreadsClientSecret.S) {
+            item.clientSecret = { S: s.defaultThreadsClientSecret.S };
+          }
+        } catch (e) {
+          console.log('[threads-accounts] fallback settings read failed', e);
+        }
+      }
 
+      // Ensure we are not creating duplicate account items with mismatched PKs.
+      // Use conditional Put: only create when the exact PK/SK doesn't exist.
       await ddb.send(new PutItemCommand({
         TableName: TBL,
         Item: item,
@@ -152,8 +207,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if ("username" in body) setStr("username", body.username);
       if ("displayName" in body) setStr("displayName", body.displayName);
       if ("accessToken" in body) setStr("accessToken", body.accessToken); // [ADD]
-      if ("clientId" in body) setStr("clientId", body.clientId);
-      if ("clientSecret" in body) setStr("clientSecret", body.clientSecret);
+      // If clientId/clientSecret fields are present but empty, attempt to fallback to user default settings
+      let effectiveClientId: any = undefined;
+      let effectiveClientSecret: any = undefined;
+      if ("clientId" in body) effectiveClientId = body.clientId;
+      if ("clientSecret" in body) effectiveClientSecret = body.clientSecret;
+      if (("clientId" in body && (!effectiveClientId || String(effectiveClientId).trim() === "")) || ("clientSecret" in body && (!effectiveClientSecret || String(effectiveClientSecret).trim() === ""))) {
+        try {
+          const out = await ddb.send(new GetItemCommand({ TableName: TBL_SETTINGS, Key: { PK: { S: `USER#${userId}` }, SK: { S: 'SETTINGS' } }, ProjectionExpression: 'defaultThreadsClientId,defaultThreadsClientSecret' }));
+          const s: any = (out as any).Item || {};
+          if (("clientId" in body) && (!effectiveClientId || String(effectiveClientId).trim() === "") && s.defaultThreadsClientId && s.defaultThreadsClientId.S) {
+            effectiveClientId = s.defaultThreadsClientId.S;
+          }
+          if (("clientSecret" in body) && (!effectiveClientSecret || String(effectiveClientSecret).trim() === "") && s.defaultThreadsClientSecret && s.defaultThreadsClientSecret.S) {
+            effectiveClientSecret = s.defaultThreadsClientSecret.S;
+          }
+        } catch (e) {
+          console.log('[threads-accounts] fallback settings read failed', e);
+        }
+      }
+      if ("clientId" in body) setStr("clientId", effectiveClientId);
+      if ("clientSecret" in body) setStr("clientSecret", effectiveClientSecret);
 
       // トグル/メタ
       if ("autoPost" in body) setStr("autoPost", !!body.autoPost);
