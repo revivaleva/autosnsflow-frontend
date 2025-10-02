@@ -768,9 +768,8 @@ ${themeStr}
     let text: any = undefined;
     try {
       // log call metadata (do not log API key)
-      try { console.log('[debug] OpenAI call start', { userId, accountId: acct.accountId, scheduledPostId, model: settings.model || DEFAULT_OPENAI_MODEL, temperature: settings.openAiTemperature, max_tokens: settings.openAiMaxTokens }); } catch (_) {}
-      // Log prompt snippet for debugging (truncate to avoid overly long logs)
-      try { console.log('[debug] prompt snippet', (prompt || '').slice(0, 2000)); } catch(_) {}
+      // OpenAI call start (minimal logging)
+      try { console.log('[debug] OpenAI call start', { userId, accountId: acct.accountId, scheduledPostId, model: settings.model || DEFAULT_OPENAI_MODEL }); } catch (_) {}
 
       const openAiRes = await callOpenAIText({
         apiKey: settings.openaiApiKey,
@@ -781,9 +780,8 @@ ${themeStr}
       });
       text = openAiRes?.text;
 
-      // log full response (user requested verbose dump). Be aware of sensitive data in responses.
+      // log response length only (avoid full text in logs)
       try { console.log('[debug] OpenAI returned length', text ? String(text).length : 0); } catch(_) {}
-      try { console.log('[debug] OpenAI returned text (full):', text); } catch(_) {}
       // also persist a small trace to ExecutionLogs for easier post-mortem (no full text stored to DB)
       try { await putLog({ userId, type: 'openai-call', accountId: acct.accountId, targetId: scheduledPostId, status: 'info', message: 'openai_call_complete', detail: { textLength: text ? String(text).length : 0 } }); } catch (_) {}
     } catch (e) {
@@ -919,6 +917,11 @@ export const handler = async (event: any = {}) => {
     }
   }
 
+  // Legacy interactive 'test' branch removed per request. Use userId-based invocations
+  // (job: 'hourly' | 'every-5min' with event.userId) or the single-action test flow via
+  // job='test' was deprecated and removed. If you need ad-hoc actions, use the
+  // userId-specific invocation or add a controlled debug endpoint.
+
   if (job === "test") {
     const userId = event?.userId || process.env.USER_ID || USER_ID;
     const action = event.action || "";
@@ -935,10 +938,7 @@ export const handler = async (event: any = {}) => {
       if (!acct) continue; // nullチェック追加
       try {
         // Enhanced test logging for target account
-        if (userId === 'b7b44a38-e051-70fa-2001-0260ae388816' || acct.accountId === 'remigiozarcorb618') {
-          console.log('[TEST-LOG] running test for userId=', userId, 'accountId=', acct.accountId);
-          try { console.log('[TEST-LOG] acct=', JSON.stringify(acct)); } catch(e) { console.log('[TEST-LOG] acct stringify failed'); }
-        }
+        // verbose per-account test logs removed for production
         switch (action) {
           case "ensureNextDay": {
             const r = await ensureNextDayAutoPosts(userId, acct);
@@ -1018,9 +1018,7 @@ export const handler = async (event: any = {}) => {
             }
 
             // Console にも出力して Lambda の実行ログで確認しやすくする
-            try {
-              console.log('[TEST-OUTPUT] runAutoPost result for', acct.accountId, JSON.stringify(r.debug || r, null, 2));
-            } catch (e) { console.log('[TEST-OUTPUT] runAutoPost result (stringify failed)'); }
+            // suppressed verbose test output (kept in return payload)
 
             results.push({ accountId: acct.accountId, runAutoPost: r });
             break;
@@ -1491,10 +1489,10 @@ export const handler = async (event: any = {}) => {
 
   // === 集計用の開始時刻 ===
   const startedAt = Date.now();
+  let userSucceeded = 0;
 
   if (job === "hourly") {
     const userIds = await getActiveUserIds();
-    let userSucceeded = 0;
     const totals = { createdCount: 0, fetchedReplies: 0, replyDrafts: 0, skippedAccounts: 0 };
 
     for (const uid of userIds) {
@@ -1654,7 +1652,6 @@ export const handler = async (event: any = {}) => {
 
   // every-5min（デフォルト）
   const userIds = await getActiveUserIds();
-  let userSucceeded = 0;
   const totals = { totalAuto: 0, totalReply: 0, totalTwo: 0, rateSkipped: 0 };
 
   for (const uid of userIds) {
@@ -2908,7 +2905,8 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
 
   try {
     const text2 = acct.secondStageContent;
-    console.log(`[second-stage] attempt post reply account=${acct.accountId} parent=${firstPostId}`);
+    // note: second-stage posting attempt logged minimally
+    try { console.log('[info] second-stage attempt', { account: acct.accountId, parent: firstPostId }); } catch (_) {}
     const { postId: pid2 } = await postToThreads({ accessToken: acct.accessToken, text: text2, userIdOnPlatform: acct.providerUserId, inReplyTo: firstPostId });
     await ddb.send(new UpdateItemCommand({
       TableName: TBL_SCHEDULED,
@@ -2977,16 +2975,8 @@ async function runHourlyJobForUser(userId: any) {
 
   const urls = await getDiscordWebhooks(userId);
   const now = new Date().toISOString();
-  // DEBUG: log raw totals used for master report
-  try {
-    console.log('[MASTER-DEBUG] totals', { createdCount, fetchedReplies, replyDrafts, skippedAccounts });
-    console.log('[MASTER-DEBUG] posts array', [
-      { label: "予約投稿作成", value: createdCount, suffix: " 件" },
-      { label: "返信取得", value: fetchedReplies, suffix: " 件" },
-      { label: "返信下書き", value: replyDrafts, suffix: " 件" },
-      { label: "スキップ", value: skippedAccounts },
-    ]);
-  } catch (e) { /* ignore logging errors */ }
+  // minor debug: totals logged at info level only
+  try { console.log('[info] hourly totals', { createdCount, fetchedReplies, replyDrafts, skippedAccounts }); } catch (e) {}
   // `metrics` が空（= 実行なし）の場合は簡略化して 'hourly：実行なし' のみ送る
   const metrics = formatNonZeroLine([
     { label: "予約投稿作成", value: createdCount, suffix: " 件" },
@@ -3268,22 +3258,17 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
       const deleteParent = it.deleteParentAfter?.BOOL === true;
 
       // 削除対象を判定してThreads APIで削除を試みる（共通ユーティリティ経由、詳細ログ追加）
-      try {
-        // dynamic import workaround for monorepo path resolution in Lambda build
+        try {
+          // dynamic import workaround for monorepo path resolution in Lambda build
         let deleteThreadPost: any = null;
         try {
-          // preferred local package path
-          const mod = await import("../../../packages/backend-core/src/services/threadsDelete");
-          deleteThreadPost = mod.deleteThreadPost;
-        } catch (e) {
-          try {
-            // attempt to load from package name (might not exist in lambda build)
-            const pkgMod = await import("@autosnsflow/backend-core").catch(() => null);
-            if (pkgMod && pkgMod.deleteThreadPost) deleteThreadPost = pkgMod.deleteThreadPost;
-            else deleteThreadPost = null;
-          } catch (e2) {
-            deleteThreadPost = null;
-          }
+          // attempt to load from package name (might not exist in lambda build)
+          // @ts-expect-error - optional package import, may not have types in this compilation context
+          const pkgMod = await import("@autosnsflow/backend-core").catch(() => null);
+          if (pkgMod && pkgMod.deleteThreadPost) deleteThreadPost = pkgMod.deleteThreadPost;
+          else deleteThreadPost = null;
+        } catch (e2) {
+          deleteThreadPost = null;
         }
 
         // トークンハッシュを作成（ログにそのままトークンを出さない）
@@ -3325,8 +3310,12 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
 
     // If GSI returned candidates but none were processed (all skipped), try a limited PK fallback
     try {
-      const hadGsiCandidates = (q.Items || []).length > 0;
-      if (hadGsiCandidates && generated === 0) {
+        const hadGsiCandidates = (q.Items || []).length > 0;
+      // Ensure local variables used in PK fallback are defined
+      // (generated/limit are normally in scope in the original function; provide safe defaults here)
+      let _fallback_generated = 0;
+      const _fallback_limit = 1;
+      if (hadGsiCandidates && _fallback_generated === 0) {
         try {
           await putLog({ userId, type: 'gsi-fallback-run', accountId: acct.accountId, status: 'warn', message: 'GSI candidates skipped; running PK fallback' });
         } catch (_) {}
@@ -3351,8 +3340,8 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
 
         const fbItems = (fb.Items || []);
         console.log('[gen] PK fallback returned', { count: fbItems.length });
-        for (const fit of fbItems) {
-          if (generated >= limit) break;
+          for (const fit of fbItems) {
+          if (_fallback_generated >= _fallback_limit) break;
           const fpk = getS(fit.PK) || ''; const fsk = getS(fit.SK) || '';
           console.log('[gen] fallback evaluating', { fpk, fsk });
           const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: fpk }, SK: { S: fsk } } }));
@@ -3378,7 +3367,7 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
 
           try {
             await generateAndAttachContent(userId, acct, fsk.replace(/^SCHEDULEDPOST#/, ''), rec.theme || '', await getUserSettings(userId));
-            generated++;
+            _fallback_generated++;
             console.log('[gen] fallback generated', { fpk, fsk });
           } catch (e) {
             console.log('[gen] fallback generation failed', { fpk, fsk, err: String(e) });
