@@ -39,10 +39,7 @@ export default function ScheduledPostsTable() {
   const [repliesModalItems, setRepliesModalItems] = useState<ReplyType[]>([]);
   // [ADD] bulk selection
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  // Per-account toggle for enabling app-open on account name
-  const [appEnabledByAccount, setAppEnabledByAccount] = useState<Record<string, boolean>>({});
-  // show app column according to user settings
-  const [showAppColumn, setShowAppColumn] = useState<boolean>(false);
+  // (removed) app-open column and per-account app toggles
   // Feature gate: hide delete-related controls until server-side implementation is ready
   const [showDeleteControls] = useState<boolean>(false);
 
@@ -652,27 +649,10 @@ export default function ScheduledPostsTable() {
                     )}
                   </td>
                   <td className="border p-1">
-                    {showAppColumn && appEnabledByAccount[post.accountId] ? (
-                      <div>
-                        <a
-                          href={`/#/account/${encodeURIComponent(post.accountId)}`}
-                          onClick={(e) => {
-                            e.preventDefault();
-                            try { window.location.href = `autosnsflow://account/${encodeURIComponent(post.accountId)}`; } catch (_) {}
-                            window.location.href = `/#/account/${encodeURIComponent(post.accountId)}`;
-                          }}
-                          className="text-sm font-medium text-blue-600 underline"
-                        >
-                          {post.accountName}
-                        </a>
-                        <div className="text-xs text-gray-500 break-words">{post.accountId}</div>
-                      </div>
-                    ) : (
-                      <div>
-                        <div className="text-sm font-medium">{post.accountName}</div>
-                        <div className="text-xs text-gray-500 break-words">{post.accountId}</div>
-                      </div>
-                    )}
+                    <div>
+                      <div className="text-sm font-medium">{post.accountName}</div>
+                      <div className="text-xs text-gray-500 break-words">{post.accountId}</div>
+                    </div>
                   </td>
                   <td className="border p-1">
                     {post.scheduledAt
