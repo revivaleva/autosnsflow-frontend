@@ -3139,7 +3139,7 @@ async function runFiveMinJobForUser(userId: any) {
     try {
       const genRes = await processPendingGenerationsForAccount(userId, acct, 1);
       if (genRes && genRes.generated) {
-        // 生成は投稿には直結しないため totalAuto には加えないが、観測ログ用に記録
+        // 観測ログ用記録
       }
     } catch (e) {
       console.log('[warn] processPendingGenerationsForAccount failed (5min):', e);
