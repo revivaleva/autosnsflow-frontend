@@ -895,6 +895,59 @@ const MASTER_DISCORD_WEBHOOK = process.env.MASTER_DISCORD_WEBHOOK || "";
 export const handler = async (event: any = {}) => {
   const job = event?.job || "every-5min";
 
+  // Temporary maintenance action: clear pendingForAutoPostAccount for already-posted items
+  // Usage (test event): { "job": "clear-pending-posted", "userId": "c7e43...", "confirm": true }
+  if (job === 'clear-pending-posted') {
+    if (!event?.confirm) return { statusCode: 400, body: JSON.stringify({ error: 'confirm=true required to run' }) };
+
+    const targetUserIds: string[] = [];
+    if (event?.userId) targetUserIds.push(String(event.userId).replace(/^USER#/, ''));
+    else {
+      const ids = await getActiveUserIds();
+      for (const id of ids) targetUserIds.push(id);
+    }
+
+    let totalRemoved = 0;
+    try {
+      for (const rawUserId of targetUserIds) {
+        let lastKey: any = undefined;
+        do {
+          const q = await ddb.send(new QueryCommand({
+            TableName: TBL_SCHEDULED,
+            KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+            ExpressionAttributeValues: { ":pk": { S: `USER#${rawUserId}` }, ":pfx": { S: "SCHEDULEDPOST#" } },
+            ProjectionExpression: "PK, SK, postedAt, status, pendingForAutoPostAccount",
+            Limit: 1000,
+            ExclusiveStartKey: lastKey,
+          }));
+
+          for (const it of (q.Items || [])) {
+            const postedAt = it.postedAt?.N ? Number(it.postedAt.N) : 0;
+            const status = it.status?.S || '';
+            if (postedAt > 0 || status === 'posted') {
+              try {
+                await ddb.send(new UpdateItemCommand({
+                  TableName: TBL_SCHEDULED,
+                  Key: { PK: it.PK, SK: it.SK },
+                  UpdateExpression: 'REMOVE pendingForAutoPostAccount'
+                }));
+                totalRemoved++;
+              } catch (e) {
+                // ignore individual failures
+              }
+            }
+          }
+
+          lastKey = q.LastEvaluatedKey;
+        } while (lastKey);
+      }
+    } catch (e) {
+      return { statusCode: 500, body: JSON.stringify({ error: String(e) }) };
+    }
+
+    return { statusCode: 200, body: JSON.stringify({ removed: totalRemoved, usersProcessed: targetUserIds.length }) };
+  }
+
   // If caller provided a userId for hourly/5min jobs, run only that user's flow
   // and return a test-oriented response including which accounts were targeted.
   if (event?.userId && (job === 'hourly' || job === 'every-5min')) {
@@ -3331,7 +3384,7 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
             ":now": { N: String(now) },
             ":f": { BOOL: false }
           },
-          FilterExpression: "accountId = :acc AND (attribute_not_exists(status) OR status = :scheduled) AND (attribute_not_exists(isDeleted) OR isDeleted = :f) AND scheduledAt <= :now",
+          FilterExpression: "accountId = :acc AND (attribute_not_exists(#st) OR #st = :scheduled) AND (attribute_not_exists(isDeleted) OR isDeleted = :f) AND scheduledAt <= :now",
           ExpressionAttributeNames: { "#st": "status" },
           ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts",
           ScanIndexForward: true,
