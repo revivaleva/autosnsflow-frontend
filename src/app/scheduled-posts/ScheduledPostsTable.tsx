@@ -42,6 +42,8 @@ export default function ScheduledPostsTable() {
   // (removed) app-open column and per-account app toggles
   // Feature gate: hide delete-related controls until server-side implementation is ready
   const [showDeleteControls] = useState<boolean>(false);
+  // keep a local showAppColumn state to respond to settings events (no UI column in this view)
+  const [showAppColumn, setShowAppColumn] = useState<boolean>(false);
 
   const toggleSelect = (id: string) => {
     setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -621,7 +623,7 @@ export default function ScheduledPostsTable() {
               {showDeleteControls && <th className="border p-1" style={{ width: 120 }}>二段階投稿削除</th>}
               {showDeleteControls && <th className="border p-1" style={{ width: 120 }}>投稿削除</th>}
               <th className="border p-1" style={{ width: 90 }}>リプ状況</th>
-              {showAppColumn && <th className="border p-1" style={{ width: 120 }}>アプリ</th>}
+              
               <th className="border p-1" style={{ width: 180 }}>アクション</th>
             </tr>
           </thead>
@@ -795,16 +797,7 @@ export default function ScheduledPostsTable() {
                       {repliesStatus}
                     </button>
                   </td>
-                  {showAppColumn && (
-                    <td className="border p-1 text-center">
-                      <button
-                        className={`px-2 py-1 rounded text-sm ${appEnabledByAccount[post.accountId] ? 'bg-green-500 text-white' : 'bg-gray-200'}`}
-                        onClick={(e) => { e.stopPropagation(); setAppEnabledByAccount(prev => ({ ...prev, [post.accountId]: !prev[post.accountId] })); }}
-                      >
-                        {appEnabledByAccount[post.accountId] ? 'ON' : 'OFF'}
-                      </button>
-                    </td>
-                  )}
+                  
                   <td className="border p-1 space-x-1">
                     {post.status !== "posted" && !post.isDeleted && (
                       <button
@@ -857,7 +850,7 @@ export default function ScheduledPostsTable() {
             })}
             {sortedPosts.length === 0 && (
               <tr>
-                <td colSpan={showAppColumn ? 12 : 11} className="text-center text-gray-500 p-4">
+                <td colSpan={showDeleteControls ? 13 : 11} className="text-center text-gray-500 p-4">
                   データがありません
                 </td>
               </tr>
