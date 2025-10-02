@@ -376,13 +376,19 @@ export default async function handler(
         expr
       )} names=${JSON.stringify(names)} values=${JSON.stringify(values)}`);
 
+      // Retrieve existing item to determine accountId for GSI marker
+      const existingForPatch = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: key }));
+      const accountIdToSet = existingForPatch.Item?.accountId?.S || "";
+
       await ddb.send(
         new UpdateItemCommand({
           TableName: TBL_SCHEDULED,
           Key: key,
-          UpdateExpression: `SET ${expr.join(", ")}`,
+          // If the update keeps the item in scheduled status (postedAt==0 && status==scheduled),
+          // ensure pendingForAutoPostAccount is set so the item is visible to the PendingByAccTime GSI.
+          UpdateExpression: `SET ${expr.join(", ")}${expr.length ? ", " : ""}pendingForAutoPostAccount = :pacc`,
           ExpressionAttributeNames: Object.keys(names).length ? names : undefined,
-          ExpressionAttributeValues: values,
+          ExpressionAttributeValues: { ...values, ":pacc": { S: accountIdToSet } },
         })
       );
 
