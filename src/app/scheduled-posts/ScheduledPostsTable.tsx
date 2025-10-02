@@ -43,6 +43,8 @@ export default function ScheduledPostsTable() {
   const [appEnabledByAccount, setAppEnabledByAccount] = useState<Record<string, boolean>>({});
   // show app column according to user settings
   const [showAppColumn, setShowAppColumn] = useState<boolean>(false);
+  // Feature gate: hide delete-related controls until server-side implementation is ready
+  const [showDeleteControls] = useState<boolean>(false);
 
   const toggleSelect = (id: string) => {
     setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -619,8 +621,8 @@ export default function ScheduledPostsTable() {
               <th className="border p-1" style={{ width: 160 }}>投稿日時</th>
               <th className="border p-1" style={{ width: 140 }}>投稿ID</th>
               <th className="border p-1" style={{ width: 140 }}>二段階投稿</th>
-              <th className="border p-1" style={{ width: 120 }}>二段階投稿削除</th>
-              <th className="border p-1" style={{ width: 120 }}>投稿削除</th>
+              {showDeleteControls && <th className="border p-1" style={{ width: 120 }}>二段階投稿削除</th>}
+              {showDeleteControls && <th className="border p-1" style={{ width: 120 }}>投稿削除</th>}
               <th className="border p-1" style={{ width: 90 }}>リプ状況</th>
               {showAppColumn && <th className="border p-1" style={{ width: 120 }}>アプリ</th>}
               <th className="border p-1" style={{ width: 180 }}>アクション</th>
@@ -791,14 +793,18 @@ export default function ScheduledPostsTable() {
                       return <div className="text-xs text-gray-500">未設定</div>;
                     })()}
                   </td>
-                  <td className="border p-1 text-center">
-                    {/* 二段階投稿削除フラグ（日時ではなく設定による有無） */}
-                    {(post as any).deleteOnSecondStage ? <span className="text-green-600 font-medium">有</span> : <span className="text-gray-500">無</span>}
-                  </td>
-                  <td className="border p-1 text-center">
-                    {/* 親投稿削除フラグ */}
-                    {(post as any).deleteParentAfter ? <span className="text-green-600 font-medium">有</span> : <span className="text-gray-500">無</span>}
-                  </td>
+                  {showDeleteControls && (
+                    <td className="border p-1 text-center">
+                      {/* 二段階投稿削除フラグ（日時ではなく設定による有無） */}
+                      {(post as any).deleteOnSecondStage ? <span className="text-green-600 font-medium">有</span> : <span className="text-gray-500">無</span>}
+                    </td>
+                  )}
+                  {showDeleteControls && (
+                    <td className="border p-1 text-center">
+                      {/* 親投稿削除フラグ */}
+                      {(post as any).deleteParentAfter ? <span className="text-green-600 font-medium">有</span> : <span className="text-gray-500">無</span>}
+                    </td>
+                  )}
                   <td className="border p-1">
                     <button
                       className="px-2 py-1 rounded text-xs bg-gray-200 text-gray-800 dark:bg-gray-700 dark:text-gray-100 hover:bg-blue-200 dark:hover:bg-blue-700"
@@ -856,7 +862,7 @@ export default function ScheduledPostsTable() {
                         編集
                       </button>
                     )}
-                    {!post.isDeleted && (
+                    {showDeleteControls && !post.isDeleted && (
                       <button
                         className="bg-red-500 text-white px-2 py-1 rounded hover:bg-red-600"
                         onClick={() => handleDelete(post.scheduledPostId)}
