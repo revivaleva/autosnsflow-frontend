@@ -166,3 +166,10 @@ alwaysApply: true
 - デバッグ目的で `persistDebugLog` を使用する場合は、使用後に必ず `persistDebugLog` の呼び出し箇所を削除または `persist=false` に戻すこと。
 - ExecutionLogs の肥大化を防ぐため、将来的に TTL を導入する（`expiresAt` 属性を追加して自動削除する）。このタスクは TODO に登録済み。
 
+### 実装 TODO（定期実行リファクタ完了後に実施）
+
+- **POST 作成時に `pendingForAutoPostAccount` を付与する**: `src/pages/api/scheduled-posts/index.ts` の POST 処理で、`postedAt === 0 && status === 'scheduled'` かつ自動投稿対象である場合に `pendingForAutoPostAccount` を保存すること。これにより `PendingByAccTime` GSI へ即時反映される。
+- **PATCH（更新）時の pending 管理**: 予約の編集・更新処理で `pendingForAutoPostAccount` の SET / REMOVE を行う。投稿済／削除時は REMOVE する。フロントの編集操作と GSI の整合性を保つため、サーバ側で一元管理すること。
+
+注: これらは現在進行中の定期実行（lambda）リファクタ作業と別ブランチで実施する。ブランチ混在を避けるため、後続タスクとして管理する。
+
