@@ -43,154 +43,159 @@ description:
 - 重要な判断が必要な場合は、その都度報告し、承認を得てください。
 - 予期せぬ問題が発生した場合は、即座に報告し、対応策を提案してください。
 
-ブランチ運用（必読）
+---
 
-main：本番。ここへは「明示指示があった時のみ」マージ。直接 push 禁止。
+## ブランチ運用（必読）
 
-staging：通常の開発・修正・デバッグはここへ。特段の指示が無い場合は staging。
+- **main**：本番。ここへは「明示指示があった時のみ」マージ。直接 push 禁止。  
+- **staging**：通常の開発・修正・デバッグはここへ。特段の指示が無い場合は staging。  
+- **lambda**：定期実行（`scheduled` / `auto-post` / `lambda/scheduled-autosnsflow`）関連は必ずここへ push。push で自動ビルド/デプロイが走る。  
 
-lambda：定期実行（scheduled / auto-post / lambda/scheduled-autosnsflow）関連は必ずここへ push。push で自動ビルド/デプロイが走る。
+共通部分（`src/lib/` 配下）は **staging → main → lambda の順に反映**。  
+定期実行専用処理（`lambda/` 配下）は **lambda ブランチ直 push も可**。ただし共通部分を修正する場合は必ず staging を経由する。  
 
-デザイン指針
+---
 
-Tailwind CSS のみで構成。ライト/ダーク両対応、将来のモバイル（レスポンシブ）前提。
+## デザイン指針
 
-ローダー/モーダル等の共通部品を統一し、画面間の一貫性を確保。
+- Tailwind CSS のみで構成。ライト/ダーク両対応、将来のモバイル（レスポンシブ）前提。  
+- ローダー/モーダル等の共通部品を統一し、画面間の一貫性を確保。  
 
-変更時の原則
+---
 
-どのブランチに上げるかを必ず明示。不明点は修正せず確認。
+## 変更時の原則
 
-既存ロジックを大きく変える提案は一度確認（互換影響の洗い出しを含む）。
+- どのブランチに上げるかを必ず明示。不明点は修正せず確認。  
+- 既存ロジックを大きく変える提案は一度確認（互換影響の洗い出しを含む）。  
+- 共通部品の変更は呼び出し元全体の動作確認をセット。  
 
-共通部品の変更は呼び出し元全体の動作確認をセット。
+---
 
-定期実行（Lambda）ポリシー
+## 定期実行（Lambda）ポリシー
 
-対象語：定期実行/自動投稿/scheduled/auto-post/lambda/scheduled-autosnsflow を含む変更はLambda関連とみなす。
+- 対象語：`定期実行` / `自動投稿` / `scheduled` / `auto-post` / `lambda/scheduled-autosnsflow` を含む変更は Lambda 関連とみなす。  
+- lambda ブランチにコミット/PR。コミットメッセージ・PR タイトルに `lambda:` を付与。  
+- デプロイ前にローカル or ステージングで確認。main 反映は事前了承があるときのみ。  
 
-lambda ブランチにコミット/PR。コミットメッセージ・PR タイトルに lambda: を付与。
+---
 
-デプロイ前にローカル or ステージングで確認。main 反映は事前了承があるときのみ。
+## シークレット取り扱い
 
-シークレット取り扱い
+- APIキー/トークン/個人情報のコミット禁止。`.env.*` は `.gitignore`。  
+- デプロイ時は GitHub Secrets / AWS Secrets Manager を使用。  
+- CI に `git-secrets` / `truffleHog` を導入し、検出時はブロック。  
+- 漏洩時は即ローテート＋履歴除去（`git filter-repo` 等）＋報告。  
 
-APIキー/トークン/個人情報のコミット禁止。.env.* は .gitignore。
+---
 
-デプロイ時は GitHub Secrets / AWS Secrets Manager を使用。
+## コマンド実行ポリシー
 
-CI に git-secrets / truffleHog を導入し、検出時はブロック。
+必須環境：**Windows PowerShell** を基本とする。  
+原則：1 ステップ = 1 コマンド。ワンライナー連結（`&&`）禁止。  
 
-漏洩時は即ローテート＋履歴除去（git filter-repo 等）＋報告。
+### 1) 守護ランナーの使用
+- `cx_run <job> <timeoutSec> "<cmd>"` で実行し、タイムアウト・ログ保存・未尾200行のみ表示を徹底。  
+- 止まった時は `cx_stop <job>` を提示して強制停止できる形にする。  
+- ログは `/tmp/cursor_guard/<job>_YYYYMMDD_HHMMSS.log`。  
 
-コマンド実行ポリシー（ここからが実行制御ルール）
+### 2) Git 操作は非対話＋タイムアウト
+- UNC パスを用い、必ず `-C` でリポジトリパスを明示する。  
+- 例:  
+  ```powershell
+  git -C "\\wsl.localhost\Ubuntu\home\revival\projects\AutoSNSFlow\frontend" status
+commit は必ず -m 指定。必要時のみ --no-verify。
 
-必須環境：WSL(Ubuntu) の bash で実行。Windows PowerShell 直叩き禁止。
-原則：1 ステップ = 1 コマンド。ワンライナー連結（&& で多段）禁止。
+操作前後で git status --porcelain を実行して確認。
 
-1) 守護ランナーの使用（Cursor は必ずこれで実行）
-
-cx_run <job> <timeoutSec> "<cmd>" で実行し、タイムアウト・ログ保存・末尾200行のみ表示を徹底。
-
-止まった時は cx_stop <job> を提示して強制停止できる形にする。
-
-ログは /tmp/cursor_guard/<job>_YYYYMMDD_HHMMSS.log。
-
-もし cx_run/cx_stop が未導入なら、最初に導入手順を提示してから作業を進めること。
-
-（参考：導入スニペットは分割して提示すること）
-
-~/.bashrc に関数を追記する旨を告知
-
-追記用コマンドを短い2〜3手順に分けて提示（長大 here-doc 禁止）
-
-source ~/.bashrc を実行
-
-2) Git 操作は非対話＋タイムアウト
-
-Git コマンドは git_to <timeoutSec> <subcommand…> を使用（非対話・pager無効・ログ保存）。
-
-commit は 必ず -m 指定。必要時のみ --no-verify を明示。
-
-壊しやすい操作の前後で git status --porcelain を別ステップで実行して確認。
-
-認証は SSH 鍵前提（BatchMode=yes）。プロンプト待ち禁止。
+認証は SSH 鍵前提。プロンプト待ち禁止。
 
 3) 出力・ログの扱い
+長い出力は必ずファイルへ（> /tmp/*.json / /tmp/*.log）。
 
-長い出力は必ずファイルへ（> /tmp/*.json / /tmp/*.log）。画面は head -n 100 / tail -n 200 の要点のみ。
-
-JSON の確認は jq -C .（色）＋ less -R か、ログファイル参照で行う。
-
-CloudWatch/DynamoDB などの取得は --limit と期間指定を必須にし、無制限取得を禁止。
+JSON 確認は jq。画面は要点のみ表示。
 
 4) 長い/複雑な処理
+長文コマンドや here-doc は /tmp/*.sh に保存して実行。
 
-長文コマンドや多段 here-doc はスクリプト化して /tmp/*.sh に保存→実行。
+各ステップで結果を確認してから次へ進む。
 
-逐次確認が必要な場合は cx_run で短いステップに分割し、各段で結果を確認してから次へ。
+5) 例（ワンライナー禁止 → 分割推奨）
+NG:
 
-コマンドは原則 cx2 / run2 / git2 を使う。長時間が必要な場合のみ秒数を明示
-
-5) 例（ワンライナー禁止 → 分割版）
-
-NG
-
+sh
+コードをコピーする
 git rm -r --cached A B && git commit -m "chore" && git push origin lambda
+OK:
 
-
-OK
-
-git_to 60 rm -r --cached A B || true
-git_to 20 status --porcelain
-git_to 60 commit -m "chore: remove test artifacts" --no-verify
-git_to 120 push --porcelain --no-verify origin lambda
-
-
+powershell
+コードをコピーする
+git -C "\\wsl.localhost\Ubuntu\home\revival\projects\AutoSNSFlow\frontend" rm -r --cached A B
+git -C "\\wsl.localhost\Ubuntu\home\revival\projects\AutoSNSFlow\frontend" status --porcelain
+git -C "\\wsl.localhost\Ubuntu\home\revival\projects\AutoSNSFlow\frontend" commit -m "chore: remove test artifacts" --no-verify
+git -C "\\wsl.localhost\Ubuntu\home\revival\projects\AutoSNSFlow\frontend" push --porcelain --no-verify origin lambda
 ビルド
-
+powershell
+コードをコピーする
 cx_run build 1800 "npm ci"
 cx_run build 1800 "npm run build"
 cx_run lsout 30  "ls -lh .next | tail -n 50"
-
-CLI 出力・ログ取得の詳細
-
-出力は一時ファイルに保存→整形→要点だけ表示。
-
-less 等ページャは基本使わず、ログ参照を案内。
-
-CloudWatch 例：
-cx_run logs 60 "aws logs filter-log-events --log-group-name '/aws/lambda/<name>' --start-time <epoch-ms> --end-time <epoch-ms> --limit 100 > /tmp/logs.json"
-
-ローカルデバッグ専用変更
-
-node_modules 直接編集・生成物・一時ログのコミット禁止。必要なら patch-package を利用し patches/ に置く。
-
-デバッグコミットは debug:/wip:。最終 PR 前に整理（squash/rebase）。
-
-CI で node_modules/ や *.log などの混入チェックを実施。
-
-事故復旧（提示テンプレ）
-
-実行が進まない場合：
-
+事故復旧
+実行が進まない場合
 cx_stop <job>
 
-リポジトリ直下で find .git -name '*.lock' -print -delete
+powershell
+コードをコピーする
+Get-ChildItem -Recurse .git\*.lock | Remove-Item -Force
+git -C "\\wsl.localhost\Ubuntu\home\revival\projects\AutoSNSFlow\frontend" status --porcelain
+端末不調時
+Clear-Host でターミナルリセット
 
-git_to 20 status --porcelain で健全性確認
+必要に応じて PowerShell 再起動
 
-端末不調時：stty sane → ターミナル再起動。WSL 再起動は wsl.exe --shutdown。
+ビルド/マージ注意（CI 向け短縮版）
+マージ競合マーカー（<<<<<<< / ======= / >>>>>>>）を残したまま push すると CI が失敗。必ず解消して確認。
 
-遵守事項（実行時に必ず守る）
+解消後は明示的に git add → commit する（自動 commit 禁止）。
 
-WSL で実行し、cx_run / git_to 以外での多段ワンライナー提案は禁止。
+ローカルで npm run build または tsc を実行し構文・型チェックを通す。
 
-すべての重い処理はタイムアウトとログ保存を前提に提示。
+push は原則 --force 禁止。必要なら --force-with-lease を使用。
 
-ログの保存先パスを毎回明示し、フルログ貼り付けはしない。
+DynamoDB の AttributeValue を直接返さない。必ず正規化。
 
-ブランチ規約・シークレット規約を破る提案は行わない。
-globs:
-alwaysApply: true
----
+ワークツリー全体をステージする操作 (git add -A) の注意
+git add -A は未追跡ファイルも含めるため、個人環境ファイルや長いファイル名の混入リスクがある。
+
+安全な手順:
+
+git -C "\\wsl.localhost\Ubuntu\home\revival\projects\AutoSNSFlow\frontend" status --porcelain
+
+不要ファイルは .gitignore へ追加
+
+必要ファイルのみ git add <path> または git add -p
+
+Windows 側で長いパスエラーが出る場合は .gitignore に追加するか、core.longpaths を有効化
+
+powershell
+コードをコピーする
+git config --system core.longpaths true
+追記: PowerShell 環境での Git 操作について
+本プロジェクトは Windows + WSL の併用環境。PowerShell 側から UNC パスで WSL 内を指定する。
+
+例:
+
+powershell
+コードをコピーする
+git -C "\\wsl.localhost\Ubuntu\home\revival\projects\AutoSNSFlow\frontend" <command>
+ステップ実行を徹底。&& 禁止。長い出力はログへ保存して確認。
+
+推奨ワークフロー（commit → staging push）
+git -C "\\wsl.localhost\Ubuntu\home\revival\projects\AutoSNSFlow\frontend" add <files...>
+
+git -C "\\wsl.localhost\Ubuntu\home\revival\projects\AutoSNSFlow\frontend" commit -m "<msg>"
+
+git -C "\\wsl.localhost\Ubuntu\home\revival\projects\AutoSNSFlow\frontend" checkout staging（なければ checkout -b staging）
+
+git -C "\\wsl.localhost\Ubuntu\home\revival\projects\AutoSNSFlow\frontend" merge --no-edit main
+
+git -C "\\wsl.localhost\Ubuntu\home\revival\projects\AutoSNSFlow\frontend" push origin staging
