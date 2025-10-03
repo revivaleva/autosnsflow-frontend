@@ -65,3 +65,57 @@ amplifytools.xcconfig
 lambda/**/bundle.zip
 lambda/**/out.json
 packages/**/package-lock.json.cursor/
+packages/**/package-lock.json
+
+# Allow tracking of cursor rule files (override ignore if present)
+!.cursor/
+!.cursor/rules/
+!.cursor/rules/pjrule.mdc
+!.cursor/rules/pjrulestodo.mdc
+
+# Ignore common Python/virtualenv artifacts and editor/runtime files
+__pycache__/
+*.py[cod]
+*.pyo
+*.pytest_cache/
+venv/
+venv/**
+.venv/
+telegram_bot_project/venv/
+
+# VSCode remote/server artifacts
+vscode-remote-wsl/
+vscode-remote-server-*/
+**/vscode-server-*.tar.gz
+.vscode/
+
+# Cache and temp
+.cache/
+/tmp/
+*.log
+
+# Platform-specific
+AppData/
+OneDrive/
+Desktop/
+Documents/
+Downloads/
+VirtualBox VMs/
+
+# Large archives often left by editors/remote extensions
+**/*.tar.gz
+**/*.zip
+
+# Node/npm artifacts
+package-lock.json
+npm-debug.log*
+pnpm-lock.yaml
+
+# macOS
+.DS_Store
+
+# JetBrains
+.idea/
+
+# temp PID and runtime files
+dev-noturbo.pid

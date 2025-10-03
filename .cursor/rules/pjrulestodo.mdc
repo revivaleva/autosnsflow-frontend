@@ -79,3 +79,12 @@ Note: このファイルはプロジェクトルールにより Git 管理対象
      5. `git -C "\\\\wsl.localhost\\Ubuntu\\home\\revival\\projects\\AutoSNSFlow\\frontend" push origin staging`
    - 注意: ファイル名が長すぎると Windows 側で indexing/staging に失敗する場合があるため、その場合は WSL の bash で直接コマンドを実行するか、該当ファイルを除外して作業してください。
 
+- ビルドとマージに関する重要な注意事項
+  - マージ競合マーカー（`<<<<<<<` / `=======` / `>>>>>>>`）がファイルに残ったままコミット・プッシュすると、CI/Amplify のビルドは即座に失敗します。マージを行ったら必ず以下を実行してください:
+    1. 競合を慎重に解消し、競合マーカーがファイルに残っていないことを確認する。
+    2. 解消後は `git add <file>` で解決済みをステージし、明確なコミットメッセージでコミットする（自動エディタに任せない）。
+    3. ローカルで `npm run build` または `tsc -p tsconfig.json` を実行して構文・型エラーが無いか検証する。
+    4. CI の前に `git push` する。staging に直接 force push する場合はチームに通知し、`--force-with-lease` を用いること。
+  - DynamoDB の AttributeValue（例: `{ S: '...' }`）が API の JSON に混入すると型エラーやランタイム問題の原因になります。API で返す前に文字列へ正規化すること。
+
+
