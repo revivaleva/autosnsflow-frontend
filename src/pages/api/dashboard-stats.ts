@@ -14,6 +14,8 @@ const ddb = createDynamoClient();
 const TBL_THREADS = process.env.TBL_THREADS_ACCOUNTS || "ThreadsAccounts";
 const TBL_POSTS   = process.env.TBL_SCHEDULED_POSTS  || "ScheduledPosts";
 const TBL_REPLIES = process.env.TBL_REPLIES          || "Replies";
+// ExecutionLogs table (optional)
+const TBL_EXECUTION_LOGS = process.env.TBL_EXECUTION_LOGS || process.env.LOG_TBL || 'ExecutionLogs';
 
 const toNum = (v: any) =>
   typeof v === "number" ? v : v?.N ? Number(v.N) : 0;      // [ADD]
@@ -142,6 +144,36 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         });
       }
     });
+
+    // ▼ ExecutionLogs (オプション) - 直近7日分を取得し recentErrors にマージする
+    try {
+      const qResp = await queryByPrefix(TBL_EXECUTION_LOGS, userId, 'LOG#', { ScanIndexForward: false, Limit: 50 } as any);
+      const logs = qResp.Items ?? [];
+      logs.forEach(l => {
+        try {
+          const status = l.status?.S || '';
+          const createdAt = toNum(l.createdAt) || Math.floor(Date.now() / 1000);
+          if (createdAt < last7Start) return; // 7日より前は無視
+          const type = (l.type?.S || 'system') as string;
+          // mapログ種別を post/reply/account へ粗くマップする
+          const mappedType: 'post' | 'reply' | 'account' = type.includes('post') ? 'post' : type.includes('reply') ? 'reply' : 'account';
+          // detail は JSON 文字列の可能性があるためパースして message を作る
+          let message = l.message?.S || '';
+          try {
+            const d = JSON.parse(l.detail?.S || '{}');
+            if (typeof d === 'object' && d !== null) {
+              if (!message && d.message) message = String(d.message).slice(0, 200);
+            }
+          } catch (_e) {}
+          // マスク: アクセストークン等を含む可能性があるので一定のキーは除去
+          message = message.replace(/accessToken\s*[:=]\s*\S+/ig, '[REDACTED]');
+          recentErrors.push({ type: mappedType, id: l.SK?.S || (l.targetId?.S || '') , at: createdAt, message: message || '(ログ)' });
+        } catch (_e) {}
+      });
+    } catch (e) {
+      // ExecutionLogs が存在しない or 権限エラーなどの場合は無視して続行
+      try { console.log('[debug] exec logs fetch failed', String((e as Error)?.message || e)); } catch (_) {}
+    }
 
     recentErrors.sort((a, b) => b.at - a.at);
 
