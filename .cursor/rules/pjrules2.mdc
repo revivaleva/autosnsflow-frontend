@@ -7,5 +7,24 @@
   - 実装後、フロントの `ScheduledPostsTable` にある `showDeleteControls` フラグを削除して UI を有効化する。
   - 実装時には `ExecutionLogs` への `putLog(..., status: 'error')` 保存ポリシーを守り、不要なデバッグログを残さないこと。
 
+- 追記: 予約投稿一覧の「削除」「投稿削除」「選択削除」などの削除系 UI（ボタン／チェックボックス表示）が誤って消えてしまっているため、フロント側で UI を復元する作業が必要です。具体的には `src/app/scheduled-posts/ScheduledPostsTable.tsx` と対応 API の表示フラグを確認し、`showDeleteControls` の条件や権限チェックのロジックに誤りがないかを検証してください。
+
+- 追加ルール（削除ボタンの挙動）:
+  - 投稿済みの予約投稿（すでに Threads 等に投稿済みのもの）には、アクションとして **`投稿削除`** ボタンを表示すること。
+    - `投稿削除` ボタンは外部投稿 API を呼び出して実際に投稿を削除する処理を実行する（エラー時のログと再試行ポリシーを備えること）。
+    - 投稿済みのデータは**選択削除のチェックボックスを非表示**にして、選択削除の対象外とすること。
+  - 未投稿の予約投稿（まだ外部に投稿されていないもの）には、アクションとして **`削除`** ボタンを表示すること。
+    - `削除` ボタンは DB 上の対象レコードを物理削除（hard delete）する。この操作はトランザクションや整合性チェックを経て実行すること。
+  - UI 実装箇所: `src/app/scheduled-posts/ScheduledPostsTable.tsx`、`src/app/scheduled-posts/ScheduledPostsTable.tsx` 内で使用するユーティリティ、及び `/api/scheduled-posts` 系のエンドポイントを確認し、フロント/バック両側で仕様に合致することを保証する。
+
+
+- STATUS: 二段階投稿（double-stage posting）が現在期待通りに動作していません。
+  - 影響範囲: 定期実行ジョブの二段階投稿フローおよび即時二段階投稿ボタンからの実行。
+  - TODO: 詳細な原因調査と修正を行う。調査項目の例:
+    - 定期処理（Lambda）内の `runSecondStageForAccount` / `runAutoPostForAccount` ロジックで候補を正しく取得しているか（GSI/PK フェールバック含む）。
+    - `postToThreads` の呼び出しが正しいトークン（oauth/accessToken）を使用しているか、及び `reply_to_id` や `publish` フローでエラーが発生していないか。
+    - UI からの即時実行フロー（`/api/scheduled-posts/second-stage`）が成功レスポンスを受け取り、`doublePostStatus`/`secondStagePostId` を反映しているか。
+  - 期限: 優先度高。まずはログの粒度を上げて再現ケースを収集し、修正 PR を作成する。
+
 Note: このファイルはプロジェクトルールにより Git 管理対象外にしています（.gitignore に .cursor/ を追加済）。
 

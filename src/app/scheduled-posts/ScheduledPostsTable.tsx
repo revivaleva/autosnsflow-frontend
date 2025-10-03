@@ -656,12 +656,34 @@ export default function ScheduledPostsTable() {
                       <div className="text-xs text-gray-500 break-words">{post.accountId}</div>
                     </div>
                   </td>
-                  <td className="border p-1">
-                    {post.scheduledAt
-                      ? typeof post.scheduledAt === "number"
-                        ? new Date(post.scheduledAt * 1000).toLocaleString()
-                        : post.scheduledAt
-                      : ""}
+                  <td className="border p-1 align-top">
+                    {post.scheduledAt ? (
+                      typeof post.scheduledAt === "number" ? (
+                        (() => {
+                          const d = new Date(post.scheduledAt * 1000);
+                          // 日付と時間を分けて表示（改行を必ず入れる）
+                          const datePart = d.toLocaleDateString();
+                          const timePart = d.toLocaleTimeString();
+                          return (
+                            <div style={{ whiteSpace: 'pre-line' }}>
+                              {datePart}
+                              {'\n'}
+                              {timePart}
+                            </div>
+                          );
+                        })()
+                      ) : (
+                        // 文字列の場合は日付と時間の間に改行を挿入する（既に改行があればそのまま）
+                        (() => {
+                          const s = String(post.scheduledAt || "");
+                          // ISOや 'YYYY/MM/DD HH:MM:SS' 等を想定して、最初の空白を改行に置換
+                          const replaced = s.includes('\n') ? s : s.replace(/\s+/, '\n');
+                          return <div style={{ whiteSpace: 'pre-line' }}>{replaced}</div>;
+                        })()
+                      )
+                    ) : (
+                      <></>
+                    )}
                   </td>
                   <td className="border p-1">{autoPostLabel}</td>
                   <td className="border p-1">
