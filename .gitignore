@@ -65,3 +65,9 @@ amplifytools.xcconfig
 lambda/**/bundle.zip
 lambda/**/out.json
 packages/**/package-lock.json.cursor/
+
+# Allow tracking of cursor rule files (override ignore if present)
+!.cursor/
+!.cursor/rules/
+!.cursor/rules/pjrule.mdc
+!.cursor/rules/pjrulestodo.mdc
