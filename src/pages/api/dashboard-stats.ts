@@ -199,7 +199,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           message = message.replace(/accessToken\s*[:=]\s*\S+/ig, '[REDACTED]');
           // id は優先的に targetId (例: SCHEDULEDPOST#...) を使う
           const targetId = l.targetId?.S || '';
-          const acctIdField = l.accountId?.S || l.accountId || '';
+          // Normalize accountId which may be AttributeValue or plain string
+          let acctIdField = '';
+          try {
+            if (l.accountId && typeof l.accountId === 'object' && 'S' in l.accountId) {
+              acctIdField = String((l.accountId as any).S || '');
+            } else if (typeof l.accountId === 'string') {
+              acctIdField = l.accountId;
+            } else {
+              acctIdField = '';
+            }
+          } catch (_e) { acctIdField = '' }
           const idForEntry = targetId || (l.SK?.S || '');
           recentErrors.push({ type: mappedType, id: idForEntry, at: createdAt, message: message || '(ログ)', accountId: acctIdField || undefined });
         } catch (_e) {}
