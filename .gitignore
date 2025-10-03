@@ -105,3 +105,17 @@ VirtualBox VMs/
 # Large archives often left by editors/remote extensions
 **/*.tar.gz
 **/*.zip
+
+# Node/npm artifacts
+package-lock.json
+npm-debug.log*
+pnpm-lock.yaml
+
+# macOS
+.DS_Store
+
+# JetBrains
+.idea/
+
+# temp PID and runtime files
+dev-noturbo.pid
