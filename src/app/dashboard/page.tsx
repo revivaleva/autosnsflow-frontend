@@ -18,7 +18,12 @@ type DashboardStats = {
   failedPostCount: number;
   todaysRemainingScheduled: number;
   monthSuccessRate: number;
-  recentErrors: { type: 'post' | 'reply' | 'account'; id: string; at: number; message: string }[];
+  recentErrors: ({ type: 'post' | 'reply' | 'account'; id: string; at: number; message: string } & {
+    displayName?: string;
+    accountId?: string;
+    scheduledAt?: number;
+    contentSummary?: string;
+  })[];
 };
 
 const numberFmt = (n: number | undefined) => (typeof n === 'number' ? n.toLocaleString() : '-');
@@ -29,7 +34,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'all' | 'post' | 'reply' | 'account'>('all');
-  const [detail, setDetail] = useState<{ id: string; message: string } | null>(null);
+  const [detail, setDetail] = useState<{ id: string; message: string; accountId?: string; displayName?: string; scheduledAt?: number; contentSummary?: string } | null>(null);
 
   // 【追加】初回ロード
   useEffect(() => {
@@ -108,7 +113,7 @@ export default function DashboardPage() {
                 <li key={`${e.type}-${e.id}-${e.at}`} className="px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-800">
                   <button
                     className="w-full text-left"
-                    onClick={() => setDetail({ id: e.id, message: e.message })}
+                  onClick={() => setDetail({ id: e.id, message: e.message, accountId: (e as any).accountId, displayName: (e as any).displayName, scheduledAt: (e as any).scheduledAt, contentSummary: (e as any).contentSummary })}
                   >
                     <div className="flex items-center gap-2">
                       <span className={badgeClass(e.type)}>{labelOf(e.type)}</span>
@@ -117,7 +122,7 @@ export default function DashboardPage() {
                       </span>
                     </div>
                     <div className="mt-1 line-clamp-2 text-sm text-gray-700">{e.message}</div>
-                    <div className="mt-1 text-xs text-gray-400">ID: {e.id}</div>
+                    <div className="mt-1 text-xs text-gray-400">{e.displayName ? `${e.displayName} (${e.accountId ?? ''})` : `ID: ${e.id}`}</div>
                   </button>
                 </li>
               ))}
@@ -130,9 +135,21 @@ export default function DashboardPage() {
           <Modal onClose={() => setDetail(null)} title="エラー詳細">
             <div className="space-y-3">
               <div>
-                <div className="text-xs text-gray-400">対象ID</div>
-                <div className="text-sm">{detail.id}</div>
+                <div className="text-xs text-gray-400">アカウント</div>
+                <div className="text-sm">{detail.displayName ? `${detail.displayName} (${detail.accountId ?? ''})` : detail.accountId ?? detail.id}</div>
               </div>
+              {detail.scheduledAt && (
+                <div>
+                  <div className="text-xs text-gray-400">予約日時</div>
+                  <div className="text-sm">{new Date(detail.scheduledAt * 1000).toLocaleString('ja-JP')}</div>
+                </div>
+              )}
+              {detail.contentSummary && (
+                <div>
+                  <div className="text-xs text-gray-400">本文（要約）</div>
+                  <div className="text-sm break-words">{detail.contentSummary}</div>
+                </div>
+              )}
               <div>
                 <div className="text-xs text-gray-400">メッセージ</div>
                 <pre className="whitespace-pre-wrap break-all text-sm">{detail.message}</pre>
@@ -140,7 +157,7 @@ export default function DashboardPage() {
               <div className="pt-2">
                 <button
                   className="rounded-md border px-3 py-1.5 text-sm hover:bg-gray-50"
-                  onClick={() => navigator.clipboard.writeText(`[${detail.id}] ${detail.message}`)}
+                  onClick={() => navigator.clipboard.writeText(`${detail.displayName ? `${detail.displayName} (${detail.accountId ?? ''})` : detail.id} - ${detail.message}`)}
                 >
                   コピー
                 </button>
