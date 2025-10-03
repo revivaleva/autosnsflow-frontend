@@ -1,0 +1,81 @@
+### Deferred implementation: 二段階投稿削除 / 投稿削除
+
+- 状況: フロントエンド側での UI 表示は一時的に非表示にしました。バックエンドの安全な実装（並列実行対策、削除の整合性チェック、ログ保存と実行確認）が完了するまで、ユーザーに誤操作をさせないために削除系の操作は無効化します。
+
+- TODO:
+  - サーバ側で二段階投稿削除と投稿削除の処理を安全に実装する（threads 削除 API の呼び出し、結果集約、失敗時のリトライ／ロールバック設計）。
+  - 実装後、フロントの `ScheduledPostsTable` にある `showDeleteControls` フラグを削除して UI を有効化する。
+ - 実装時には `ExecutionLogs` への `putLog(..., status: 'error')` 保存ポリシーを守り、不要なデバッグログを残さないこと。
+
+- 追加: 投稿全削除（アカウント単位）設計
+  - キュー: 新規 DynamoDB テーブル `DeletionQueue` を作成する。スキーマ案:
+    - `id` (PK), `account_id`, `created_at`, `last_processed_at` (nullable), `processing` (bool), `retry_count` (int), `last_error` (string JSON)
+  - ログ: 定期実行中の削除エラーおよび完了ログは既存の `ExecutionLogs` テーブルへ保存する。その他のログは既存の仕様に従う。
+  - アカウントステータス: 既存の `threadsAccounts` / `user_settings` の命名規約に合わせる。利用予定のステータス値: `deleting`, `deletion_error`, `active`。
+  - 即時削除ボタン: アカウント編集モーダルに `投稿全削除` ボタンを追加。押下で二重確認ダイアログを表示した上で `POST /api/accounts/{accountId}/delete-all` を呼び出す。
+    - 即時削除の挙動: サーバはまず対象アカウントの投稿を取得して最大100件（残件が100件未満なら全件）を削除する。
+    - 即時削除で API エラー（権限不足等）が発生した場合は処理を停止し、エラーログを `ExecutionLogs` に保存、キューは作成しない（手動対応を期待）。
+    - 即時削除で100件削除しても残件がある場合は `DeletionQueue` レコードを作成し、アカウントステータスを `deleting` に変更する。
+  - 定期ワーカー: 毎時実行のバッチが `DeletionQueue` をスキャンし、各レコードについて `now - last_processed_at >= 24時間` の場合に次の100件（または残件）を削除する。
+    - 削除途中に API エラーや権限エラーが発生した場合は処理を中断し、エラーログを `ExecutionLogs` に保存する。致命的エラーの場合はキューを `deletion_error` 相当の状態にする（要フラグ設計）。
+    - 全件削除が完了した場合はキューを削除または完了フラグを立て、アカウントステータスを `active` に戻し、完了ログを `ExecutionLogs` に保存する。
+  - 自動投稿抑止: アカウントに `deleting` ステータスがついている間は自動投稿処理を行わない（既存の自動投稿判定ロジックでステータス判定を追加）。
+  - 同時実行対策: キュー処理時に `processing` フラグや条件付き更新（楽観ロック）を用いて同一アカウントの重複処理を防止する。
+  - 削除実装: 既存 `src/lib/threads-delete.ts` を使用し、連続削除前に最初にアクセストークンを取得して削除処理に渡す設計とする（削除処理側で毎回トークンを取得しない）。
+
+- 追記: 予約投稿一覧の「削除」「投稿削除」「選択削除」などの削除系 UI（ボタン／チェックボックス表示）が誤って消えてしまっているため、フロント側で UI を復元する作業が必要です。具体的には `src/app/scheduled-posts/ScheduledPostsTable.tsx` と対応 API の表示フラグを確認し、`showDeleteControls` の条件や権限チェックのロジックに誤りがないかを検証してください。
+
+- 追加ルール（削除ボタンの挙動）:
+  - 投稿済みの予約投稿（すでに Threads 等に投稿済みのもの）には、アクションとして **`投稿削除`** ボタンを表示すること。
+    - `投稿削除` ボタンは外部投稿 API を呼び出して実際に投稿を削除する処理を実行する（エラー時のログと再試行ポリシーを備えること）。
+    - 投稿済みのデータは**選択削除のチェックボックスを非表示**にして、選択削除の対象外とすること。
+  - 未投稿の予約投稿（まだ外部に投稿されていないもの）には、アクションとして **`削除`** ボタンを表示すること。
+    - `削除` ボタンは DB 上の対象レコードを物理削除（hard delete）する。この操作はトランザクションや整合性チェックを経て実行すること。
+  - UI 実装箇所: `src/app/scheduled-posts/ScheduledPostsTable.tsx`、`src/app/scheduled-posts/ScheduledPostsTable.tsx` 内で使用するユーティリティ、及び `/api/scheduled-posts` 系のエンドポイントを確認し、フロント/バック両側で仕様に合致することを保証する。
+
+
+- STATUS: 二段階投稿（double-stage posting）が現在期待通りに動作していません。
+  - 影響範囲: 定期実行ジョブの二段階投稿フローおよび即時二段階投稿ボタンからの実行。
+  - TODO: 詳細な原因調査と修正を行う。調査項目の例:
+    - 定期処理（Lambda）内の `runSecondStageForAccount` / `runAutoPostForAccount` ロジックで候補を正しく取得しているか（GSI/PK フェールバック含む）。
+    - `postToThreads` の呼び出しが正しいトークン（oauth/accessToken）を使用しているか、及び `reply_to_id` や `publish` フローでエラーが発生していないか。
+  - 追記（定期実行トークン更新ルール）:
+    - 定期実行ジョブ（Lambda / ワーカー）が実行時に**トークンの更新処理**を正しく行い、最新のアクセストークンを使用できることを保証する。
+    - 定期実行のトークン更新ポリシー:
+      - ジョブ開始時に保存済みの `refreshToken` を用いてアクセストークンを取得し、取得に成功した場合はそのアクセストークンを**即時の実行コンテキスト**に注入して外部 API 呼び出しに使用すること。
+      - アクセストークン取得に失敗した場合は、対象アカウントの処理をスキップし、`ExecutionLogs` に `status: 'error'` と詳細（非表示にすべき PII はマスク）を残すこと。
+      - 定期実行が複数インスタンスで同時に走る可能性があるため、トークン更新の副作用（例: DB 上のトークン更新）を起こす場合は**条件付き更新**またはロックを用いること。
+      - トークンを永続化する必要がある場合は、更新後のトークン（新しい `accessToken` / `expiresAt` 等）を保存する設計にし、保存時に PII を安全に取り扱うこと。
+    - テスト/運用:
+      - 定期実行ジョブの単体テストで、`refreshToken` を用いたアクセストークン取得成功・失敗ケースをカバーすること。
+      - 運用時には CloudWatch / ExecutionLogs にトークン交換の成功/失敗を適切にログ出力し、失敗時はリトライ方針を明確にすること（例: 最大3回、指数バックオフ）。
+      - 既知の再現ケース（例: 既にアクセストークンが期限切れ、リフレッシュ失敗、無効化）をルールに明記しておくこと。
+    - UI からの即時実行フロー（`/api/scheduled-posts/second-stage`）が成功レスポンスを受け取り、`doublePostStatus`/`secondStagePostId` を反映しているか。
+  - 期限: 優先度高。まずはログの粒度を上げて再現ケースを収集し、修正 PR を作成する。
+
+### Dashboard: ExecutionLogs をダッシュボードに表示
+
+- 状況: ダッシュボードの「最近のエラー」領域に `ExecutionLogs` テーブルのログが表示されておらず、ユーザーからの問い合わせが発生しています。付与された CSV サンプルには多数の `error` / `info` ログが含まれており、現状 UI 側で参照できていません。
+
+- 実装目的: ログイン中のアカウントに紐づく `ExecutionLogs` の直近7日分をダッシュボードに表示することで、投稿・返信・アカウントに関するエラーの原因特定を迅速化し、運用負荷を低減します。
+
+- 実装内容:
+  - Backend: `src/pages/api/dashboard-stats.ts` を拡張し、環境変数 `TBL_EXECUTION_LOGS`（未設定時は `ExecutionLogs`）を参照して DynamoDB をクエリする。クエリは `PK = USER#<sub>` かつ `begins_with(SK, "LOG#")` で絞り、取得したログのうち直近7日分を既存の `recentErrors` にマージする。読み取り失敗時はダッシュボード全体を致命化させず、サーバ側でエラーログを出力する。
+  - Frontend: `src/app/dashboard/page.tsx`（および必要に応じて新規 `ErrorLogsPanel`）で `recentErrors` にマージされた ExecutionLogs を表示する。`detail` フィールドが JSON の場合は安全にパースして要約を表示し、長いメッセージは切り詰める。PII（アクセストークン等）は表示しない／マスクする。
+  - セキュリティ・運用: ユーザーは自分のアカウントに紐づくログのみ閲覧可能とする。CloudWatch や DynamoDB のクエリコストに注意し、必要なら error のみ初期表示にするなど段階的ロールアウトを行う。
+  - テスト: ExecutionLogs をモックした API 単体テストと、ログインした実ユーザーでダッシュボードにログが表示される E2E テストを追加する。
+
+Note: このファイルはプロジェクトルールにより Git 管理対象外にしています（.gitignore に .cursor/ を追加済）。
+
+ - 追記: WSL 環境で作業する際の Git 操作について
+   - 本プロジェクトでは開発マシンが Windows と WSL を併用しているため、ワークツリーへ直接アクセスできない状況が発生することがあります。Windows 側のシェルから WSL のファイルを操作する場合は UNC パスを利用し、Git コマンドは必ずリポジトリのパスを明示して実行してください。
+   - 例: `git -C "\\\\wsl.localhost\\Ubuntu\\home\\revival\\projects\\AutoSNSFlow\\frontend" <command>` の形式で実行すること。
+   - ステップ実行: 1コマンドずつ実行し、複数コマンドのワンライナー（`&&` 等）を避けること。長い出力はログファイルへ保存して要約を確認すること。
+   - 推奨手順（ファイルをステージして commit → staging へ push）:
+     1. `git -C "\\\\wsl.localhost\\Ubuntu\\home\\revival\\projects\\AutoSNSFlow\\frontend" add <files...>`
+     2. `git -C "\\\\wsl.localhost\\Ubuntu\\home\\revival\\projects\\AutoSNSFlow\\frontend" commit -m "<msg>"`
+     3. `git -C "\\\\wsl.localhost\\Ubuntu\\home\\revival\\projects\\AutoSNSFlow\\frontend" checkout staging`（なければ `checkout -b staging`）
+     4. `git -C "\\\\wsl.localhost\\Ubuntu\\home\\revival\\projects\\AutoSNSFlow\\frontend" merge --no-edit main`
+     5. `git -C "\\\\wsl.localhost\\Ubuntu\\home\\revival\\projects\\AutoSNSFlow\\frontend" push origin staging`
+   - 注意: ファイル名が長すぎると Windows 側で indexing/staging に失敗する場合があるため、その場合は WSL の bash で直接コマンドを実行するか、該当ファイルを除外して作業してください。
+
