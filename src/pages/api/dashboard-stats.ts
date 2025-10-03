@@ -155,21 +155,30 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     });
 
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> c8eed86... dev: show displayName/account and post summary in dashboard errors (dev/dashboard-executionlogs)
     // クイックマップ: recentErrors に displayName を差し込むためアカウント情報を参照
     const accountIdToDisplay: Record<string,string> = {};
     accounts.forEach(a => {
       const sk = a.SK?.S || '';
+<<<<<<< HEAD
       const accountIdVal = a.accountId?.S || '';
       const usernameVal = a.username?.S || '';
       const display = a.displayName?.S || accountIdVal || sk.replace(/^ACCOUNT#/, '');
       if (sk) accountIdToDisplay[sk] = display;
       if (accountIdVal) accountIdToDisplay[accountIdVal] = display;
       if (usernameVal) accountIdToDisplay[usernameVal] = display;
+=======
+      const accountId = sk.replace(/^ACCOUNT#/, '');
+      accountIdToDisplay[sk] = a.displayName?.S || a.accountId?.S || accountId;
+>>>>>>> c8eed86... dev: show displayName/account and post summary in dashboard errors (dev/dashboard-executionlogs)
     });
     // posts の内容（scheduledAt, content）を id -> info map に保存
     const postIdToInfo: Record<string, { scheduledAt?: number; content?: string; accountSk?: string } > = {};
     posts.forEach(p => {
       const id = p.scheduledPostId?.S || p.SK?.S || '';
+<<<<<<< HEAD
       const acctSk = p.accountId?.S || (p.accountId?.S ? p.accountId.S : undefined) || '';
       postIdToInfo[id] = { scheduledAt: toNum(p.scheduledAt) || undefined, content: p.content?.S?.slice(0, 400) || undefined, accountSk: acctSk || undefined };
       // Key by both raw id and without prefix
@@ -189,6 +198,30 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           const rawType = (l.type?.S || 'system') as string;
           const mappedType: 'post' | 'reply' | 'account' = rawType.includes('post') ? 'post' : rawType.includes('reply') ? 'reply' : 'account';
 =======
+=======
+      postIdToInfo[id] = { scheduledAt: toNum(p.scheduledAt) || undefined, content: p.content?.S?.slice(0, 400) || undefined, accountSk: p.accountId?.S || undefined };
+    });
+
+    // Map recentErrors entries to include displayName / scheduledAt / contentSummary when possible
+    const enriched = recentErrors.map(re => {
+      // try to find matching account displayName
+      let displayName = '';
+      let accountId = '';
+      // If the id looks like an account SK, use that
+      if (re.type === 'account') {
+        accountId = (re.id || '').replace(/^ACCOUNT#/, '');
+        displayName = accountIdToDisplay[`ACCOUNT#${accountId}`] || '';
+      }
+      // If the id matches a post, attach post info
+      const postInfo = postIdToInfo[re.id] || postIdToInfo[re.id?.replace(/^SCHEDULEDPOST#/, '') || ''];
+      if (postInfo) {
+        if (!accountId && postInfo.accountSk) accountId = postInfo.accountSk.replace(/^ACCOUNT#/, '');
+        if (!displayName && postInfo.accountSk) displayName = accountIdToDisplay[postInfo.accountSk] || '';
+      }
+      return Object.assign({}, re, { displayName: displayName || undefined, accountId: accountId || undefined, scheduledAt: postInfo?.scheduledAt, contentSummary: postInfo?.content ? (postInfo.content.length > 200 ? postInfo.content.slice(0,200) + '…' : postInfo.content) : undefined });
+    });
+
+>>>>>>> c8eed86... dev: show displayName/account and post summary in dashboard errors (dev/dashboard-executionlogs)
     // ▼ ExecutionLogs (オプション) - 直近7日分を取得し recentErrors にマージする
     try {
       const qResp = await queryByPrefix(TBL_EXECUTION_LOGS, userId, 'LOG#', { ScanIndexForward: false, Limit: 50 } as any);
@@ -253,8 +286,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       try { console.log('[debug] exec logs fetch failed', String((e as Error)?.message || e)); } catch (_) {}
     }
 
+<<<<<<< HEAD
     recentErrors.sort((a, b) => b.at - a.at);
 >>>>>>> c9df36e... dev: merge ExecutionLogs into dashboard-stats recentErrors (dev/dashboard-executionlogs)
+=======
+    // ソートとレスポンス整形
+    enriched.sort((a, b) => b.at - a.at);
+>>>>>>> c8eed86... dev: show displayName/account and post summary in dashboard errors (dev/dashboard-executionlogs)
 
     return res.status(200).json({
       accountCount,
