@@ -18,7 +18,12 @@ type DashboardStats = {
   failedPostCount: number;
   todaysRemainingScheduled: number;
   monthSuccessRate: number;
-  recentErrors: { type: 'post' | 'reply' | 'account'; id: string; at: number; message: string }[];
+  recentErrors: ({ type: 'post' | 'reply' | 'account'; id: string; at: number; message: string } & {
+    displayName?: string;
+    accountId?: string;
+    scheduledAt?: number;
+    contentSummary?: string;
+  })[];
 };
 
 const numberFmt = (n: number | undefined) => (typeof n === 'number' ? n.toLocaleString() : '-');
@@ -108,7 +113,7 @@ export default function DashboardPage() {
                 <li key={`${e.type}-${e.id}-${e.at}`} className="px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-800">
                   <button
                     className="w-full text-left"
-                    onClick={() => setDetail({ id: e.id, message: e.message })}
+                  onClick={() => setDetail({ id: e.id, message: e.message, accountId: (e as any).accountId, displayName: (e as any).displayName, scheduledAt: (e as any).scheduledAt, contentSummary: (e as any).contentSummary })}
                   >
                     <div className="flex items-center gap-2">
                       <span className={badgeClass(e.type)}>{labelOf(e.type)}</span>

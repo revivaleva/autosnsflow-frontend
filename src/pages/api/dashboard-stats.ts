@@ -197,7 +197,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
     } catch (e) {
       // ExecutionLogs が存在しない or 権限エラーなどの場合は無視して続行
-      try { console.log('[debug] exec logs fetch failed', String((e as Error)?.message || e)); } catch (_) {}
+      // 意図的にデバッグログの標準出力は残さない
     }
 
     // accountId-based Scan fallback removed per request (was causing reserved keyword projection issues)
