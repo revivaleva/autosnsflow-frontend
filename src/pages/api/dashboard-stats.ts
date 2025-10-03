@@ -309,9 +309,46 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
 <<<<<<< HEAD
+<<<<<<< HEAD
     recentErrors.sort((a, b) => b.at - a.at);
 >>>>>>> c9df36e... dev: merge ExecutionLogs into dashboard-stats recentErrors (dev/dashboard-executionlogs)
 =======
+=======
+    // ユーザー紐づきで PK=USER#... にないログがある可能性があるため、アカウントIDでScanして補完する
+    try {
+      const accountIds = accounts.map(a => (a.accountId?.S || a.username?.S || a.SK?.S || '').replace(/^ACCOUNT#/, '')).filter(Boolean);
+      if (accountIds.length > 0) {
+        const exprParts: string[] = [];
+        const exprVals: any = { ":min": { N: String(last7Start) } };
+        accountIds.forEach((aid, idx) => {
+          const ph = `:aid${idx}`;
+          exprParts.push(`accountId = ${ph}`);
+          exprVals[ph] = { S: aid };
+        });
+        const filter = `createdAt >= :min AND (${exprParts.join(' OR ')})`;
+        const scanResp = await ddb.send(new ScanCommand({ TableName: TBL_EXECUTION_LOGS, FilterExpression: filter, ExpressionAttributeValues: exprVals, ProjectionExpression: 'PK,SK,accountId,createdAt,detail,message,status,targetId,type', Limit: 200 }));
+        const scanned = (scanResp as any).Items || [];
+        scanned.forEach(l => {
+          try {
+            const createdAt = toNum(l.createdAt);
+            if (createdAt < last7Start) return;
+            const rawType = l.type?.S || l.type || 'system';
+            const mappedType: 'post' | 'reply' | 'account' = String(rawType).includes('post') ? 'post' : String(rawType).includes('reply') ? 'reply' : 'account';
+            let message = l.message?.S || '';
+            try { const d = JSON.parse(l.detail?.S || '{}'); if (typeof d === 'object' && d !== null && !message && d.message) message = String(d.message).slice(0,200); } catch(_e){}
+            message = message.replace(/accessToken\s*[:=]\s*\S+/ig, '[REDACTED]');
+            const targetId = l.targetId?.S || '';
+            const acctIdField = l.accountId?.S || '';
+            const idForEntry = targetId || (l.SK?.S || '');
+            recentErrors.push({ type: mappedType, id: idForEntry, at: createdAt, message: message || '(ログ)', accountId: acctIdField || undefined });
+          } catch (_e) {}
+        });
+      }
+    } catch (e) {
+      try { console.log('[debug] exec logs scan failed', String((e as Error)?.message || e)); } catch (_) {}
+    }
+
+>>>>>>> 24987c6... dev: scan ExecutionLogs by accountId fallback if PK=USER#... entries missing
     // ソートとレスポンス整形
     enriched.sort((a, b) => b.at - a.at);
 >>>>>>> c8eed86... dev: show displayName/account and post summary in dashboard errors (dev/dashboard-executionlogs)
