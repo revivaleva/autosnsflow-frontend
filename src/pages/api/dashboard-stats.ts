@@ -145,6 +145,39 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     });
 
+    // クイックマップ: recentErrors に displayName を差し込むためアカウント情報を参照
+    const accountIdToDisplay: Record<string,string> = {};
+    accounts.forEach(a => {
+      const sk = a.SK?.S || '';
+      const accountId = sk.replace(/^ACCOUNT#/, '');
+      accountIdToDisplay[sk] = a.displayName?.S || a.accountId?.S || accountId;
+    });
+    // posts の内容（scheduledAt, content）を id -> info map に保存
+    const postIdToInfo: Record<string, { scheduledAt?: number; content?: string; accountSk?: string } > = {};
+    posts.forEach(p => {
+      const id = p.scheduledPostId?.S || p.SK?.S || '';
+      postIdToInfo[id] = { scheduledAt: toNum(p.scheduledAt) || undefined, content: p.content?.S?.slice(0, 400) || undefined, accountSk: p.accountId?.S || undefined };
+    });
+
+    // Map recentErrors entries to include displayName / scheduledAt / contentSummary when possible
+    const enriched = recentErrors.map(re => {
+      // try to find matching account displayName
+      let displayName = '';
+      let accountId = '';
+      // If the id looks like an account SK, use that
+      if (re.type === 'account') {
+        accountId = (re.id || '').replace(/^ACCOUNT#/, '');
+        displayName = accountIdToDisplay[`ACCOUNT#${accountId}`] || '';
+      }
+      // If the id matches a post, attach post info
+      const postInfo = postIdToInfo[re.id] || postIdToInfo[re.id?.replace(/^SCHEDULEDPOST#/, '') || ''];
+      if (postInfo) {
+        if (!accountId && postInfo.accountSk) accountId = postInfo.accountSk.replace(/^ACCOUNT#/, '');
+        if (!displayName && postInfo.accountSk) displayName = accountIdToDisplay[postInfo.accountSk] || '';
+      }
+      return Object.assign({}, re, { displayName: displayName || undefined, accountId: accountId || undefined, scheduledAt: postInfo?.scheduledAt, contentSummary: postInfo?.content ? (postInfo.content.length > 200 ? postInfo.content.slice(0,200) + '…' : postInfo.content) : undefined });
+    });
+
     // ▼ ExecutionLogs (オプション) - 直近7日分を取得し recentErrors にマージする
     try {
       const qResp = await queryByPrefix(TBL_EXECUTION_LOGS, userId, 'LOG#', { ScanIndexForward: false, Limit: 50 } as any);
@@ -175,7 +208,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       try { console.log('[debug] exec logs fetch failed', String((e as Error)?.message || e)); } catch (_) {}
     }
 
-    recentErrors.sort((a, b) => b.at - a.at);
+    // ソートとレスポンス整形
+    enriched.sort((a, b) => b.at - a.at);
 
     return res.status(200).json({
       accountCount,
@@ -187,7 +221,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       failedPostCount,
       todaysRemainingScheduled,
       monthSuccessRate,
-      recentErrors: recentErrors.slice(0, 20),
+      recentErrors: enriched.slice(0, 20),
     });
   } catch (e: any) {
     const code = e?.statusCode || (e?.message === "Unauthorized" ? 401 : 500);
