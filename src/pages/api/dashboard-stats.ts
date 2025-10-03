@@ -166,24 +166,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (id.startsWith('SCHEDULEDPOST#')) postIdToInfo[id.replace(/^SCHEDULEDPOST#/, '')] = postIdToInfo[id];
     });
 
-    // Map recentErrors entries to include displayName / scheduledAt / contentSummary when possible
-    const enriched = recentErrors.map(re => {
-      // try to find matching account displayName
-      let displayName = '';
-      let accountId = '';
-      // If the id looks like an account SK, use that
-      if (re.type === 'account') {
-        accountId = (re.id || '').replace(/^ACCOUNT#/, '');
-        displayName = accountIdToDisplay[`ACCOUNT#${accountId}`] || '';
-      }
-      // If the id matches a post, attach post info
-      const postInfo = postIdToInfo[re.id] || postIdToInfo[re.id?.replace(/^SCHEDULEDPOST#/, '') || ''];
-      if (postInfo) {
-        if (!accountId && postInfo.accountSk) accountId = postInfo.accountSk.replace(/^ACCOUNT#/, '');
-        if (!displayName && postInfo.accountSk) displayName = accountIdToDisplay[postInfo.accountSk] || '';
-      }
-      return Object.assign({}, re, { displayName: displayName || undefined, accountId: accountId || undefined, scheduledAt: postInfo?.scheduledAt, contentSummary: postInfo?.content ? (postInfo.content.length > 200 ? postInfo.content.slice(0,200) + '…' : postInfo.content) : undefined });
-    });
+    // recentErrors will be enriched after we also merge ExecutionLogs below
 
     // ▼ ExecutionLogs (オプション) - 直近7日分を取得し recentErrors にマージする
     try {
@@ -217,39 +200,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       try { console.log('[debug] exec logs fetch failed', String((e as Error)?.message || e)); } catch (_) {}
     }
 
-    // ユーザー紐づきで PK=USER#... にないログがある可能性があるため、アカウントIDでScanして補完する
-    try {
-      const accountIds = accounts.map(a => (a.accountId?.S || a.username?.S || a.SK?.S || '').replace(/^ACCOUNT#/, '')).filter(Boolean);
-      if (accountIds.length > 0) {
-        const exprParts: string[] = [];
-        const exprVals: any = { ":min": { N: String(last7Start) } };
-        accountIds.forEach((aid, idx) => {
-          const ph = `:aid${idx}`;
-          exprParts.push(`accountId = ${ph}`);
-          exprVals[ph] = { S: aid };
-        });
-        const filter = `createdAt >= :min AND (${exprParts.join(' OR ')})`;
-        const scanResp = await ddb.send(new ScanCommand({ TableName: TBL_EXECUTION_LOGS, FilterExpression: filter, ExpressionAttributeValues: exprVals, ProjectionExpression: 'PK,SK,accountId,createdAt,detail,message,status,targetId,type', Limit: 200 }));
-        const scanned = (scanResp as any).Items || [];
-        scanned.forEach(l => {
-          try {
-            const createdAt = toNum(l.createdAt);
-            if (createdAt < last7Start) return;
-            const rawType = l.type?.S || l.type || 'system';
-            const mappedType: 'post' | 'reply' | 'account' = String(rawType).includes('post') ? 'post' : String(rawType).includes('reply') ? 'reply' : 'account';
-            let message = l.message?.S || '';
-            try { const d = JSON.parse(l.detail?.S || '{}'); if (typeof d === 'object' && d !== null && !message && d.message) message = String(d.message).slice(0,200); } catch(_e){}
-            message = message.replace(/accessToken\s*[:=]\s*\S+/ig, '[REDACTED]');
-            const targetId = l.targetId?.S || '';
-            const acctIdField = l.accountId?.S || '';
-            const idForEntry = targetId || (l.SK?.S || '');
-            recentErrors.push({ type: mappedType, id: idForEntry, at: createdAt, message: message || '(ログ)', accountId: acctIdField || undefined });
-          } catch (_e) {}
-        });
+    // accountId-based Scan fallback removed per request (was causing reserved keyword projection issues)
+
+    // Enrich recentErrors now that ExecutionLogs have been merged above
+    const enriched = recentErrors.map(re => {
+      let displayName = '';
+      let accountId = '';
+      if (re.type === 'account') {
+        accountId = (re.id || '').replace(/^ACCOUNT#/, '');
+        displayName = accountIdToDisplay[`ACCOUNT#${accountId}`] || accountIdToDisplay[accountId] || '';
       }
-    } catch (e) {
-      try { console.log('[debug] exec logs scan failed', String((e as Error)?.message || e)); } catch (_) {}
-    }
+      const postInfo = postIdToInfo[re.id] || postIdToInfo[re.id?.replace(/^SCHEDULEDPOST#/, '') || ''];
+      if (postInfo) {
+        if (!accountId && postInfo.accountSk) accountId = postInfo.accountSk.replace(/^ACCOUNT#/, '');
+        if (!displayName && postInfo.accountSk) displayName = accountIdToDisplay[postInfo.accountSk] || accountIdToDisplay[accountId] || '';
+      }
+      return Object.assign({}, re, { displayName: displayName || undefined, accountId: accountId || undefined, scheduledAt: postInfo?.scheduledAt, contentSummary: postInfo?.content ? (postInfo.content.length > 200 ? postInfo.content.slice(0,200) + '…' : postInfo.content) : undefined });
+    });
 
     // ソートとレスポンス整形
     enriched.sort((a, b) => b.at - a.at);
