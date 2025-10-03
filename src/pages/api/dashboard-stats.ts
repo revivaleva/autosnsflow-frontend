@@ -154,6 +154,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     });
 
+<<<<<<< HEAD
     // クイックマップ: recentErrors に displayName を差し込むためアカウント情報を参照
     const accountIdToDisplay: Record<string,string> = {};
     accounts.forEach(a => {
@@ -187,6 +188,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           if (createdAt < last7Start) return; // 7日より前は無視
           const rawType = (l.type?.S || 'system') as string;
           const mappedType: 'post' | 'reply' | 'account' = rawType.includes('post') ? 'post' : rawType.includes('reply') ? 'reply' : 'account';
+=======
+    // ▼ ExecutionLogs (オプション) - 直近7日分を取得し recentErrors にマージする
+    try {
+      const qResp = await queryByPrefix(TBL_EXECUTION_LOGS, userId, 'LOG#', { ScanIndexForward: false, Limit: 50 } as any);
+      const logs = qResp.Items ?? [];
+      logs.forEach(l => {
+        try {
+          const status = l.status?.S || '';
+          const createdAt = toNum(l.createdAt) || Math.floor(Date.now() / 1000);
+          if (createdAt < last7Start) return; // 7日より前は無視
+          const type = (l.type?.S || 'system') as string;
+          // mapログ種別を post/reply/account へ粗くマップする
+          const mappedType: 'post' | 'reply' | 'account' = type.includes('post') ? 'post' : type.includes('reply') ? 'reply' : 'account';
+>>>>>>> c9df36e... dev: merge ExecutionLogs into dashboard-stats recentErrors (dev/dashboard-executionlogs)
           // detail は JSON 文字列の可能性があるためパースして message を作る
           let message = l.message?.S || '';
           try {
@@ -197,15 +212,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           } catch (_e) {}
           // マスク: アクセストークン等を含む可能性があるので一定のキーは除去
           message = message.replace(/accessToken\s*[:=]\s*\S+/ig, '[REDACTED]');
+<<<<<<< HEAD
           // id は優先的に targetId (例: SCHEDULEDPOST#...) を使う
           const targetId = l.targetId?.S || '';
           const acctIdField = l.accountId?.S || l.accountId || '';
           const idForEntry = targetId || (l.SK?.S || '');
           recentErrors.push({ type: mappedType, id: idForEntry, at: createdAt, message: message || '(ログ)', accountId: acctIdField || undefined });
+=======
+          recentErrors.push({ type: mappedType, id: l.SK?.S || (l.targetId?.S || '') , at: createdAt, message: message || '(ログ)' });
+>>>>>>> c9df36e... dev: merge ExecutionLogs into dashboard-stats recentErrors (dev/dashboard-executionlogs)
         } catch (_e) {}
       });
     } catch (e) {
       // ExecutionLogs が存在しない or 権限エラーなどの場合は無視して続行
+<<<<<<< HEAD
       // 意図的にデバッグログの標準出力は残さない
     }
 
@@ -229,6 +249,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // ソートとレスポンス整形
     enriched.sort((a, b) => b.at - a.at);
+=======
+      try { console.log('[debug] exec logs fetch failed', String((e as Error)?.message || e)); } catch (_) {}
+    }
+
+    recentErrors.sort((a, b) => b.at - a.at);
+>>>>>>> c9df36e... dev: merge ExecutionLogs into dashboard-stats recentErrors (dev/dashboard-executionlogs)
 
     return res.status(200).json({
       accountCount,
