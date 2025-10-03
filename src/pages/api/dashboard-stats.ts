@@ -108,7 +108,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const failedReplyCount = replies.filter(r => r.status?.S === "failed").length;
 
     // ▼ 最近のエラー（直近7日 / 最大20件）
-    const recentErrors: Array<{ type: "post" | "reply" | "account"; id: string; at: number; message: string }> = [];
+    const recentErrors: Array<{
+      type: "post" | "reply" | "account";
+      id: string;
+      at: number;
+      message: string;
+      accountId?: string;
+      displayName?: string;
+      scheduledAt?: number;
+      contentSummary?: string;
+    }> = [];
 
     posts.forEach(p => {
       const createdAt = toNum(p.createdAt);
