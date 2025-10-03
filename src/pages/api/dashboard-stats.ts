@@ -149,14 +149,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const accountIdToDisplay: Record<string,string> = {};
     accounts.forEach(a => {
       const sk = a.SK?.S || '';
-      const accountId = sk.replace(/^ACCOUNT#/, '');
-      accountIdToDisplay[sk] = a.displayName?.S || a.accountId?.S || accountId;
+      const accountIdVal = a.accountId?.S || '';
+      const usernameVal = a.username?.S || '';
+      const display = a.displayName?.S || accountIdVal || sk.replace(/^ACCOUNT#/, '');
+      if (sk) accountIdToDisplay[sk] = display;
+      if (accountIdVal) accountIdToDisplay[accountIdVal] = display;
+      if (usernameVal) accountIdToDisplay[usernameVal] = display;
     });
     // posts の内容（scheduledAt, content）を id -> info map に保存
     const postIdToInfo: Record<string, { scheduledAt?: number; content?: string; accountSk?: string } > = {};
     posts.forEach(p => {
       const id = p.scheduledPostId?.S || p.SK?.S || '';
-      postIdToInfo[id] = { scheduledAt: toNum(p.scheduledAt) || undefined, content: p.content?.S?.slice(0, 400) || undefined, accountSk: p.accountId?.S || undefined };
+      const acctSk = p.accountId?.S || (p.accountId?.S ? p.accountId.S : undefined) || '';
+      postIdToInfo[id] = { scheduledAt: toNum(p.scheduledAt) || undefined, content: p.content?.S?.slice(0, 400) || undefined, accountSk: acctSk || undefined };
+      // Key by both raw id and without prefix
+      if (id.startsWith('SCHEDULEDPOST#')) postIdToInfo[id.replace(/^SCHEDULEDPOST#/, '')] = postIdToInfo[id];
     });
 
     // Map recentErrors entries to include displayName / scheduledAt / contentSummary when possible
@@ -180,16 +187,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // ▼ ExecutionLogs (オプション) - 直近7日分を取得し recentErrors にマージする
     try {
-      const qResp = await queryByPrefix(TBL_EXECUTION_LOGS, userId, 'LOG#', { ScanIndexForward: false, Limit: 50 } as any);
+      const qResp = await queryByPrefix(TBL_EXECUTION_LOGS, userId, 'LOG#', { ScanIndexForward: false, Limit: 100 } as any);
       const logs = qResp.Items ?? [];
       logs.forEach(l => {
         try {
-          const status = l.status?.S || '';
           const createdAt = toNum(l.createdAt) || Math.floor(Date.now() / 1000);
           if (createdAt < last7Start) return; // 7日より前は無視
-          const type = (l.type?.S || 'system') as string;
-          // mapログ種別を post/reply/account へ粗くマップする
-          const mappedType: 'post' | 'reply' | 'account' = type.includes('post') ? 'post' : type.includes('reply') ? 'reply' : 'account';
+          const rawType = (l.type?.S || 'system') as string;
+          const mappedType: 'post' | 'reply' | 'account' = rawType.includes('post') ? 'post' : rawType.includes('reply') ? 'reply' : 'account';
           // detail は JSON 文字列の可能性があるためパースして message を作る
           let message = l.message?.S || '';
           try {
@@ -200,7 +205,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           } catch (_e) {}
           // マスク: アクセストークン等を含む可能性があるので一定のキーは除去
           message = message.replace(/accessToken\s*[:=]\s*\S+/ig, '[REDACTED]');
-          recentErrors.push({ type: mappedType, id: l.SK?.S || (l.targetId?.S || '') , at: createdAt, message: message || '(ログ)' });
+          // id は優先的に targetId (例: SCHEDULEDPOST#...) を使う
+          const targetId = l.targetId?.S || '';
+          const acctIdField = l.accountId?.S || l.accountId || '';
+          const idForEntry = targetId || (l.SK?.S || '');
+          recentErrors.push({ type: mappedType, id: idForEntry, at: createdAt, message: message || '(ログ)', accountId: acctIdField || undefined });
         } catch (_e) {}
       });
     } catch (e) {
