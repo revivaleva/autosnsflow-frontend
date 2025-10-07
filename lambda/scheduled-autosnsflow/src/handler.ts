@@ -3012,6 +3012,8 @@ async function deleteUpTo100PostsForAccount(userId: any, accountId: any, limit =
     }));
 
     const items = (q as any).Items || [];
+    try { console.info('[info] deleteUpTo100PostsForAccount fetched items', { userId, accountId, count: (items || []).length }); } catch(_) {}
+    try { if ((items || []).length > 0) console.info('[info] deleteUpTo100PostsForAccount sample item', { sample: (items || []).slice(0,3).map(i => ({ SK: getS(i.SK), postId: getS(i.postId) || getS(i.numericPostId) })) }); } catch(_) {}
     let deletedCount = 0;
 
     // obtain token for account from accounts table (try to read account item)
@@ -3058,26 +3060,34 @@ async function deleteUpTo100PostsForAccount(userId: any, accountId: any, limit =
 
     for (const it of items) {
       const postId = getS(it.postId) || getS(it.numericPostId) || '';
-      if (!postId) continue;
+      const skVal = getS(it.SK) || '';
+      if (!postId) {
+        try { console.info('[info] skipping item without postId', { userId, accountId, sk: skVal }); } catch(_) {}
+        continue;
+      }
       try {
+        try { console.info('[info] deleting external post', { userId, accountId, postId, sk: skVal }); } catch(_) {}
         const base = process.env.THREADS_GRAPH_BASE || 'https://graph.threads.net/v1.0';
         const url = `${base}/${encodeURIComponent(postId)}?access_token=${encodeURIComponent(token)}`;
         const resp = await fetch(url, { method: 'DELETE' } as any);
         const text = await resp.text().catch(() => '');
+        try { console.info('[info] threads delete response', { userId, accountId, postId, ok: resp.ok, status: resp.status, text: String(text).slice(0, 200) }); } catch(_) {}
         if (!resp.ok) throw new Error(`threads_delete_failed: ${resp.status} ${text}`);
 
         // perform physical delete via shared utility; fallback to logical update on failure
-        const skVal = getS(it.SK) || '';
         if (skVal) {
           try {
             const mod = await import('@/lib/scheduled-posts-delete');
             if (typeof mod.deleteScheduledRecord === 'function') {
-              await mod.deleteScheduledRecord({ userId, sk: skVal, physical: true });
+              try { console.info('[info] calling deleteScheduledRecord', { userId, sk: skVal, physical: true }); } catch(_) {}
+              const delRes = await mod.deleteScheduledRecord({ userId, sk: skVal, physical: true });
+              try { console.info('[info] deleteScheduledRecord result', { userId, sk: skVal, res: delRes }); } catch(_) {}
             } else {
               // fallback: logical delete
               const key = { PK: { S: `USER#${userId}` }, SK: { S: skVal } };
               const now = Math.floor(Date.now() / 1000);
               await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: key, UpdateExpression: 'SET isDeleted = :t, deletedAt = :ts', ExpressionAttributeValues: { ':t': { BOOL: true }, ':ts': { N: String(now) } } }));
+              try { console.info('[info] fallback logical delete applied', { userId, sk: skVal }); } catch(_) {}
             }
           } catch (e) {
             // on any failure, fallback to logical delete to avoid leaving phantom external-only deletes
@@ -3085,12 +3095,14 @@ async function deleteUpTo100PostsForAccount(userId: any, accountId: any, limit =
               const key = { PK: { S: `USER#${userId}` }, SK: { S: skVal } };
               const now = Math.floor(Date.now() / 1000);
               await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: key, UpdateExpression: 'SET isDeleted = :t, deletedAt = :ts', ExpressionAttributeValues: { ':t': { BOOL: true }, ':ts': { N: String(now) } } }));
+              try { console.warn('[warn] deleteScheduledRecord failed, applied logical delete', { userId, sk: skVal, error: String(e) }); } catch(_) {}
             } catch (_) {}
           }
         }
         deletedCount++;
       } catch (e) {
         await putLog({ userId, type: 'deletion', accountId, status: 'error', message: 'delete_failed', detail: { error: String(e), item: it } });
+        try { console.warn('[warn] deletion item failed', { userId, accountId, postId, sk: skVal, error: String(e) }); } catch(_) {}
         throw e;
       }
     }

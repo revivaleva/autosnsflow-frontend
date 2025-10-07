@@ -154,7 +154,7 @@ export async function deleteUserPosts({ userId, accountId, limit, dryRun }: { us
         break; // success
       } catch (err: unknown) {
         console.warn('[delete-user-posts] threads delete failed', { userId, accountId: acct, postId: p.postId, error: stringifyError(err) });
-          const msg = stringifyError(err);
+        const msg = stringifyError(err);
           const fatal = isFatalThreadsError(msg);
           // Log attempt result
           await putLog({ userId, accountId: acct, action: 'deletion_attempt', status: fatal ? 'error' : 'warn', message: fatal ? 'deletion_fatal_error' : 'deletion_transient_error', detail: { postId: p.postId, sk: p.sk, attempt, error: msg } });
