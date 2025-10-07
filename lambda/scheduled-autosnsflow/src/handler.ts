@@ -3001,12 +3001,16 @@ async function deletePostedForUser(userId: any) {
 async function deleteUpTo100PostsForAccount(userId: any, accountId: any, limit = 100) {
   try {
     // Fetch up to `limit` posted scheduled posts for the user/account ordered by createdAt (oldest first)
+    // Query scheduled posts for this user/account. Previously we required status='posted',
+    // but some stored records may have postId/numericPostId without status set. For queue
+    // deletion we want to delete any scheduled record that has a postId (physical post)
+    // and is not already marked deleted.
     const q = await ddb.send(new QueryCommand({
       TableName: TBL_SCHEDULED,
       KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
-      ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'SCHEDULEDPOST#' }, ':acc': { S: accountId }, ':posted': { S: 'posted' }, ':f': { BOOL: false } },
-      FilterExpression: 'accountId = :acc AND #st = :posted AND (attribute_not_exists(isDeleted) OR isDeleted = :f)',
-      ExpressionAttributeNames: { '#st': 'status' },
+      ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'SCHEDULEDPOST#' }, ':acc': { S: accountId }, ':f': { BOOL: false } },
+      // keep account filter and require either postId or numericPostId exists, and not isDeleted
+      FilterExpression: 'accountId = :acc AND (attribute_exists(postId) OR attribute_exists(numericPostId)) AND (attribute_not_exists(isDeleted) OR isDeleted = :f)',
       ScanIndexForward: true,
       Limit: limit,
     }));
@@ -3019,6 +3023,20 @@ async function deleteUpTo100PostsForAccount(userId: any, accountId: any, limit =
         console.info('[info] deleteUpTo100PostsForAccount sample items', { userId, accountId, sample });
       }
     } catch(_) {}
+    // If Query returned zero items unexpectedly, perform a debug Scan to surface why
+    if (!items || items.length === 0) {
+      try {
+        console.warn('[warn] deleteUpTo100PostsForAccount: query returned 0 items - performing debug scan', { userId, accountId, limit });
+        const scanOut = await ddb.send(new ScanCommand({ TableName: TBL_SCHEDULED, FilterExpression: 'accountId = :acc AND (attribute_exists(postId) OR attribute_exists(numericPostId)) AND (attribute_not_exists(isDeleted) OR isDeleted = :f)', ExpressionAttributeValues: { ':acc': { S: accountId }, ':f': { BOOL: false } }, ProjectionExpression: 'PK,SK,accountId,postId,numericPostId,status,isDeleted,deletedAt', Limit: 100 }));
+        const scanItems = (scanOut as any).Items || [];
+        console.info('[info] deleteUpTo100PostsForAccount debug scan count', { userId, accountId, count: (scanItems || []).length });
+        if ((scanItems || []).length > 0) {
+          try { console.info('[info] deleteUpTo100PostsForAccount debug scan sample', { sample: (scanItems || []).slice(0,10).map(i => ({ SK: getS(i.SK), postId: getS(i.postId) || getS(i.numericPostId), accountId: getS(i.accountId), status: getS(i.status), isDeleted: i.isDeleted?.BOOL })) }); } catch(_) {}
+        }
+      } catch (e) {
+        try { console.warn('[warn] debug scan failed', { userId, accountId, error: String(e) }); } catch(_) {}
+      }
+    }
     let deletedCount = 0;
 
     // obtain token for account from accounts table (try to read account item)
