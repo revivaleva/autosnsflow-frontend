@@ -179,26 +179,37 @@ DynamoDB の AttributeValue を直接返さない。必ず正規化。
 
 ---
 
-## 追記: `deleteUserPosts` ユーティリティ仕様
+## 追記: `deleteUserPosts` / 共通削除方針
 
-- 目的: 指定ユーザーの投稿を古い順に取得して一括削除（最大 `limit` 件）する共通処理を `src/lib/delete-user-posts.ts` に実装する。
+- 目的: アカウント編集モーダル（即時削除）および定期実行（キュー処理）で同一の削除フローを実行するための共通方針を明文化する。
+- 呼び出し先: `src/lib/delete-posts-for-account.ts`（新規共通関数 `deletePostsForAccount` を定義し、`delete-all` API と Lambda キュー処理の両方から呼び出す）。
 - 入力:
   - `userId` (必須)
-  - `accountId` (任意、指定時は優先して使用)
-  - `limit` (任意、既定値 100)
-- 挙動（要点）:
-  - `ScheduledPosts` テーブルから `PK = USER#<userId>` のレコードを取得し、`status === 'posted'` かつ `isDeleted !== true` の投稿を抽出する。
-  - 投稿は作成日時の古い順にソートして削除対象を決定する（古いものから削除するため）。
-  - 各投稿について既存の `deleteThreadsPost` を呼び出して外部投稿を削除する。削除に成功した場合、対応する予約レコードが存在すれば `isDeleted = true` と `deletedAt` を設定して論理削除する。
-  - 外部 API 呼び出しで致命的エラー（権限不足や 4xx/5xx 等）が発生した場合は `ExecutionLogs`（`logEvent`）へ `deletion_error` を出力し例外を投げる。呼び出し元 API はこの例外を受けて処理停止またはキュー化の判断を行う。
-  - 処理中のログ粒度: 成功した削除件数は戻り値で返し、エラー時は `detail` に対象の `postId` / `scheduledPostId` 等を含めて保存する。
-- 戻り値: `{ deletedCount: number, remaining: boolean }`
-  - `remaining` が true の場合は未削除の投稿が残っている（キュー化が必要なケース）。
+  - `accountId` (必須: スレッズアカウントを必ず指定すること)
+  - `limit` (任意、既定値は AppConfig の `DELETION_BATCH_SIZE` または 100)
 
-- 追記: テスト用の取得処理について
-  - 現在 `deleteUserPosts` の dryRun オプションはテスト目的で最大 `limit` 件を取得して件数を返す実装になっている。
-  - この dryRun は本番での実削除を行わないテストコードであり、将来的に削除処理へ置換する予定の部分であることを明記する。
-  - 注意: dryRun はテスト用途のため十分なログと承認ワークフローが完了するまで UI からの即時実行に用いないこと。
+- 挙動（厳密手順、要件に準拠）:
+  1. **取得フェーズ**: `fetchThreadsPosts({ userId, accountId, limit })` を実行して Threads 側の投稿IDを取得する。API 呼び出しが失敗した場合は即時に処理を中断し例外を投げる（0件取得とは明確に区別）。
+  2. **削除フェーズ（API優先）**: 取得した各 `postId` に対して、**DBの有無に関わらず**必ず Threads DELETE API を呼び出す（`deleteThreadsPostWithToken` 等）。API 削除の成功判定は `src/pages/api/threads/delete-post.ts` と同一の基準を用いる（`resp.ok` または `json.success === true` を成功と見なす；404 や Facebook の `error_subcode===33` 等は "存在しない" 扱いとして成功として扱う）。
+  3. **DB同期（API成功後）**: 外部DELETE が成功（または存在しない扱い）した場合のみ、その `postId` と `accountId` を用いて `ScheduledPosts` を照会し、該当レコードが存在する場合は **物理削除（DeleteItemCommand）** を行う。DBに該当がなければ何もしない。
+  4. **完了判定**: 指定件数を処理した後、追加で1件のみ `fetchThreadsPosts(..., limit:1)` を再実行し、0件なら `remaining=false`（削除完了）とし、キューが存在する場合はキューの削除とアカウント `status` を `active` に戻す。残件がある場合は `remaining=true` として呼び出し元がキュー作成/継続を行う。
+
+- エラーとログ方針:
+  - **ExecutionLogs（永続化 via `putLog`）へ書き込むのは以下のみ**:
+    - API 呼び出し（fetchThreadsPosts）で致命的エラーが発生し処理を中断した場合（`deletion_error`）。
+    - 外部DELETE において致命的エラー（権限不足、token 欠落など）により処理を中断した場合（`deletion_error`）。
+    - 削除が完了しアカウント `status` を更新した場合（`deletion_completed`）に要約を記録する（`deletedCount` を含む）。
+  - それ以外の詳細ログ（取得結果の一覧、各DELETE のレスポンス、マッピングのサンプル等）はすべて `console.info/warn/error` を用いて CloudWatch に出力すること。外部通知（Discord 等）や大量のデバッグ出力は `ALLOW_DEBUG_EXEC_LOGS` フラグでガードすること。
+
+- DB操作の順序に関する厳守点:
+  - **DB レコードを参照してから外部DELETE を発行することはしない**。必ず Threads API に対して削除を試み、その後に DB を参照して該当レコードがあれば物理削除する（API → DB の順）。
+
+- 戻り値: `{ deletedCount: number, remaining: boolean }`
+
+- 実装上の補足:
+  - 物理削除ユーティリティ `src/lib/scheduled-posts-delete.ts` は、キュー処理／即時処理のどちらから呼ばれても同一の振る舞いをするようにオプションで "物理削除時に失敗したら例外を throw して呼び出し元で再試行させる" 動作をサポートすること。
+  - `deletePostsForAccount` は共通実装を提供し、`src/pages/api/accounts/[accountId]/delete-all.ts` の即時削除と `lambda/scheduled-autosnsflow/src/handler.ts` のキュー削除の両方から呼び出す。定期実行側は優先度に応じて段階的に切替える。
+
 
 ---
 

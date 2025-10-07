@@ -86,8 +86,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     } catch (_) {
       effectiveLimit = 100;
     }
-    // Perform actual deletion; if fetch from Threads fails, deleteUserPosts will throw — propagate as error
-    const { deletedCount, remaining } = await deleteUserPosts({ userId, accountId, limit: effectiveLimit });
+    // Perform actual deletion using unified deletePostsForAccount
+    const mod = await import('@/lib/delete-posts-for-account');
+    const { deletedCount, remaining } = await mod.deletePostsForAccount({ userId, accountId, limit: effectiveLimit });
     // debug log removed
 
     if (remaining) {

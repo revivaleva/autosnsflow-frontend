@@ -3,6 +3,7 @@ import { QueryCommand, UpdateItemCommand, DeleteItemCommand } from '@aws-sdk/cli
 import { getTokenForAccount, deleteThreadsPostWithToken } from '@/lib/threads-delete';
 import { fetchThreadsPosts } from '@/lib/fetch-threads-posts';
 import { putLog } from '@/lib/logger';
+import deletePostsForAccount from '@/lib/delete-posts-for-account';
 
 const MAX_DELETE_RETRIES = Number(process.env.DELETION_API_RETRY_COUNT || '3');
 
@@ -71,10 +72,25 @@ export async function deleteUserPosts({ userId, accountId, limit, dryRun }: { us
     }
   }
 
-  // Primary: fetch latest posted thread IDs from Threads API (numeric IDs)
-  const threads = await fetchThreadsPosts({ userId, accountId: accountId || '', limit });
-  const fetchedCount = Array.isArray(threads) ? threads.length : 0;
-  console.info('[delete-user-posts] fetched threads', { userId, accountId: accountId || '', fetchedCount });
+  // Delegate to unified deletePostsForAccount for actual deletion behavior.
+  if (!accountId) throw new Error('accountId required');
+  if (dryRun) {
+    // dryRun: just fetch threads and return counts
+    const threads = await fetchThreadsPosts({ userId, accountId: accountId || '', limit });
+    const fetchedCount = Array.isArray(threads) ? threads.length : 0;
+    const totalCandidates = fetchedCount;
+    const remaining = totalCandidates > (limit || 0);
+    const webhook = process.env.MASTER_DISCORD_WEBHOOK || process.env.DISCORD_MASTER_WEBHOOK || '';
+    if (webhook) {
+      const payload = { content: `DeletionDryRun user=${userId} account=${accountId || 'N/A'} totalCandidates=${totalCandidates} fetchedCount=${fetchedCount} remaining=${remaining}` };
+      await fetch(webhook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).catch(() => {});
+    }
+    return { deletedCount: 0, remaining, totalCandidates, fetchedCount };
+  }
+
+  // perform actual deletion via shared function
+  const res = await deletePostsForAccount({ userId, accountId, limit });
+  return { deletedCount: res.deletedCount, remaining: res.remaining, totalCandidates: undefined, fetchedCount: undefined };
 
   // Build mapping from postId -> SK by querying ScheduledPosts once
   const q = await ddb.send(new QueryCommand({
