@@ -115,6 +115,16 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
         const found = ((q as any).Items || [])[0];
         const sk = found ? (found.SK && found.SK.S) : undefined;
         try { console.info('[delete-posts-for-account] scheduled lookup result', { userId, accountId, postId, found }); } catch(_) {}
+        if (!sk) {
+          // fallback: perform a limited Scan to surface nearby records for diagnostics
+          try {
+            const scanOut = await ddb.send(new (require('@aws-sdk/client-dynamodb').ScanCommand)({ TableName: TBL_SCHEDULED, FilterExpression: 'accountId = :acc AND (attribute_exists(postId) OR attribute_exists(numericPostId))', ExpressionAttributeValues: { ':acc': { S: accountId } }, ProjectionExpression: 'PK,SK,postId,numericPostId,accountId,status,isDeleted', Limit: 50 }));
+            const scanItems = (scanOut as any).Items || [];
+            try { console.info('[delete-posts-for-account] scheduled fallback scan sample', { userId, accountId, sampleCount: (scanItems||[]).length, sample: (scanItems||[]).slice(0,10).map(i=>({ SK: i.SK?.S, postId: i.postId?.S, numericPostId: i.numericPostId?.S, status: i.status?.S })) }); } catch(_) {}
+          } catch (e) {
+            try { console.warn('[delete-posts-for-account] fallback scan failed', { userId, accountId, error: String(e) }); } catch(_) {}
+          }
+        }
         if (sk) {
           const delRes = await deleteScheduledRecord({ userId, sk, physical: true });
           if (!delRes || delRes.ok !== true) {
