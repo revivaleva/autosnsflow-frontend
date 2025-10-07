@@ -304,23 +304,17 @@ export default async function handler(
 
         // 未投稿 (status !== 'posted') の場合は物理削除
         if (status !== "posted") {
-          await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: key }));
-          res.status(200).json({ ok: true, deleted: true });
+          const { deleteScheduledRecord } = await import('@/lib/scheduled-posts-delete');
+          const r = await deleteScheduledRecord({ userId, sk: `SCHEDULEDPOST#${body.scheduledPostId}`, physical: true });
+          res.status(200).json({ ok: Boolean(r.ok), deleted: Boolean(r.physical), result: r });
           return;
         }
 
         // 投稿済みの場合は Threads API を呼ばず、サーバ側では論理削除のみ行う
-        // （実投稿の削除は行わない。フロントはデフォルトで論理削除済を非表示にしているため即時一覧から消える）
+        const { deleteScheduledRecord } = await import('@/lib/scheduled-posts-delete');
         const now = Math.floor(Date.now() / 1000);
-        await ddb.send(
-          new UpdateItemCommand({
-            TableName: TBL_SCHEDULED,
-            Key: key,
-            UpdateExpression: "SET isDeleted = :t, deletedAt = :ts",
-            ExpressionAttributeValues: { ":t": { BOOL: true }, ":ts": { N: String(now) } },
-          })
-        );
-        res.status(200).json({ ok: true, deleted: false, deletedAt: now });
+        const r = await deleteScheduledRecord({ userId, sk: `SCHEDULEDPOST#${body.scheduledPostId}`, physical: false });
+        res.status(200).json({ ok: true, deleted: false, deletedAt: now, result: r });
         return;
       }
 
