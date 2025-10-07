@@ -74,6 +74,7 @@ export async function deleteUserPosts({ userId, accountId, limit, dryRun }: { us
   // Primary: fetch latest posted thread IDs from Threads API (numeric IDs)
   const threads = await fetchThreadsPosts({ userId, accountId: accountId || '', limit });
   const fetchedCount = Array.isArray(threads) ? threads.length : 0;
+  console.info('[delete-user-posts] fetched threads', { userId, accountId: accountId || '', fetchedCount });
 
   // Build mapping from postId -> SK by querying ScheduledPosts once
   const q = await ddb.send(new QueryCommand({
@@ -103,6 +104,8 @@ export async function deleteUserPosts({ userId, accountId, limit, dryRun }: { us
 
   // Map fetched Threads posts to posts list, attaching SK when available
   const posts: Array<{ sk?: string; postId: string; accountId?: string; createdAt?: number; raw?: Record<string, unknown> }> = (threads || []).map((t) => ({ postId: String(t.id), sk: idToSk[String(t.id)] }));
+  console.info('[delete-user-posts] idToSk map sample', Object.keys(idToSk).slice(0, 20));
+  console.info('[delete-user-posts] mapped posts sample', posts.slice(0, 20));
 
   const toDelete = posts.slice(0, limit);
   let deletedCount = 0;
@@ -127,6 +130,7 @@ export async function deleteUserPosts({ userId, accountId, limit, dryRun }: { us
   let currentToken: string | null = null;
 
   for (const p of toDelete) {
+    console.info('[delete-user-posts] processing candidate', { userId, accountId: accountId || p.accountId || '', postId: p.postId, sk: p.sk });
     const acct = accountId || p.accountId || '';
     try {
       if (!acct) throw new Error('accountId required for deletion');
@@ -144,10 +148,12 @@ export async function deleteUserPosts({ userId, accountId, limit, dryRun }: { us
       let attempt = 0;
       while (true) {
         attempt++;
-        try {
-          await deleteThreadsPostWithToken({ postId: p.postId, token: currentToken! });
-          break; // success
-        } catch (err: unknown) {
+      try {
+        await deleteThreadsPostWithToken({ postId: p.postId, token: currentToken! });
+        console.info('[delete-user-posts] threads delete success', { userId, accountId: acct, postId: p.postId });
+        break; // success
+      } catch (err: unknown) {
+        console.warn('[delete-user-posts] threads delete failed', { userId, accountId: acct, postId: p.postId, error: stringifyError(err) });
           const msg = stringifyError(err);
           const fatal = isFatalThreadsError(msg);
           // Log attempt result
@@ -160,10 +166,11 @@ export async function deleteUserPosts({ userId, accountId, limit, dryRun }: { us
               const errBody = parsed?.error;
               if (errBody && (errBody.error_subcode === 33 || /does not exist/.test(errBody.message || ''))) {
                 // mark as deleted if possible and continue
-                if (p.sk) {
+            if (p.sk) {
                   const key = { PK: { S: `USER#${userId}` }, SK: { S: String(p.sk) } };
                   const now = Math.floor(Date.now() / 1000);
                   await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: key, UpdateExpression: 'SET isDeleted = :t, deletedAt = :ts', ExpressionAttributeValues: { ':t': { BOOL: true }, ':ts': { N: String(now) } } }));
+                  console.info('[delete-user-posts] mark scheduled as deleted (post not found)', { userId, accountId: acct, postId: p.postId, sk: p.sk });
                 }
                 deletedCount++;
                 break;
@@ -189,6 +196,7 @@ export async function deleteUserPosts({ userId, accountId, limit, dryRun }: { us
         const key = { PK: { S: `USER#${userId}` }, SK: { S: String(p.sk) } };
         const now = Math.floor(Date.now() / 1000);
         await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: key, UpdateExpression: 'SET isDeleted = :t, deletedAt = :ts', ExpressionAttributeValues: { ':t': { BOOL: true }, ':ts': { N: String(now) } } }));
+        console.info('[delete-user-posts] mark scheduled as deleted (success)', { userId, accountId: p.accountId || accountId || '', postId: p.postId, sk: p.sk });
       }
 
       deletedCount++;
@@ -242,6 +250,7 @@ export async function deleteUserPosts({ userId, accountId, limit, dryRun }: { us
       for (const it of itemsAll) {
         const sk = getSAttr(it?.SK);
         const itemAccountId = getSAttr(it?.accountId) || '';
+        console.info('[delete-user-posts] cleanup candidate', { userId, sk, itemAccountId });
         if (!sk) continue;
         // Only delete if this record belongs to the requested account (if provided)
         if (accountId && accountId !== '' && itemAccountId !== accountId) continue;
