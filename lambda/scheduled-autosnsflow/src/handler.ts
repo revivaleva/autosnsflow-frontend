@@ -3066,10 +3066,28 @@ async function deleteUpTo100PostsForAccount(userId: any, accountId: any, limit =
         const text = await resp.text().catch(() => '');
         if (!resp.ok) throw new Error(`threads_delete_failed: ${resp.status} ${text}`);
 
-        // mark scheduled post as deleted
-        const key = { PK: { S: `USER#${userId}` }, SK: { S: getS(it.SK) } };
-        const now = Math.floor(Date.now() / 1000);
-        await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: key, UpdateExpression: 'SET isDeleted = :t, deletedAt = :ts', ExpressionAttributeValues: { ':t': { BOOL: true }, ':ts': { N: String(now) } } }));
+        // perform physical delete via shared utility; fallback to logical update on failure
+        const skVal = getS(it.SK) || '';
+        if (skVal) {
+          try {
+            const mod = await import('@/lib/scheduled-posts-delete');
+            if (typeof mod.deleteScheduledRecord === 'function') {
+              await mod.deleteScheduledRecord({ userId, sk: skVal, physical: true });
+            } else {
+              // fallback: logical delete
+              const key = { PK: { S: `USER#${userId}` }, SK: { S: skVal } };
+              const now = Math.floor(Date.now() / 1000);
+              await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: key, UpdateExpression: 'SET isDeleted = :t, deletedAt = :ts', ExpressionAttributeValues: { ':t': { BOOL: true }, ':ts': { N: String(now) } } }));
+            }
+          } catch (e) {
+            // on any failure, fallback to logical delete to avoid leaving phantom external-only deletes
+            try {
+              const key = { PK: { S: `USER#${userId}` }, SK: { S: skVal } };
+              const now = Math.floor(Date.now() / 1000);
+              await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: key, UpdateExpression: 'SET isDeleted = :t, deletedAt = :ts', ExpressionAttributeValues: { ':t': { BOOL: true }, ':ts': { N: String(now) } } }));
+            } catch (_) {}
+          }
+        }
         deletedCount++;
       } catch (e) {
         await putLog({ userId, type: 'deletion', accountId, status: 'error', message: 'delete_failed', detail: { error: String(e), item: it } });
