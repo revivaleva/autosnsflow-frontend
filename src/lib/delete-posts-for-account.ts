@@ -127,7 +127,10 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
               Limit: 50
             }));
             const scanItems = (scanOut as any).Items || [];
-            try { console.info('[delete-posts-for-account] scheduled fallback scan sample', { userId, accountId, sampleCount: (scanItems||[]).length, sample: (scanItems||[]).slice(0,10).map(i=>({ SK: i.SK?.S, postId: i.postId?.S, numericPostId: i.numericPostId?.S, status: i['status']?.S || i['#st']?.S })) }); } catch(_) {}
+            try {
+              const mapped = (scanItems||[]).slice(0,100).map(i=>({ SK: i.SK?.S, postId: i.postId?.S, numericPostId: i.numericPostId?.S || i.numericPostId?.N, status: i['status']?.S || i['#st']?.S, isDeleted: i.isDeleted?.BOOL }));
+              console.info('[delete-posts-for-account] scheduled fallback scan sample', { userId, accountId, sampleCount: (scanItems||[]).length, sampleSlice: mapped });
+            } catch(_) {}
           } catch (e) {
             try { console.warn('[delete-posts-for-account] fallback scan failed', { userId, accountId, error: String(e) }); } catch(_) {}
           }
