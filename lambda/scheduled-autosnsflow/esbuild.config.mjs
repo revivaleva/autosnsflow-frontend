@@ -1,6 +1,9 @@
 import { build } from "esbuild";
 import path from 'path';
 import { fileURLToPath } from 'url';
+import fs from 'fs';
+
+// CI fix: ensure no top-level await usage (some runners may not treat this file as ESM)
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -9,7 +12,6 @@ const __dirname = path.dirname(__filename);
 const aliasPlugin = {
   name: 'alias-plugin',
   setup(build) {
-    const fs = await import('fs');
     build.onResolve({ filter: /^@\/lib\/.*/ }, args => {
       const rel = args.path.replace(/^@\/lib\//, '');
       const base = path.resolve(__dirname, '..', '..', 'src', 'lib', rel);
