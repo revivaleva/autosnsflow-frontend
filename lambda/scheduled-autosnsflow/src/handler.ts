@@ -3013,7 +3013,12 @@ async function deleteUpTo100PostsForAccount(userId: any, accountId: any, limit =
 
     const items = (q as any).Items || [];
     try { console.info('[info] deleteUpTo100PostsForAccount fetched items', { userId, accountId, count: (items || []).length }); } catch(_) {}
-    try { if ((items || []).length > 0) console.info('[info] deleteUpTo100PostsForAccount sample item', { sample: (items || []).slice(0,3).map(i => ({ SK: getS(i.SK), postId: getS(i.postId) || getS(i.numericPostId) })) }); } catch(_) {}
+    try {
+      if ((items || []).length > 0) {
+        const sample = (items || []).slice(0, 10).map(i => ({ SK: getS(i.SK), postId: getS(i.postId) || getS(i.numericPostId), accountId: getS(i.accountId), status: getS(i.status), isDeleted: i.isDeleted?.BOOL, deletedAt: getN(i.deletedAt) }));
+        console.info('[info] deleteUpTo100PostsForAccount sample items', { userId, accountId, sample });
+      }
+    } catch(_) {}
     let deletedCount = 0;
 
     // obtain token for account from accounts table (try to read account item)
@@ -3076,27 +3081,23 @@ async function deleteUpTo100PostsForAccount(userId: any, accountId: any, limit =
 
         // perform physical delete via shared utility; fallback to logical update on failure
         if (skVal) {
-          try {
-            const mod = await import('@/lib/scheduled-posts-delete');
-            if (typeof mod.deleteScheduledRecord === 'function') {
-              try { console.info('[info] calling deleteScheduledRecord', { userId, sk: skVal, physical: true }); } catch(_) {}
-              const delRes = await mod.deleteScheduledRecord({ userId, sk: skVal, physical: true });
-              try { console.info('[info] deleteScheduledRecord result', { userId, sk: skVal, res: delRes }); } catch(_) {}
-            } else {
-              // fallback: logical delete
-              const key = { PK: { S: `USER#${userId}` }, SK: { S: skVal } };
-              const now = Math.floor(Date.now() / 1000);
-              await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: key, UpdateExpression: 'SET isDeleted = :t, deletedAt = :ts', ExpressionAttributeValues: { ':t': { BOOL: true }, ':ts': { N: String(now) } } }));
-              try { console.info('[info] fallback logical delete applied', { userId, sk: skVal }); } catch(_) {}
+          // Enforce physical delete for queue processing. If physical delete fails, throw and let the batch retry.
+          const mod = await import('@/lib/scheduled-posts-delete');
+          if (typeof mod.deleteScheduledRecord === 'function') {
+            try { console.info('[info] calling deleteScheduledRecord (physical)', { userId, sk: skVal }); } catch(_) {}
+            const delRes = await mod.deleteScheduledRecord({ userId, sk: skVal, physical: true });
+            try { console.info('[info] deleteScheduledRecord result', { userId, sk: skVal, res: delRes }); } catch(_) {}
+            if (!delRes || delRes.ok !== true) {
+              // do not fallback to logical delete here; escalate so the queue entry remains for retry
+              const errMsg = `deleteScheduledRecord failed for sk=${skVal} res=${JSON.stringify(delRes)}`;
+              try { console.warn('[warn] deleteScheduledRecord indicated failure', { userId, sk: skVal, res: delRes }); } catch(_) {}
+              throw new Error(errMsg);
             }
-          } catch (e) {
-            // on any failure, fallback to logical delete to avoid leaving phantom external-only deletes
-            try {
-              const key = { PK: { S: `USER#${userId}` }, SK: { S: skVal } };
-              const now = Math.floor(Date.now() / 1000);
-              await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: key, UpdateExpression: 'SET isDeleted = :t, deletedAt = :ts', ExpressionAttributeValues: { ':t': { BOOL: true }, ':ts': { N: String(now) } } }));
-              try { console.warn('[warn] deleteScheduledRecord failed, applied logical delete', { userId, sk: skVal, error: String(e) }); } catch(_) {}
-            } catch (_) {}
+          } else {
+            // If shared utility missing, escalate rather than silently logical-deleting
+            const errMsg = 'deleteScheduledRecord module not found';
+            try { console.warn('[warn] deleteScheduledRecord not available', { userId, sk: skVal }); } catch(_) {}
+            throw new Error(errMsg);
           }
         }
         deletedCount++;
