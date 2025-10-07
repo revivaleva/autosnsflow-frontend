@@ -107,13 +107,14 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
         const q = await ddb.send(new QueryCommand({
           TableName: TBL_SCHEDULED,
           KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
-          ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'SCHEDULEDPOST#' }, ':acc': { S: accountId }, ':f': { BOOL: false }, ':pid': { S: postId } },
-          FilterExpression: '(postId = :pid OR numericPostId = :pid) AND accountId = :acc AND (attribute_not_exists(isDeleted) OR isDeleted = :f)',
-          ProjectionExpression: 'SK',
+          ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'SCHEDULEDPOST#' }, ':acc': { S: accountId }, ':f': { BOOL: false }, ':pid': { S: postId }, ':pidN': { N: postId } },
+          FilterExpression: '(postId = :pid OR numericPostId = :pid OR numericPostId = :pidN) AND accountId = :acc AND (attribute_not_exists(isDeleted) OR isDeleted = :f)',
+          ProjectionExpression: 'SK,postId,numericPostId',
           Limit: 1,
         }));
         const found = ((q as any).Items || [])[0];
         const sk = found ? (found.SK && found.SK.S) : undefined;
+        try { console.info('[delete-posts-for-account] scheduled lookup result', { userId, accountId, postId, found }); } catch(_) {}
         if (sk) {
           const delRes = await deleteScheduledRecord({ userId, sk, physical: true });
           if (!delRes || delRes.ok !== true) {
