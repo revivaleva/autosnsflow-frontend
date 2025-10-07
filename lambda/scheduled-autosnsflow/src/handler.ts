@@ -27,7 +27,9 @@ import { unmarshall } from "@aws-sdk/util-dynamodb";
 
 /// === テーブル名 ===
 const TBL_SETTINGS   = "UserSettings";
+// Note: TBL_THREADS_ACCOUNTS is resolved from env by default; AppConfig can override at runtime where config.loadConfig() is used.
 const TBL_THREADS    = "ThreadsAccounts";
+const TBL_THREADS_ACCOUNTS = process.env.TBL_THREADS_ACCOUNTS || 'ThreadsAccounts';
 const TBL_SCHEDULED  = "ScheduledPosts";
 const TBL_REPLIES    = "Replies";
 const TBL_GROUPS     = "AutoPostGroups";
@@ -3116,9 +3118,12 @@ async function processDeletionQueueForUser(userId: any) {
 
       // try to claim
       try {
+        try { console.info('[info] attempting to claim queue item', { accountId, sk }); } catch(_) {}
         await ddb.send(new UpdateItemCommand({ TableName: dqTable, Key: { PK: { S: `ACCOUNT#${accountId}` }, SK: { S: sk } }, UpdateExpression: 'SET processing = :t', ConditionExpression: 'attribute_not_exists(processing) OR processing = :f', ExpressionAttributeValues: { ':t': { BOOL: true }, ':f': { BOOL: false } } }));
+        try { console.info('[info] claimed queue item', { accountId, sk }); } catch(_) {}
       } catch (e) {
-        // someone else claimed
+        try { console.warn('[warn] failed to claim queue item, skipping', { accountId, sk, error: String(e) }); } catch(_) {}
+        // someone else claimed or claim failed
         continue;
       }
 
