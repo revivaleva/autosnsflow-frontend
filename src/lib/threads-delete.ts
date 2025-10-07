@@ -22,16 +22,21 @@ export async function deleteThreadsPostWithToken({ postId, token }: { postId: st
   if (!postId) throw new Error('postId required');
   if (!token) throw new Error('token required');
   const base = process.env.THREADS_GRAPH_BASE || 'https://graph.threads.net/v1.0';
+  // Do not log tokens. Build safe URL for logging without the access_token query param.
   const url = `${base}/${encodeURIComponent(postId)}?access_token=${encodeURIComponent(token)}`;
+  const urlForLog = `${base}/${encodeURIComponent(postId)}`;
   const resp = await fetch(url, { method: 'DELETE' } as any);
   const text = await resp.text().catch(() => '');
   let json: any = {};
   try { json = text ? JSON.parse(text) : {}; } catch { json = { raw: text }; }
+  try { console.info('[threads-delete] delete request', { postId, url: urlForLog, status: resp.status, bodyPreview: String(text).slice(0, 1000) }); } catch(_) {}
   if (!resp.ok) {
     // include parsed body for richer error messages
-    throw new Error(`threads_delete_failed: ${resp.status} ${JSON.stringify(json)}`);
+    const errMsg = `threads_delete_failed: ${resp.status} ${JSON.stringify(json)}`;
+    console.warn('[threads-delete] delete failed', { postId, status: resp.status, errorBody: String(text).slice(0, 1000) });
+    throw new Error(errMsg);
   }
-  return true;
+  return { ok: true, status: resp.status, body: json };
 }
 
 // Backwards-compatible helper that fetches token internally and deletes.

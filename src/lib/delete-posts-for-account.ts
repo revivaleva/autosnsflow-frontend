@@ -78,8 +78,8 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
     if (!postId) continue;
     try {
       try {
-        await deleteThreadsPostWithToken({ postId, token });
-        console.info('[delete-posts-for-account] threads delete success', { userId, accountId, postId });
+        const delResp = await deleteThreadsPostWithToken({ postId, token });
+        console.info('[delete-posts-for-account] threads delete response', { userId, accountId, postId, resp: delResp?.status });
       } catch (err) {
         const msg = stringifyError(err);
         // treat missing post as success
