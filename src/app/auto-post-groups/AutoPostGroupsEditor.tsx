@@ -251,7 +251,7 @@ export default function AutoPostGroupsEditor() {
           }
         }
       } catch (e) {
-        console.log("group clone failed:", e);
+        // clone failed - ignore in UI
       }
     }
 

@@ -34,20 +34,16 @@ export async function postToThreads({
       // ドキュメント準拠: reply_to_id を使用
       // https://developers.facebook.com/docs/threads/retrieve-and-manage-replies/create-replies
       body.reply_to_id = inReplyTo;
-      console.log(`[DEBUG] リプライとして投稿(reply_to_id): inReplyTo=${inReplyTo}`);
+      // debug output removed
     } else {
-      console.log(`[DEBUG] 通常投稿: inReplyToなし`);
+      // debug output removed
     }
 
     // 🔧 公式ドキュメント準拠: Create は常に /me/threads を使用
     // https://developers.facebook.com/docs/threads/retrieve-and-manage-replies/create-replies
     const endpoint = `${base}/me/threads`;
 
-    console.log(`[DEBUG] 投稿エンドポイント: ${endpoint}`);
-    console.log(`[DEBUG] 投稿ペイロード: ${JSON.stringify({...body, access_token: "***"}, null, 2)}`);
-    console.log(`[DEBUG] userIdOnPlatform: ${userIdOnPlatform}`);
-    console.log(`[DEBUG] inReplyTo: ${inReplyTo}`);
-    console.log(`[DEBUG] リプライモード: ${inReplyTo ? 'YES' : 'NO'}`);
+    // debug output removed
 
     // try primary token first (uses primaryToken from outer scope)
     body.access_token = primaryToken;
@@ -68,8 +64,8 @@ export async function postToThreads({
     if (!r.ok) {
       const alternativeToken = primaryToken === oauthAccessToken ? accessToken : oauthAccessToken;
       if (alternativeToken && alternativeToken !== primaryToken) {
-        try {
-          console.log('[INFO] postToThreads: primary token failed, retrying with alternative token');
+          try {
+          // info log removed
           body.access_token = alternativeToken;
           const r2 = await fetch(endpoint, {
             method: "POST",
@@ -90,7 +86,7 @@ export async function postToThreads({
         const alternativeToken = primaryToken === oauthAccessToken ? accessToken : oauthAccessToken;
         if (alternativeToken && alternativeToken !== primaryToken) {
           try {
-            console.log('[INFO] postToThreads: detected 400 that may be permission/resource-related, retrying with alternative token');
+            // info log removed
             body.access_token = alternativeToken;
             const r3 = await fetch(endpoint, {
               method: "POST",
@@ -112,7 +108,7 @@ export async function postToThreads({
 
     const tx = await r.text().catch(() => "");
     // Log entire me/threads create response for debugging (no webhook)
-    try { console.log('[DEBUG] me/threads create response raw:', tx); } catch (_) {}
+    try { /* debug removed */ } catch (_) {}
     if (!r.ok) {
       let parsedErr: any = {};
       try { parsedErr = JSON.parse(tx || '{}').error || {}; } catch (_) { parsedErr = {}; }
@@ -138,10 +134,7 @@ export async function postToThreads({
 
     // Debug logs
     try {
-      const tokenOwner = userIdOnPlatform || 'me';
-      const tokenTail = primaryToken ? `***${String(primaryToken).slice(-4)}` : '(none)';
-      console.log(`[THREADS DEBUG] create -> creation_id=${creationId}`);
-      console.log(`[THREADS DEBUG] publish -> POST ${publishEndpoint} body:{creation_id=${creationId}} tokenOwner=${tokenOwner} tokenTail=${tokenTail}`);
+      // debug output removed
     } catch (_) {}
 
     // Verify token owner best-effort using primaryToken
@@ -157,7 +150,7 @@ export async function postToThreads({
         }
       }
     } catch (e) {
-      console.log('[WARN] token owner check failed', e);
+      console.warn('[WARN] token owner check failed', e);
     }
 
     // Publish with retries for 5xx (exponential backoff up to 2 retries)
@@ -176,13 +169,13 @@ export async function postToThreads({
         lastRespText = await resp.text().catch(() => '');
 
         // send debug to discord
-        try { console.log(`[THREADS DEBUG] publish response (attempt ${attempt}) status=${resp.status} body=${String(lastRespText || '').slice(0,1500)}`); } catch (_) {}
+        try { /* debug removed */ } catch (_) {}
 
         if (resp.ok) {
           let parsed: any = {};
           try { parsed = JSON.parse(lastRespText || '{}'); } catch {}
           const postId = parsed?.id || creationId;
-          console.log(`[THREADS DEBUG] publish <- ${resp.status}, id=${postId}`);
+          // debug output removed
           return postId as string;
         }
 
@@ -194,12 +187,12 @@ export async function postToThreads({
             const code = err?.code || '';
             const sub = err?.error_subcode || '';
             const fb = err?.fbtrace_id || '';
-            console.log(`[THREADS ERROR] publish failed status=${resp.status} code=${code} subcode=${sub} fbtrace_id=${fb} reason=${reason}`);
+            console.warn(`[THREADS ERROR] publish failed status=${resp.status} code=${code} subcode=${sub} fbtrace_id=${fb} reason=${reason}`);
             if (err?.code === 190) {
               throw { type: 'auth_required', needsReauth: true, status: resp.status, code: err.code, error_subcode: err.error_subcode || null, message: err.message || reason, fbtrace_id: err.fbtrace_id || null };
             }
           } catch (e) {
-            console.log(`[THREADS ERROR] publish failed status=${resp.status} body=${String(lastRespText).slice(0,200)}`);
+            console.warn(`[THREADS ERROR] publish failed status=${resp.status} body=${String(lastRespText).slice(0,200)}`);
           }
           throw new Error(`Threads publish failed ${resp.status} ${String(lastRespText).slice(0,200)}`);
         }
@@ -222,7 +215,7 @@ export async function postToThreads({
   };
 
   const creationId = await create();
-  console.log(`[DEBUG] 作成完了 creationId: ${creationId}`);
+  // debug output removed
   
   const postId = await publish(creationId);
   
@@ -239,10 +232,10 @@ export async function postToThreads({
         throw new Error(`threads_reply_validation_failed: created normal post (postId=${postId})`);
       }
     } catch (e) {
-      console.log(`[WARN] reply validation failed: ${String(e).slice(0, 160)}`);
+      console.warn(`[WARN] reply validation failed: ${String(e).slice(0, 160)}`);
     }
   }
-  console.log(`[DEBUG] 公開完了 postId: ${postId}`);
+  // debug output removed
   
   // 数字IDを取得（投稿詳細から）
   let numericId: string | undefined;
@@ -252,10 +245,10 @@ export async function postToThreads({
     if (detailRes.ok) {
       const detailJson = await detailRes.json();
       numericId = detailJson?.id;
-      console.log(`[INFO] 投稿完了: ${postId} (numeric: ${numericId})`);
+      console.info(`[INFO] 投稿完了: ${postId} (numeric: ${numericId})`);
     }
   } catch (e) {
-    console.log(`[WARN] 数字ID取得失敗: ${String(e).substring(0, 100)}`);
+    console.warn(`[WARN] 数字ID取得失敗: ${String(e).substring(0, 100)}`);
   }
   
   return { postId, numericId };

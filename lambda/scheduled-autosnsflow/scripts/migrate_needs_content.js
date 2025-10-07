@@ -15,7 +15,7 @@ const accountFilter = argv.accountId || argv.account || null;
 const ddb = new DynamoDBClient({ region });
 
 async function run() {
-  console.log('migrate_needs_content start', { table: TABLE, accountFilter });
+  // debug removed
   let scanned = 0;
   let updated = 0;
   let lastKey = undefined;
@@ -43,7 +43,7 @@ async function run() {
     const res = await ddb.send(new ScanCommand(params));
     const items = res.Items || [];
     scanned += items.length;
-    console.log('scanned page', { count: items.length });
+    // debug removed
 
     for (const it of items) {
       try {
@@ -52,7 +52,7 @@ async function run() {
         const sk = it.SK?.S || obj.SK || '';
         const accountId = obj.accountId || (it.accountId && it.accountId.S) || null;
         if (!accountId) {
-          console.log('skip no accountId', { pk, sk });
+          // debug removed
           continue;
         }
 
@@ -65,7 +65,7 @@ async function run() {
           ExpressionAttributeValues: { ':acc': { S: String(accountId) }, ':zero': { N: '0' } }
         }));
         updated++;
-        console.log('updated', { pk, sk, accountId });
+        // debug removed
       } catch (e) {
         console.error('update error', String(e));
       }
@@ -74,7 +74,7 @@ async function run() {
     lastKey = res.LastEvaluatedKey;
   } while (lastKey);
 
-  console.log('done', { scanned, updated });
+  // debug removed
 }
 
 run().catch(e => { console.error('fatal', String(e)); process.exit(1); });

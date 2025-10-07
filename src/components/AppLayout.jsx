@@ -41,8 +41,7 @@ export default function AppLayout({ children }) {
 
       setAuthDebug({ source: "/api/auth/me", pathname, isAdmin: latest });
       if (open) setAuthDebugOpen(true);
-      // eslint-disable-next-line no-console
-      console.log("[auth-debug]", { source: "/api/auth/me", isAdmin: latest });
+      // debug log removed from client. Use ALLOW_DEBUG_EXEC_LOGS guarded logs on server if necessary.
     })();
 
     // 3) 他タブ更新に追従（storageイベント）

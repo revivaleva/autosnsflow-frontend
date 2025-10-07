@@ -11,7 +11,7 @@ try {
 } catch (e) {
   // dotenv not available in build environment; continue without failing
 }
-console.log('[build/env]', { THREADS_OAUTH_REDIRECT_PROD: process.env.THREADS_OAUTH_REDIRECT_PROD || '(missing)' });
+// build env logging removed
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {

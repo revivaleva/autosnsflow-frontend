@@ -28,6 +28,8 @@ export default function ScheduledPostsTable() {
   const [filterStatus, setFilterStatus] = useState<ScheduledPostStatus>("");
   const [accountFilter, setAccountFilter] = useState<string>("");
   const [accountIds, setAccountIds] = useState<string[]>([]);
+  // アカウントが削除中であることを示すマップ
+  const [accountsDeletingMap, setAccountsDeletingMap] = useState<Record<string, boolean>>({});
 
   // [MOD] 新モーダルの管理
   const [editorOpen, setEditorOpen] = useState(false);
@@ -150,6 +152,14 @@ export default function ScheduledPostsTable() {
         const list = (data.accounts || data.items || []) as any[];
         const ids = Array.from(new Set(list.map(a => a.accountId).filter(Boolean)));
         setAccountIds(ids);
+        // 削除中ステータスを map にして保持
+        const m: Record<string, boolean> = {};
+        for (const it of list) {
+          if (it && it.accountId) {
+            m[it.accountId] = (it.status === 'deleting');
+          }
+        }
+        setAccountsDeletingMap(m);
       } catch (e) {
         // ignore
       }
@@ -226,7 +236,7 @@ export default function ScheduledPostsTable() {
     if (!window.confirm("この操作は取り消せません。投稿を完全に削除します。続行しますか？")) return;
     if (!window.confirm("最終確認：本当にこの投稿を削除しますか？")) return;
 
-    console.debug('[UI][delete] clicked', { scheduledPostId: id });
+    // debug output removed
 
     const post = posts.find(p => p.scheduledPostId === id);
     if (!post) {
@@ -234,7 +244,7 @@ export default function ScheduledPostsTable() {
       return alert("投稿が見つかりませんでした");
     }
     const numeric = (post as any).numericPostId;
-    console.debug('[UI][delete] post data', { scheduledPostId: id, numericPostId: numeric, accountId: post.accountId });
+    // debug output removed
     if (!numeric) {
       console.warn('[UI][delete] numericPostId missing', { scheduledPostId: id });
       return alert("numericPostId が存在しないため削除できません");
@@ -244,16 +254,14 @@ export default function ScheduledPostsTable() {
     setBulkDeleting(true);
     try {
       const payload = { scheduledPostId: id, numericPostId: String(numeric), accountId: post.accountId };
-      console.debug('[UI][delete] calling API', payload);
+      // debug output removed
       const resp = await fetch('/api/threads/delete-post', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify(payload)
       });
-      console.debug('[UI][delete] api response status', resp.status);
       const j = await resp.json().catch(() => ({}));
-      console.debug('[UI][delete] api response body', j);
       if (!resp.ok || !j?.ok) {
         console.error('[UI][delete] api reported error', { status: resp.status, body: j });
         throw new Error(j?.error || '削除に失敗しました');
@@ -643,6 +651,7 @@ export default function ScheduledPostsTable() {
               const generatedUrl = postId ? `https://www.threads.net/post/${postId}` : undefined;
 
               const deleted = !!post.isDeleted;
+              const accountIsDeleting = accountsDeletingMap[post.accountId] === true;
               return (
                 <tr key={post.scheduledPostId} className={deleted ? 'bg-gray-100 text-gray-500' : ''}>
                   <td className="border p-1" onClick={() => { if (!deleted) toggleSelect(post.scheduledPostId); }} style={{ cursor: deleted ? 'default' : 'pointer' }}>
@@ -653,7 +662,10 @@ export default function ScheduledPostsTable() {
                   <td className="border p-1">
                     <div>
                       <div className="text-sm font-medium">{post.accountName}</div>
-                      <div className="text-xs text-gray-500 break-words">{post.accountId}</div>
+                      <div className="flex items-center gap-2">
+                        <div className="text-xs text-gray-500 break-words">{post.accountId}</div>
+                        {accountIsDeleting && <div className="inline-block bg-red-600 text-white text-[11px] px-2 py-0.5 rounded">削除中</div>}
+                      </div>
                     </div>
                   </td>
                   <td className="border p-1 align-top">
@@ -824,12 +836,12 @@ export default function ScheduledPostsTable() {
                     {post.status !== "posted" && !post.isDeleted && (
                       <button
                         className={`text-white px-2 py-1 rounded ${
-                          isPosting ? "bg-green-300 cursor-not-allowed" : "bg-green-500 hover:bg-green-600"
+                          isPosting || accountIsDeleting ? "bg-green-300 cursor-not-allowed" : "bg-green-500 hover:bg-green-600"
                         }`}
                         onClick={() => handleManualRun(post)}
-                        disabled={isPosting}
+                        disabled={isPosting || accountIsDeleting}
                       >
-                        {isPosting ? "実行中…" : "即時投稿"}
+                        {accountIsDeleting ? "削除中…" : isPosting ? "実行中…" : "即時投稿"}
                       </button>
                     )}
                     {/* 即時二段階投稿ボタン */}

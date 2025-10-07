@@ -50,18 +50,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         ProjectionExpression: "accessToken, oauthAccessToken, providerUserId, secondStageContent",
       })
     );
-    // Diagnostic: send acct keys presence to master webhook for debugging (do not include secrets)
+    // Diagnostic: optional webhook debug output controlled by ALLOW_DEBUG_EXEC_LOGS
     try {
       const masterDiag = process.env.MASTER_DISCORD_WEBHOOK || process.env.DISCORD_MASTER_WEBHOOK || '';
-      if (masterDiag) {
+      const allowDebug = (process.env.ALLOW_DEBUG_EXEC_LOGS === 'true' || process.env.ALLOW_DEBUG_EXEC_LOGS === '1');
+      if (masterDiag && allowDebug) {
         const hasAccess = !!acct.Item?.accessToken?.S;
         const hasOauth = !!acct.Item?.oauthAccessToken?.S;
         const provider = acct.Item?.providerUserId?.S || '(none)';
         const diag = `manual-post diag - user=${userId} account=${accountId} hasAccessToken=${hasAccess} hasOauthAccessToken=${hasOauth} providerUserId=${provider}`;
-        fetch(masterDiag, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: diag }) }).catch(() => {});
+        // use debug helper to gate external webhook as well
+        // debug webhook removed
       }
     } catch (e) {
-      console.log('[manual-post] diag webhook failed', e);
+      console.warn('[manual-post] diag webhook failed', e);
     }
     const accessToken = acct.Item?.accessToken?.S || "";
     const oauthAccessToken = acct.Item?.oauthAccessToken?.S || "";

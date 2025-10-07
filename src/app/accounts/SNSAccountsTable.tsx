@@ -15,6 +15,8 @@ export type ThreadsAccount = {
   autoGenerate: boolean;
   autoReply: boolean;
   statusMessage: string;
+  // アカウントの状態（例: 'active', 'deleting', 'deletion_error' 等）
+  status?: string;
   personaMode: string;
   personaSimple: string;
   personaDetail: string;
@@ -45,8 +47,7 @@ export default function SNSAccountsTable() {
   const loadAccounts = async () => {
     setLoading(true);
     try {
-      // [DEBUG] Cookie確認
-      console.log("[DEBUG] Document cookies:", document.cookie);
+      // Cookie 確認 (開発時のみログ出す場合は各自のローカルで出力してください)
       
       const res = await fetch(`/api/threads-accounts`, { credentials: "include" });
       
@@ -57,13 +58,15 @@ export default function SNSAccountsTable() {
       }
       
       const data = await res.json();
-      console.log("API Response:", data); // [DEBUG]
+      // API Response received
       
       if (data.error) {
         throw new Error(data.error);
       }
       
       let accounts = (data.items ?? data.accounts) ?? [];
+      // ensure status exists
+      accounts = accounts.map((a: any) => ({ ...(a || {}), status: (a && a.status) || 'active' }));
       // If a search filter is present in localStorage (for local testing), apply it
       try {
         const filterId = localStorage.getItem('accounts.filterId') || '';
@@ -79,10 +82,10 @@ export default function SNSAccountsTable() {
         const bb = (b as { createdAt?: number }).createdAt || 0;
         return bb - aa;
       });
-      console.log("Parsed accounts:", accounts); // [DEBUG]
+      // Parsed accounts prepared
       setAccounts(accounts);
-    } catch (error: unknown) {
-      console.error("アカウント読み込みエラー:", error);
+    } catch (error) {
+        // debug error removed
       const message = error instanceof Error ? error.message : String(error);
       alert(`アカウント読み込みに失敗しました: ${message}`);
       setAccounts([]);
@@ -188,6 +191,9 @@ export default function SNSAccountsTable() {
 
   const handleCloseModal = () => {
     setModalOpen(false);
+    // prevent full page reload when modal closes during delete flow
+    // keep focus and avoid navigation side-effects
+    try { window.history.replaceState({}, document.title, window.location.pathname); } catch (e) {}
   };
 
   // [DEL] 一覧上の削除ボタンは廃止。モーダル側に移設しました。
@@ -256,22 +262,29 @@ export default function SNSAccountsTable() {
             <tr key={acc.accountId} className="text-center border-t">
               {/* [MOD] クリックで編集モーダルを開く */}
               <td className="py-2 px-3 text-left">
-                <button
-                  className="text-blue-600 hover:underline"
-                  onClick={() => handleEditClick(acc)}
-                >
-                  {acc.displayName}
-                </button>
+                {acc.status === 'deleting' ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-700">{acc.displayName}</span>
+                    <span className="inline-block bg-red-600 text-white text-xs px-2 py-0.5 rounded">削除中</span>
+                  </div>
+                ) : (
+                  <button
+                    className="text-blue-600 hover:underline"
+                    onClick={() => handleEditClick(acc)}
+                  >
+                    {acc.displayName}
+                  </button>
+                )}
               </td>
               <td className="py-2 px-3 text-left">{acc.accountId}</td>
               <td className="py-2 px-3">
                 {acc.createdAt ? new Date(acc.createdAt * 1000).toLocaleString() : ""}
               </td>
-              <td className="py-2 px-3">
+                <td className="py-2 px-3">
                 <ToggleSwitch
                   checked={!!acc.autoPost}
                   onChange={() => handleToggle(acc, "autoPost")}
-                  disabled={updatingId === acc.accountId}
+                  disabled={updatingId === acc.accountId || acc.status === 'deleting'}
                 />
               </td>
               <td className="py-2 px-3">
@@ -293,7 +306,35 @@ export default function SNSAccountsTable() {
                   )}
                 </div>
               </td>
-              <td className="py-2 px-3">{acc.statusMessage || ""}</td>
+              <td className="py-2 px-3">
+                {/* 削除キュー中は赤バッジを押下可能にしてキャンセルを実行 */}
+                {acc.status === 'deleting' ? (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="inline-block bg-red-600 text-white text-xs px-2 py-0.5 rounded hover:opacity-80 whitespace-nowrap"
+                      onClick={async () => {
+                        if (!confirm('削除を中止しますか？')) return;
+                        try {
+                          const r = await fetch(`/api/accounts/${encodeURIComponent(acc.accountId)}/cancel-deletion`, { method: 'POST', credentials: 'include' });
+                          if (!r.ok) {
+                            const t = await r.text().catch(() => '');
+                            alert('中止に失敗しました: ' + t);
+                            return;
+                          }
+                          alert('削除を中止しました');
+                          try { await loadAccounts(); } catch (e) { console.warn(e); }
+                        } catch (e) {
+                          alert('中止に失敗しました: ' + String(e));
+                        }
+                      }}
+                    >削除中</button>
+                    <span className="text-sm text-gray-700">{acc.statusMessage || ''}</span>
+                  </div>
+                ) : (
+                  acc.statusMessage || ""
+                )}
+              </td>
               <td className="py-2 px-3 text-left">
                 {acc.secondStageContent && acc.secondStageContent.trim().length > 0
                   ? (
@@ -305,14 +346,16 @@ export default function SNSAccountsTable() {
               </td>
               {showAppColumn && (
                 <td className="py-2 px-3">
-                  <div className="flex items-center justify-center">
+                <div className="flex items-center justify-center">
+                    <div className="flex items-center justify-center">
                     <button
-                      className="bg-indigo-500 text-white rounded px-3 py-1 hover:bg-indigo-600 whitespace-nowrap"
-                      onClick={() => handleOpenInApp(acc)}
-                      title="アプリ"
-                    >
-                      アプリ
-                    </button>
+                      className={`bg-indigo-500 text-white rounded px-3 py-1 whitespace-nowrap hover:bg-indigo-600`}
+                        onClick={() => handleOpenInApp(acc)}
+                        title="アプリ"
+                      >
+                        アプリ
+                      </button>
+                    </div>
                   </div>
                 </td>
               )}

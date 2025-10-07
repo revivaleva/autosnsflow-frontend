@@ -5,7 +5,7 @@ const ddb = new DynamoDBClient({ region: process.env.AWS_REGION || 'ap-northeast
 const TABLE = process.env.TABLE_NAME || 'ScheduledPosts';
 
 (async function main(){
-  console.log('Starting backfill for', TABLE);
+  // debug removed
   let lastKey = undefined;
   let processed = 0;
   do {
@@ -49,8 +49,8 @@ const TABLE = process.env.TABLE_NAME || 'ScheduledPosts';
     }
 
     lastKey = res.LastEvaluatedKey;
-    console.log('Processed so far', processed, 'LastKey:', !!lastKey);
+    // debug removed
   } while (lastKey);
 
-  console.log('Done. Total processed:', processed);
+  // debug removed
 })().catch(e=>{console.error(e); process.exit(1)});

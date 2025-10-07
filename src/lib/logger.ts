@@ -9,33 +9,72 @@ function ymd(d = new Date()) {
   return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
 }
 
-export async function logEvent(type: string, detail: any = {}) {
+// Structured execution log entry interface
+export type ExecutionLogEntry = {
+  userId?: string;
+  accountId?: string;
+  action: string; // e.g., 'deletion', 'deletion_progress', 'deletion_error'
+  status: 'info' | 'error' | 'warn' | string;
+  message?: string;
+  detail?: any;
+  initiatedBy?: string; // user id or system
+  deletedCount?: number;
+  targetId?: string;
+};
+
+// Put a structured execution log. This is the canonical logging function used across the app.
+export async function putLog(entry: ExecutionLogEntry) {
   try {
+    // guard non-error debug logs with ALLOW_DEBUG_EXEC_LOGS
+    const allowDebug = (process.env.ALLOW_DEBUG_EXEC_LOGS === 'true' || process.env.ALLOW_DEBUG_EXEC_LOGS === '1');
+    if (!allowDebug && entry.status && entry.status !== 'error' && entry.status !== 'warn') {
+      // skip persisting informational/debug logs unless explicitly allowed
+      return;
+    }
     const now = new Date();
-    // Support existing ExecutionLogs schema where PK is USER#<userId>
-    const userId = detail?.userId || detail?.user || undefined;
-    const accountId = detail?.accountId || '';
-    const targetId = detail?.targetId || '';
-    const status = detail?.status || 'info';
-    const message = detail?.message || '';
+    const userId = entry.userId;
+    const pk = userId ? `USER#${userId}` : `LOG#${ymd(now)}`;
+    const sk = `${now.toISOString()}#${entry.action}`;
 
     const item: Record<string, any> = {
-      PK: { S: userId ? `USER#${userId}` : `LOG#${ymd(now)}` },
-      SK: { S: `${now.toISOString()}#${type}` },
-      type: { S: type },
+      PK: { S: pk },
+      SK: { S: sk },
+      action: { S: entry.action },
       createdAt: { N: String(Math.floor(now.getTime() / 1000)) },
-      status: { S: status },
-      message: { S: String(message || '') },
-      detail: { S: JSON.stringify(detail || {}).slice(0, 35000) },
+      status: { S: entry.status || 'info' },
+      message: { S: String(entry.message || '') },
+      detail: { S: JSON.stringify(entry.detail || {}).slice(0, 35000) },
     };
 
-    if (accountId) item.accountId = { S: String(accountId) };
-    if (targetId) item.targetId = { S: String(targetId) };
+    if (entry.accountId) item.accountId = { S: String(entry.accountId) };
+    if (entry.initiatedBy) item.initiatedBy = { S: String(entry.initiatedBy) };
+    if (typeof entry.deletedCount === 'number') item.deletedCount = { N: String(entry.deletedCount) };
+    if (entry.targetId) item.targetId = { S: String(entry.targetId) };
 
     await ddb.send(new PutItemCommand({ TableName: LOG_TBL, Item: item }));
   } catch (e) {
     // never throw from logger
-    console.log('[logEvent] failed', String(e));
+    console.warn('[putLog] failed', String(e));
+  }
+}
+
+// Backwards-compatible helper: adapt legacy calls to structured putLog
+export async function logEvent(type: string, detail: any = {}) {
+  try {
+    const entry: ExecutionLogEntry = {
+      userId: detail?.userId || detail?.user,
+      accountId: detail?.accountId,
+      action: type,
+      status: detail?.status || 'info',
+      message: detail?.message || '',
+      detail,
+      initiatedBy: detail?.initiatedBy,
+      deletedCount: detail?.deletedCount,
+      targetId: detail?.targetId,
+    };
+    await putLog(entry);
+  } catch (e) {
+    console.warn('[logEvent] adapter failed', String(e));
   }
 }
 

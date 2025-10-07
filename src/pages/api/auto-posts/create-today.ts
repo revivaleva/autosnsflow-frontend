@@ -58,7 +58,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // debug: record which accounts are considered
     const accountsSummary = { requestedIds, accountsFound: accounts.map(a => a.accountId), count: accounts.length };
-    console.log('[create-today] accountsSummary:', accountsSummary);
+    // debug output removed
     debug.push({ accountsSummary });
 
     for (const acct of accounts) {
@@ -91,7 +91,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       //     ここでの早期アカウント全体スキップは行わない（詳しくは各スロットの判定へ）
 
       // 4) スロット分だけ新規予約を作成（スロットの timeRange も利用できるがここでは scheduledAt をスロットに依らず JST のランダム時間に設定）
-      console.log(`[create-today] account=${acct.accountId} slots=${slots.length} groupName=${groupName}`);
+      // debug output removed
       acctDebug.slots = slots.length;
       for (let si = 0; si < slots.length; si++) {
         const slot = slots[si];
@@ -152,15 +152,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             ProjectionExpression: 'PK, SK, content, postedAt, status, createdAt, autoPostGroupId',
           }));
           const found = (slotEx.Items || []);
-          console.log(`[create-today] check slot ${groupTypeStr} found=${found.length}`);
+          // debug output removed
           acctDebug.notes.push({ slot: groupTypeStr, found: found.length });
           if (found.length > 0) {
             acctDebug.skippedSlots += 1;
-            console.log('[create-today] existing items sample:', found.slice(0,3).map(x => ({ SK: x.SK?.S, content: x.content?.S, postedAt: x.postedAt?.N, status: x.status?.S, createdAt: x.createdAt?.N, autoPostGroupId: x.autoPostGroupId?.S })));
+            // debug output removed
             continue; // 既に当日分があるためスキップ
           }
-        } catch (e) {
-          console.log('[warn] slot existence check failed, continuing with create:', String(e).substring(0,300));
+          } catch (e) {
+          console.warn('[warn] slot existence check failed, continuing with create:', String(e).substring(0,300));
         }
 
         // 選ばれたテーマ（カンマ区切りなら抽選）を先に決定してDBに保存する

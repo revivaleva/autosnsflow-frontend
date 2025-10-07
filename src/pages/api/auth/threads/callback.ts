@@ -5,7 +5,7 @@ import { createDynamoClient } from '@/lib/ddb';
 import crypto from 'crypto';
 import { GetItemCommand, PutItemCommand, ScanCommand, QueryCommand, UpdateItemCommand } from '@aws-sdk/client-dynamodb';
 import { getEnvVar } from '@/lib/env';
-import { logEvent } from '@/lib/logger';
+import { logEvent, putLog } from '@/lib/logger';
 
 // helper: send master discord via direct fetch (guaranteed path)
 async function sendMasterDiscord(masterUrl: string, content: string) {
@@ -19,6 +19,7 @@ const TBL_THREADS = 'ThreadsAccounts';
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const code = req.query.code as string | undefined;
   const state = req.query.state as string | undefined;
+  const allowDebug = (process.env.ALLOW_DEBUG_EXEC_LOGS === 'true' || process.env.ALLOW_DEBUG_EXEC_LOGS === '1');
   if (!code) return res.status(400).send('code missing');
 
   // Determine clientId/secret: if state contains accountId, try to read account-specific clientId/clientSecret from DB, else fall back to user default env
@@ -71,7 +72,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             else resolvedUserId = pk;
           }
         } catch (e) {
-          console.log('[oauth] read account by cookie failed', e);
+          console.warn('[oauth] read account by cookie failed', e);
         }
       }
 
@@ -96,7 +97,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             else resolvedUserId = pk;
           }
         } catch (e) {
-          console.log('[oauth] query by SK via GSI1 failed, falling back to Scan', e);
+          console.warn('[oauth] query by SK via GSI1 failed, falling back to Scan', e);
           try {
             const scan = await ddb.send(new ScanCommand({
               TableName: TBL_THREADS,
@@ -117,12 +118,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               }
             }
           } catch (e2) {
-            console.log('[oauth] scan for account failed', e2);
+            console.warn('[oauth] scan for account failed', e2);
           }
         }
       }
     } catch (e) {
-      console.log('[oauth] read account client failed', e);
+      console.warn('[oauth] read account client failed', e);
     }
   }
 
@@ -140,15 +141,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           };
           const preBody = JSON.stringify(prePayload, null, 2).slice(0, 1800);
           const preContent = `**[MASTER] Threads OAuth callback (pre-token)**\n\n\`\`\`json\n${preBody}\n\`\`\``;
-          await fetch(masterUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ content: preContent }),
-          });
-          console.log('[threads:notify] pre-token master discord sent');
+          // debug webhook removed
         }
       } catch (e) {
-        console.log('[threads:notify] pre-token notify failed', e);
+        console.warn('[threads:notify] pre-token notify failed', e);
       }
 
   // final guard: require DB-resolved clientId/clientSecret (no env fallback per instruction)
@@ -158,7 +154,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
 
       const ru = String(redirectUri).trim(); // use raw absolute URL (must match authorize)
-      try { await logEvent('threads_callback', { redirectUri: ru, hasProd: !!process.env.THREADS_OAUTH_REDIRECT_PROD, state: state ? 'present' : 'missing', codePresent: !!code }); } catch (e) { console.log('[oauth:callback] logEvent failed', e); }
+      try { await putLog({ action: 'threads_callback', status: 'info', message: 'oauth callback', detail: { redirectUri: ru, hasProd: !!process.env.THREADS_OAUTH_REDIRECT_PROD, state: state ? 'present' : 'missing', codePresent: !!code } }); } catch (e) { console.warn('[oauth:callback] putLog failed', e); }
       const tokenUrl = 'https://graph.threads.net/oauth/access_token';
       const body = new URLSearchParams({
         client_id: String(clientId),
@@ -167,8 +163,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         code: String(code),
       });
 
-      console.log('[threads:token] POST', tokenUrl);
-      console.log('[threads:token] body', body.toString().replace(String(clientSecret || ''), '***'));
+      // debug output removed
 
       const r = await fetch(tokenUrl, {
         method: 'POST',
@@ -190,24 +185,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     try {
       if (accessToken && clientSecret) {
         const exchUrl = `https://graph.threads.net/access_token?grant_type=th_exchange_token&client_secret=${encodeURIComponent(String(clientSecret))}&access_token=${encodeURIComponent(String(accessToken))}`;
-        console.log('[threads:token] attempting long-lived token exchange', exchUrl);
+        // debug output removed
         try {
           const exchResp = await fetch(exchUrl);
           const exchJson = await exchResp.json().catch(() => ({}));
           if (exchResp.ok && exchJson?.access_token) {
             accessToken = exchJson.access_token;
             expiresIn = Number(exchJson.expires_in || expiresIn || 0);
-            console.log('[threads:token] long-lived exchange succeeded - expires_in=', expiresIn);
+            // debug output removed
             j = exchJson; // keep unified response for logging
           } else {
-            console.log('[threads:token] long-lived exchange not available or failed', exchResp.status, exchJson);
+            // debug output removed
           }
         } catch (ee) {
-          console.log('[threads:token] long-lived exchange request failed', ee);
+          console.warn('[threads:token] long-lived exchange request failed', ee);
         }
       }
     } catch (e) {
-      console.log('[threads:token] long-lived exchange flow error', e);
+      console.warn('[threads:token] long-lived exchange flow error', e);
     }
 
     // Identify existing account item by SK (ACCOUNT#<id>) and update that record's oauth fields
@@ -238,11 +233,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             else targetUserId = pk;
           }
         } catch (e) {
-          console.log('[oauth] query by SK to resolve target user failed', e);
+          console.warn('[oauth] query by SK to resolve target user failed', e);
         }
       }
     } catch (e) {
-      console.log('[oauth] resolve target user failed', e);
+      console.warn('[oauth] resolve target user failed', e);
     }
 
     if (!targetUserId) {
@@ -262,7 +257,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           ':now': { N: String(Math.floor(Date.now()/1000)) },
         },
       }));
-    } catch (e) { console.log('[oauth] save oauth token failed', e); return res.status(500).json({ error: 'save_oauth_failed' }); }
+    } catch (e) { console.warn('[oauth] save oauth token failed', e); return res.status(500).json({ error: 'save_oauth_failed' }); }
 
     // Try to obtain providerUserId (Threads user id) and save it as providerUserId on the same item
     try {
@@ -280,20 +275,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 UpdateExpression: 'SET providerUserId = :pid',
                 ExpressionAttributeValues: { ':pid': { S: String(pid) } },
               }));
-              console.log('[oauth] providerUserId saved', { accountId, providerUserId: pid });
+            // debug output removed
             } else {
-              console.log('[oauth] providerUserId not present in /me response', meJson);
+              console.warn('[oauth] providerUserId not present in /me response', meJson);
             }
           } else {
             const txt = await meResp.text().catch(() => '');
-            console.log('[oauth] /me request failed', meResp.status, txt);
+            console.warn('[oauth] /me request failed', meResp.status, txt);
           }
         } catch (e) {
-          console.log('[oauth] fetch /me failed', e);
+          console.warn('[oauth] fetch /me failed', e);
         }
       }
     } catch (e) {
-      console.log('[oauth] providerUserId save flow failed', e);
+      console.warn('[oauth] providerUserId save flow failed', e);
     }
 
     // send master Discord notification with masked details
@@ -310,15 +305,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           saved_to: accessToken ? 'oauthAccessToken' : null
         };
         const bodyStr = JSON.stringify(payload, null, 2).slice(0, 1800);
-        try {
+          try {
           await sendMasterDiscord(masterUrl, `**[MASTER] Threads OAuth callback**\n\n\`\`\`json\n${bodyStr}\n\`\`\``);
-          console.log('[threads:notify] master discord sent (via helper)');
         } catch (e) {
-          console.log('[threads:notify] master discord post failed (helper)', String(e));
+          console.warn('[threads:notify] master discord post failed (helper)', String(e));
         }
       }
     } catch (e) {
-      console.log('[threads:notify] failed to prepare master discord payload', e);
+      console.warn('[threads:notify] failed to prepare master discord payload', e);
     }
 
     res.send('<html><body>Authentication successful. You may close this window.</body></html>');

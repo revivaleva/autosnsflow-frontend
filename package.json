@@ -9,7 +9,7 @@
     "build:shared-core": "bash -lc \"[ -f ../packages/shared/package.json ] && npm --prefix ../packages/shared run build || true; [ -f ../packages/backend-core/package.json ] && npm --prefix ../packages/backend-core run build || true\"",
     "prebuild": "npm run build:shared-core",
     "predev": "npm run build:shared-core",
-    "dev": "next dev",
+    "dev": "node ./scripts/preload-app-config.js || true && node ./scripts/print-app-config.js || true && next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"

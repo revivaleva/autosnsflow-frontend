@@ -29,7 +29,7 @@ async function upsertReplyItem(userId: string, acct: any, { externalReplyId, pos
       return false; // 既に存在する
     }
   } catch (e) {
-    console.log(`[DEBUG] 既存チェック失敗、新規作成を試行: ${String(e).substring(0, 100)}`);
+    // debug output removed
   }
 
   // AI生成による返信内容の作成
@@ -38,7 +38,7 @@ async function upsertReplyItem(userId: string, acct: any, { externalReplyId, pos
   // 手動取得でもautoReplyが有効な場合は返信内容を生成
   if (acct.autoReply) {
     try {
-      console.log(`[DEBUG] アカウント ${acct.accountId} の返信内容を生成中...`);
+      // debug output removed
       
       const aiResponse = await fetch(`${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/ai-gateway`, {
         method: "POST",
@@ -60,13 +60,12 @@ async function upsertReplyItem(userId: string, acct: any, { externalReplyId, pos
         const aiData = await aiResponse.json();
         if (aiData.text) {
           responseContent = aiData.text.trim();
-          console.log(`[DEBUG] AI生成成功: ${responseContent.substring(0, 50)}...`);
         }
       } else {
-        console.log(`[WARN] AI生成失敗: ${aiResponse.status} ${aiResponse.statusText}`);
+        console.warn(`[WARN] AI生成失敗: ${aiResponse.status} ${aiResponse.statusText}`);
       }
-    } catch (e) {
-      console.log(`[WARN] 返信コンテンツ生成失敗: ${String(e).substring(0, 100)}`);
+      } catch (e) {
+      console.warn(`[WARN] 返信コンテンツ生成失敗: ${String(e).substring(0, 100)}`);
     }
   }
 
@@ -102,7 +101,7 @@ async function putLog({
     const uid = userId || "unknown";
     const shouldPersist = (status === 'error' && uid !== "unknown") || allowDebug;
     if (!shouldPersist) {
-      try { console.log('[debug] putLog skipped persist (fetch-replies)', { userId: uid, type, status, message }); } catch(_) {}
+      // debug output removed
       return;
     }
 
@@ -119,13 +118,13 @@ async function putLog({
     };
     await ddb.send(new PutItemCommand({ TableName: TBL_LOGS, Item: item }));
   } catch (e) {
-    console.log("[warn] putLog skipped (fetch-replies):", String((e as Error)?.message || e));
+    console.warn("[warn] putLog skipped (fetch-replies):", String((e as Error)?.message || e));
   }
 }
 
 // Lambda関数の fetchThreadsRepliesAndSave を移植
 async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 }: any) {
-  console.log(`[INFO] ${acct.accountId} のリプライ取得開始`);
+  // debug output removed
   
   if (!acct?.accessToken) throw new Error("Threads のトークン不足");
   if (!acct?.providerUserId) throw new Error("Threads のユーザーID取得失敗");
@@ -133,7 +132,7 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
   const since = nowSec() - lookbackSec;
   let saved = 0;
   
-  console.log(`[INFO] 検索条件: ${lookbackSec}秒前以降の投稿`);
+  // debug output removed
 
   // 投稿済みの予約投稿を取得
   const q = await ddb.send(new QueryCommand({
@@ -150,10 +149,10 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
     ProjectionExpression: "postId, numericPostId, content, postedAt, scheduledPostId",
   }));
   
-  console.log(`[INFO] DynamoDB検索結果: ${q.Items?.length || 0}件の投稿済み記事を発見`);
+  // debug output removed
   
   if (!q.Items || q.Items.length === 0) {
-    console.log(`[INFO] 対象となる投稿が見つからないため処理を終了`);
+    // debug output removed
   }
 
   // 上記でまとめて処理済み
@@ -177,22 +176,13 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
     let replyApiId: string;
     if (isNumericPostId) {
       replyApiId = post.numericPostId;
-      console.log(`[DEBUG] numericPostIdを使用: ${replyApiId}`);
     } else if (isNumericMainPostId) {
       replyApiId = post.postId;
-      console.log(`[DEBUG] 数字のpostIdを使用: ${replyApiId}`);
     } else {
       replyApiId = post.numericPostId || post.postId;
-      console.log(`[DEBUG] フォールバック使用: ${replyApiId}`);
     }
 
-    // 詳細なID分析
-    console.log(`[DEBUG] ID分析 - SK: ${item.SK?.S}`);
-    console.log(`[DEBUG] - postId: "${post.postId}" (長さ: ${post.postId?.length || 0})`);
-    console.log(`[DEBUG] - numericPostId: "${post.numericPostId}" (長さ: ${post.numericPostId?.length || 0})`);
-    console.log(`[DEBUG] - replyApiId選択: "${replyApiId}" (numericPostId優先: ${!!post.numericPostId})`);
-    console.log(`[DEBUG] - postId数字判定: ${post.postId ? /^\d+$/.test(post.postId) : false}`);
-    console.log(`[DEBUG] - numericPostId数字判定: ${post.numericPostId ? /^\d+$/.test(post.numericPostId) : false}`);
+    // debug output removed
 
     const postInfo: any = {
       postId: post.postId || "空",
@@ -219,22 +209,19 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
         // include is_reply_owned_by_me to enable reliable self-reply detection
         let url = `https://graph.threads.net/v1.0/${encodeURIComponent(replyApiId)}/replies?fields=id,text,username,permalink,is_reply_owned_by_me&access_token=${encodeURIComponent(acct.accessToken)}`;
         
-        console.log(`[INFO] リプライ取得開始: ${replyApiId} (試行${attempt + 1}/${maxRetries})`);
-        console.log(`[DEBUG] 完全なURL: ${url.replace(acct.accessToken, "***TOKEN***")}`);
-        console.log(`[DEBUG] エンコード前ID: "${replyApiId}"`);
-        console.log(`[DEBUG] エンコード後ID: "${encodeURIComponent(replyApiId)}"`);
+        // debug output removed
         
         let r = await fetch(url);
         
         // 方法1が失敗した場合、conversation エンドポイントを試行
         if (!r.ok && attempt === 0) {
-          console.log(`[INFO] repliesエンドポイント失敗 (${r.status}), conversationで再試行`);
+          // debug output removed
           url = `https://graph.threads.net/v1.0/${encodeURIComponent(replyApiId)}/conversation?fields=id,text,username,permalink,is_reply_owned_by_me&access_token=${encodeURIComponent(acct.accessToken)}`;
           r = await fetch(url);
           // 代替IDがある場合は再試行
           if (!r.ok && post.numericPostId && post.postId && post.numericPostId !== post.postId) {
             const alternativeId = post.numericPostId === replyApiId ? post.postId : post.numericPostId;
-            console.log(`[INFO] conversation失敗 (${r.status}), 代替ID "${alternativeId}" でreplies再試行`);
+            // debug output removed
             url = `https://graph.threads.net/v1.0/${encodeURIComponent(alternativeId)}/replies?fields=id,text,username,permalink&access_token=${encodeURIComponent(acct.accessToken)}`;
             r = await fetch(url);
           }
@@ -261,11 +248,10 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
         
         if (!r.ok) { 
           const errorText = await r.text();
-          console.log(`[ERROR] API失敗 (試行${attempt + 1}): ${r.status} ${r.statusText} - ${errorText.substring(0, 100)}`);
+          console.error(`[ERROR] API失敗 (試行${attempt + 1}): ${r.status} ${r.statusText} - ${errorText.substring(0, 100)}`);
           if (errorText.includes("Address unavailable") || r.status >= 500) {
             attempt++;
             if (attempt < maxRetries) {
-              console.log(`[INFO] リトライ実行、${3000}ms後に再試行`);
               await new Promise(resolve => setTimeout(resolve, 3000));
               continue; // while ループを続行
             }
@@ -280,7 +266,7 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
         // 成功時の処理 - GASと同じシンプルなアプローチ
         const json = await r.json();
         const repliesFound = json?.data || [];
-        console.log(`[INFO] ${replyApiId}: ${repliesFound.length}件のリプライ取得成功`);
+        // debug output removed
         const repliesCount = repliesFound.length;
         apiLogEntry.repliesFound = repliesCount;
         // store full response for debugging
@@ -293,7 +279,6 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
 
           // 優先: APIが返すis_reply_owned_by_meを使って除外
           if (rep.is_reply_owned_by_me === true) {
-            console.log(`[DEBUG] 自分のリプライを除外 (is_reply_owned_by_me): ${externalReplyId}`);
             try {
               await putLog({
                 userId,
@@ -303,7 +288,7 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
                 message: "is_reply_owned_by_me=true のため除外",
                 detail: { replyId: rep.id, reason: 'is_reply_owned_by_me' }
               });
-            } catch (e) { console.log('[warn] putLog failed for is_reply flag exclude:', e); }
+            } catch (e) { console.warn('[warn] putLog failed for is_reply flag exclude:', e); }
             continue;
           }
 
@@ -332,12 +317,12 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
               await putLog({ userId, type: "reply-fetch-flag-mismatch", accountId: acct.accountId, status: "info", message: "flag missing but candidate fields matched", detail: debugDetail });
             }
           } catch (e) {
-            console.log('[warn] flag-mismatch logging failed:', e);
+            console.warn('[warn] flag-mismatch logging failed:', e);
           }
 
           const createdAt = nowSec();
           
-          if (externalReplyId && text) {
+            if (externalReplyId && text) {
             const ok = await upsertReplyItem(userId, acct, { 
               externalReplyId, 
               postId: replyApiId, // リプライ取得に使ったIDを保存
@@ -355,13 +340,13 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
         break; // 成功したのでwhile ループを抜ける
         
       } catch (e) {
-        console.log(`[ERROR] リクエスト例外 (試行${attempt + 1}): ${String(e).substring(0, 100)}`);
+        console.error(`[ERROR] リクエスト例外 (試行${attempt + 1}): ${String(e).substring(0, 100)}`);
         
         // Address unavailable エラーまたは一時的エラーの場合はリトライ
         if (String(e).includes("Address unavailable") || String(e).includes("fetch")) {
           attempt++;
           if (attempt < maxRetries) {
-            console.log(`[INFO] 例外リトライ、${3000}ms後に再試行`);
+            // debug output removed
             await new Promise(resolve => setTimeout(resolve, 3000));
             continue; // while ループを続行
           }
@@ -403,16 +388,16 @@ async function fetchIncomingReplies(userId: string, acct: any) {
     hasProviderUserId: !!acct.providerUserId
   };
   
-  console.log(`[DEBUG] アカウント ${acct.accountId} のリプライ取得開始`, debugInfo);
+  // debug output removed
   
   // 手動取得の場合はautoReplyの条件を緩和（警告のみ）
   if (!acct.autoReply) {
-    console.log(`[WARNING] アカウント ${acct.accountId} はautoReplyがOFFですが手動取得を実行します`);
+    console.warn(`[WARNING] アカウント ${acct.accountId} はautoReplyがOFFですが手動取得を実行します`);
   }
   
   try {
     const r = await fetchThreadsRepliesAndSave({ acct, userId });
-    console.log(`[DEBUG] アカウント ${acct.accountId} の取得結果: ${r.saved}件 (投稿${r.postsFound}件中、postId有り${r.postsWithPostId}件)`);
+    // debug output removed
     return { 
       fetched: r.saved || 0,
       postsFound: r.postsFound || 0,
@@ -468,7 +453,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }))
     };
 
-    console.log(`[DEBUG] 処理完了:`, debugSummary);
+    // debug output removed
 
     return res.status(200).json({
       ok: true,

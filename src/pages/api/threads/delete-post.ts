@@ -12,7 +12,7 @@ async function putLog({ userId = "unknown", type, accountId = "", targetId = "",
   const allowDebug = (process.env.ALLOW_DEBUG_EXEC_LOGS === 'true' || process.env.ALLOW_DEBUG_EXEC_LOGS === '1');
   const shouldPersist = (status === 'error' && !!userId) || allowDebug;
   if (!shouldPersist) {
-    try { console.log('[debug] putLog skipped persist', { userId, type, status, message }); } catch (_) {}
+    // debug output removed
     return;
   }
 
@@ -30,7 +30,7 @@ async function putLog({ userId = "unknown", type, accountId = "", targetId = "",
   try {
     await ddb.send(new PutItemCommand({ TableName: TBL_LOGS, Item: item }));
   } catch (e) {
-    console.log("[warn] putLog skipped:", String((e as Error)?.message || e));
+    console.warn("[warn] putLog skipped:", String((e as Error)?.message || e));
   }
 }
 
@@ -77,25 +77,25 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           if (tp === 'delete-post' && aid === accountId && t >= startOfDay) todayDeletes++;
         } catch (_) {}
       }
-      console.log('[delete-post] todayDeletes for account', accountId, todayDeletes);
+      // debug output removed
       if (todayDeletes >= 100) {
         await putLog({ userId, type: 'delete-post', accountId, targetId: numericPostId, status: 'warn', message: 'daily delete limit reached' });
         return res.status(429).json({ ok: false, error: 'daily delete limit reached (100)', remaining: 0 });
       }
     } catch (e) {
-      console.log('[warn] count today deletes failed', e);
+      console.warn('[warn] count today deletes failed', e);
     }
 
     // Call Threads delete API (prefer oauthAccessToken)
     const url = `https://graph.threads.net/v1.0/${encodeURIComponent(numericPostId)}?access_token=${encodeURIComponent(usedToken)}`;
-    console.log("[delete-post] calling threads delete", { url: url.slice(0, 120) });
+    // debug output removed
     const resp = await fetch(url, { method: "DELETE" });
     const text = await resp.text();
     let json: any = {};
     try { json = text ? JSON.parse(text) : {}; } catch { json = { raw: text }; }
 
     // always log response for debugging
-    console.log('[delete-post] threads response', { status: resp.status, body: json });
+    // debug output removed
 
     // If response status is 400/401/403/404, provide clearer message
     if (resp.status === 401 || resp.status === 403) {
@@ -108,6 +108,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     if (!resp.ok) {
+      // handle known non-fatal cases: object missing or unsupported
+      const errMsg = json?.error || json;
+      const bodyStr = typeof errMsg === 'string' ? errMsg : JSON.stringify(errMsg || {});
+      // treat FB API error_subcode 33 (cannot be loaded / missing permissions) as non-fatal: remove scheduled record
+      const isMissing = bodyStr.includes('does not exist') || bodyStr.includes('cannot be loaded') || (json?.error?.error_subcode === 33);
+      if (isMissing) {
+        try {
+          if (scheduledPostId) {
+            await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${scheduledPostId}` } } }));
+          }
+        } catch (e) {
+    // debug warn removed
+        }
+        await putLog({ userId, type: 'delete-post', accountId, targetId: numericPostId, status: 'warn', message: 'threads media missing or unsupported - treated as deleted', detail: json });
+        return res.status(200).json({ ok: true, deletedCount: 0, deletedScheduled: !!scheduledPostId, detail: json });
+      }
       // include body text for easier debugging
       await putLog({ userId, type: "delete-post", accountId, targetId: numericPostId, status: "error", message: `threads delete failed ${resp.status}`, detail: { status: resp.status, body: json } });
       return res.status(500).json({ ok: false, error: `threads delete failed: ${resp.status}`, detail: json });
@@ -126,7 +142,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${scheduledPostId}` } } }));
         deletedScheduled = true;
       } catch (e) {
-        console.log('[warn] scheduled record delete failed', e);
+        // debug warn removed
       }
     }
 
@@ -134,7 +150,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     return res.status(200).json({ ok: true, deletedCount: success ? 1 : 0, deletedScheduled, detail: json });
   } catch (e: any) {
-    console.error('delete-post error', e);
+    // debug error removed
     return res.status(500).json({ ok: false, error: String(e) });
   }
 }

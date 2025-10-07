@@ -86,7 +86,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     selectedModel = allow.has(rawModel) ? rawModel : "gpt-5-mini";
     masterPrompt = result.Item?.masterPrompt?.S || "";
     if (!openaiApiKey) throw new Error("APIキー未設定です");
-  } catch (e: unknown) {
+  } catch (e) {
     res.status(500).json({ error: "APIキーの取得に失敗: " + String(e) }); return;  // [MOD] Next API は void を返す
   }
 
@@ -131,8 +131,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           : (simple ? `【簡易ペルソナ】${simple}` : "");
       }
     } catch (e) {
-      console.log("fetch persona failed:", e);
-      // 取得失敗時は未使用扱い
+      // debug output removed
       personaText = "";
     }
 
@@ -213,7 +212,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           : (simple ? `【簡易ペルソナ】${simple}` : "");
       }
     } catch (e) {
-      console.log("fetch persona for reply failed:", e);
+      // debug output removed
       personaText = "";
     }
 
@@ -334,7 +333,7 @@ ${incomingReply}
               (data._fallbacks = data._fallbacks || []).push({ model: fbModel, raw: fbData });
             }
           } catch (ee) {
-            console.log("fallback attempt failed:", ee);
+            // debug output removed
           }
         }
       }
@@ -371,8 +370,7 @@ ${incomingReply}
           data._retry = retryData;
         }
       } catch (e) {
-        // ignore retry errors, continue to return what we have
-        console.log("retry openai failed:", e);
+        // debug output removed
       }
     }
 
@@ -399,14 +397,14 @@ ${incomingReply}
           data._fallback = { model: fbModel, raw: fbData };
         }
       } catch (e) {
-        console.log("fallback openai failed:", e);
+        // debug output removed
       }
     }
 
     // Also include raw response for debugging
     res.status(200).json({ text, raw: data }); return;  // [MOD] Next API は void を返す
 
-  } catch (e: unknown) {
+  } catch (e) {
     res.status(500).json({ error: "OpenAI API呼び出し失敗: " + String(e) }); return;  // [MOD] Next API は void を返す
   }
 }

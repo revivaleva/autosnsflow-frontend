@@ -20,6 +20,8 @@ import {
   DescribeTableCommand,
   DeleteItemCommand,
 } from "@aws-sdk/client-dynamodb";
+import config from '@/lib/config';
+import { postToThreads as sharedPostToThreads } from '@/lib/threads';
 import crypto from "crypto";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
 
@@ -224,7 +226,7 @@ async function callOpenAIText({ apiKey, model, temperature, max_tokens, prompt }
         try { data._retry = retryData; } catch {}
       }
     } catch (e) {
-      console.log("retry openai failed:", e);
+      console.warn("retry openai failed:", e);
     }
   }
 
@@ -248,7 +250,7 @@ async function callOpenAIText({ apiKey, model, temperature, max_tokens, prompt }
         try { data._fallback = { model: fb, raw: fbData }; } catch {}
       }
     } catch (e) {
-      console.log("fallback openai failed:", e);
+      console.warn("fallback openai failed:", e);
     }
   }
 
@@ -259,7 +261,7 @@ async function callOpenAIText({ apiKey, model, temperature, max_tokens, prompt }
 // Discord Webhook送信の独自実装
 async function postDiscord(urls: string[], content: string) {
   if (!urls || urls.length === 0) {
-    console.log("[info] Discord webhook URLが設定されていないため送信をスキップ");
+    console.info("[info] Discord webhook URLが設定されていないため送信をスキップ");
     return;
   }
 
@@ -281,7 +283,7 @@ async function postDiscord(urls: string[], content: string) {
         throw new Error(`Discord webhook error: ${response.status} ${response.statusText}`);
       }
 
-      console.log(`[info] Discord webhook送信成功: ${url}`);
+      console.info(`[info] Discord webhook送信成功: ${url}`);
       return { success: true, url };
     } catch (error) {
       console.error(`[error] Discord webhook送信失敗: ${url}`, error);
@@ -293,7 +295,7 @@ async function postDiscord(urls: string[], content: string) {
   const successCount = results.filter(r => r.status === 'fulfilled' && r.value.success).length;
   const totalCount = urls.length;
 
-  console.log(`[info] Discord webhook送信完了: ${successCount}/${totalCount} 成功`);
+  console.info(`[info] Discord webhook送信完了: ${successCount}/${totalCount} 成功`);
 }
 
 async function getDiscordWebhooks(userId = USER_ID) {
@@ -310,8 +312,17 @@ async function getDiscordWebhooks(userId = USER_ID) {
 }
 
 async function postDiscordLog({ userId = USER_ID, content, isError = false }: any) {
-  // Debug Discord logging removed
-  return;
+  try {
+    const sets = await getDiscordWebhookSets(userId);
+    const urls = isError ? (sets.error && sets.error.length ? sets.error : sets.normal) : sets.normal;
+    if (!urls || urls.length === 0) {
+      console.info("[info] Discord webhook URLが設定されていないため送信をスキップ");
+      return;
+    }
+    await postDiscord(urls, content);
+  } catch (e) {
+    console.warn("[warn] postDiscordLog failed:", String(e));
+  }
 }
 
 async function getDiscordWebhookSets(userId = USER_ID) {
@@ -644,7 +655,7 @@ async function deleteUnpostedAutoPosts(userId: any, acct: any, groupTypeStr: any
       }));
       deletedCount++;
     } catch (e) {
-      console.log(`[warn] 削除失敗: ${item.SK?.S}`, e);
+      console.warn(`[warn] 削除失敗: ${item.SK?.S}`, e);
     }
   }
   
@@ -737,11 +748,11 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
               : (simple ? `【簡易ペルソナ】${simple}` : "");
           }
         } catch (e) {
-          console.log("[warn] ペルソナ取得失敗:", e);
+          console.warn("[warn] ペルソナ取得失敗:", e);
           personaText = "";
         }
       } else {
-        console.log("[warn] accountIdが未設定のためペルソナ取得をスキップ");
+        console.warn("[warn] accountIdが未設定のためペルソナ取得をスキップ");
       }
       
       prompt = `
@@ -767,7 +778,7 @@ ${themeStr}
     try {
       // log call metadata (do not log API key)
       // OpenAI call start (minimal logging)
-      try { console.log('[debug] OpenAI call start', { userId, accountId: acct.accountId, scheduledPostId, model: settings.model || DEFAULT_OPENAI_MODEL }); } catch (_) {}
+      try { /* debug removed */ } catch (_) {}
 
       const openAiRes = await callOpenAIText({
         apiKey: settings.openaiApiKey,
@@ -779,12 +790,12 @@ ${themeStr}
       text = openAiRes?.text;
 
       // log response length only (avoid full text in logs)
-      try { console.log('[debug] OpenAI returned length', text ? String(text).length : 0); } catch(_) {}
+      try { /* debug removed */ } catch(_) {}
       // also persist a small trace to ExecutionLogs for easier post-mortem (no full text stored to DB)
       try { await putLog({ userId, type: 'openai-call', accountId: acct.accountId, targetId: scheduledPostId, status: 'info', message: 'openai_call_complete', detail: { textLength: text ? String(text).length : 0 } }); } catch (_) {}
     } catch (e) {
       // record failure and rethrow to be handled by caller
-      try { console.log('[error] OpenAI call failed', String(e)); } catch(_) {}
+      try { console.error('[error] OpenAI call failed', String(e)); } catch(_) {}
       try { await putLog({ userId, type: 'openai-call', accountId: acct.accountId, targetId: scheduledPostId, status: 'error', message: 'openai_call_failed', detail: { error: String(e) } }); } catch (_) {}
       throw e;
     }
@@ -820,10 +831,10 @@ ${themeStr}
           UpdateExpression: "SET content = :c, pendingForAutoPostAccount = :acc REMOVE needsContentAccount",
           ExpressionAttributeValues: { ":c": { S: cleanText }, ":acc": { S: acct.accountId } },
         }));
-        try { console.log('[debug] saved generated content', { scheduledPostId, length: cleanText.length }); } catch(_) {}
+        try { /* debug removed */ } catch(_) {}
         await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "ok", message: "本文生成を完了" });
       } else {
-        try { console.log('[warn] generated text invalid or too short', { scheduledPostId, originalLength: text ? String(text).length : 0, cleanedLength: cleanText ? cleanText.length : 0 }); } catch(_) {}
+        try { console.warn('[warn] generated text invalid or too short', { scheduledPostId, originalLength: text ? String(text).length : 0, cleanedLength: cleanText ? cleanText.length : 0 }); } catch(_) {}
         await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "error", message: "生成されたテキストが不正です", detail: { originalText: text, cleanedText: cleanText } });
       }
     }
@@ -851,7 +862,7 @@ async function putLog({
   const shouldPersist = Boolean(persist) || (status === 'error' && !!userId) || (allowDebug && status !== 'skip');
 
   if (!shouldPersist) {
-    try { console.log('[debug] putLog skipped persist', { userId, type, status, message }); } catch (_) {}
+    try { /* debug removed */ } catch (_) {}
     return;
   }
 
@@ -870,7 +881,7 @@ async function putLog({
     await ddb.send(new PutItemCommand({ TableName: TBL_LOGS, Item: item }));
   } catch (e) {
     const error = e as Error;
-    console.log("[warn] putLog skipped:", String(error?.name || error));
+    console.warn("[warn] putLog skipped:", String(error?.name || error));
   }
 }
 
@@ -880,7 +891,7 @@ async function persistDebugLog(args: any) {
   try {
     return await putLog({ ...args, persist: true });
   } catch (e) {
-    console.log('[warn] persistDebugLog failed:', String(e));
+    console.warn('[warn] persistDebugLog failed:', String(e));
   }
 }
 
@@ -903,16 +914,16 @@ export const handler = async (event: any = {}) => {
       const accounts = await getThreadsAccounts(userId);
       const accountIds = (accounts || []).map((a: any) => a.accountId).filter(Boolean);
       if (job === 'hourly') {
-        console.log('[TEST] Running hourly job for single user:', userId, 'accounts=', accountIds);
+        // debug removed
         const res = await runHourlyJobForUser(userId);
         return { statusCode: 200, body: JSON.stringify({ testInvocation: true, job: 'hourly', userId, accountIds, result: res }) };
       } else {
-        console.log('[TEST] Running every-5min job for single user:', userId, 'accounts=', accountIds);
+        // debug removed
         const res = await runFiveMinJobForUser(userId);
         return { statusCode: 200, body: JSON.stringify({ testInvocation: true, job: 'every-5min', userId, accountIds, result: res }) };
       }
     } catch (e) {
-      console.log('[TEST] user-specific job failed:', String(e));
+      console.warn('[TEST] user-specific job failed:', String(e));
       return { statusCode: 500, body: JSON.stringify({ testInvocation: true, job, userId: event?.userId, error: String(e) }) };
     }
   }
@@ -926,7 +937,7 @@ export const handler = async (event: any = {}) => {
 
   if (job === "hourly") {
     const userIds = await getActiveUserIds();
-    const totals = { createdCount: 0, fetchedReplies: 0, replyDrafts: 0, skippedAccounts: 0 };
+    const totals = { createdCount: 0, fetchedReplies: 0, replyDrafts: 0, skippedAccounts: 0, deletedCount: 0 };
 
     for (const uid of userIds) {
       try {
@@ -938,13 +949,20 @@ export const handler = async (event: any = {}) => {
         totals.skippedAccounts += Number(r?.skippedAccounts || 0);
         userSucceeded++;
       } catch (e) {
-        console.log("hourly error for", uid, e);
+        console.warn("hourly error for", uid, e);
         await putLog({ userId: uid, type: "job", status: "error", message: "hourly job failed", detail: { error: String(e) } });
         await postDiscordLog({
           userId: uid,
           isError: true,
           content: `**[ERROR hourly] user=${uid}**\n${String(e).slice(0, 800)}`
         });
+      }
+      // After processing hourly tasks for the user, also run deletion queue processing for this user
+      try {
+        const dqRes = await processDeletionQueueForUser(uid);
+        totals.deletedCount += Number(dqRes?.deletedCount || 0);
+      } catch (e) {
+        console.warn('[warn] processDeletionQueueForUser (hourly) failed for', uid, String(e));
       }
     }
 
@@ -982,7 +1000,7 @@ export const handler = async (event: any = {}) => {
         preFilterTotal = await countAllScheduledPosts();
         await postDiscordMaster(`**[PRUNE] pre-filter total items across table: ${preFilterTotal}**`);
       } catch (e) {
-        console.log('[warn] countAllScheduledPosts failed:', e);
+        console.warn('[warn] countAllScheduledPosts failed:', e);
       }
     }
     let totalDeleted = 0;
@@ -1038,9 +1056,9 @@ export const handler = async (event: any = {}) => {
           const dl = await pruneOldExecutionLogs(uid);
           totalDeleted += Number(dl || 0);
           totalLogDeleted += Number(dl || 0);
-        } catch (e) { console.log('[warn] pruneOldExecutionLogs failed for', uid, e); }
+        } catch (e) { console.warn('[warn] pruneOldExecutionLogs failed for', uid, e); }
       } catch (e) {
-        console.log("[warn] daily-prune failed for", uid, e);
+        console.warn("[warn] daily-prune failed for", uid, e);
         await putLog({ userId: uid, type: "prune", status: "error", message: "daily prune failed", detail: { error: String(e) } });
       }
     }
@@ -1071,7 +1089,7 @@ export const handler = async (event: any = {}) => {
         await postDiscordMaster(formatMasterMessage({ job: "daily-prune", startedAt, finishedAt, userTotal: userIds.length, userSucceeded, totals: t }));
         return { statusCode: 200, body: JSON.stringify({ deleted: allDeleted, logDeleted: allLogDeleted, preFilterTotal }) };
       } catch (e) {
-        console.log('[warn] full-table prune failed:', e);
+        console.warn('[warn] full-table prune failed:', e);
         await postDiscordMaster(`**[PRUNE] full-table prune failed**`);
         return { statusCode: 500, body: JSON.stringify({ error: String(e) }) };
       }
@@ -1097,7 +1115,7 @@ export const handler = async (event: any = {}) => {
       totals.rateSkipped += Number(r?.rateSkipped || 0);
       userSucceeded++;
     } catch (e) {
-      console.log("5min error for", uid, e);
+      console.warn("5min error for", uid, e);
       await putLog({ userId: uid, type: "job", status: "error", message: "every-5min job failed", detail: { error: String(e) } });
       await postDiscordLog({
         userId: uid,
@@ -1275,7 +1293,7 @@ async function upsertReplyItem(userId: any, acct: any, { externalReplyId, postId
         
         responseContent = cleanReply;
       } catch (e) {
-        console.log(`[warn] 返信コンテンツ生成失敗: ${String(e)}`);
+        console.warn(`[warn] 返信コンテンツ生成失敗: ${String(e)}`);
         await putLog({ 
           userId, type: "reply-generate", accountId: acct.accountId, 
           status: "error", message: "返信コンテンツ生成失敗", 
@@ -1308,7 +1326,7 @@ async function upsertReplyItem(userId: any, acct: any, { externalReplyId, postId
 }
 
 async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 }: any) {
-  console.log(`[reply-fetch] start account=${acct?.accountId} lookbackSec=${lookbackSec}`);
+  // debug removed
   if (!acct?.accessToken) throw new Error("Threads のトークン不足");
   if (!acct?.providerUserId) {
     const pid = await ensureProviderUserId(userId, acct);
@@ -1334,7 +1352,7 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
     }));
   } catch (e) {
     if (!isGsiMissing(e)) throw e;
-    console.log("[warn] GSI2 missing on ScheduledPosts. fallback to PK Query");
+    console.warn("[warn] GSI2 missing on ScheduledPosts. fallback to PK Query");
     q = await ddb.send(new QueryCommand({
       TableName: TBL_SCHEDULED,
       KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
@@ -1387,11 +1405,11 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
     let usedUrl = buildRepliesUrl(replyApiId);
     let r = await fetch(usedUrl);
     if (!r.ok) {
-      console.log(`[reply-fetch] replies failed ${r.status} for id=${replyApiId}, trying conversation`);
+      // debug removed
       usedUrl = buildConversationUrl(replyApiId);
       r = await fetch(usedUrl);
       if (!r.ok && alternativeId) {
-        console.log(`[reply-fetch] conversation failed ${r.status}, trying alternative id=${alternativeId} with replies`);
+        // debug removed
         usedUrl = buildRepliesUrl(alternativeId);
         r = await fetch(usedUrl);
       }
@@ -1413,7 +1431,7 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
     for (const rep of (json?.data || [])) {
       // is_reply_owned_by_me フィールドが利用可能な場合はそれを優先して除外
       if (rep.is_reply_owned_by_me === true) {
-        console.log(`[DEBUG] lambda: is_reply_owned_by_me=true のため除外: ${String(rep.id || "")}`);
+        // debug removed
         try {
           await putLog({
             userId,
@@ -1424,7 +1442,7 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
             detail: { replyId: rep.id, reason: 'is_reply_owned_by_me' }
           });
         } catch (e) {
-          console.log("[warn] putLog failed for exclude log:", e);
+          console.warn("[warn] putLog failed for exclude log:", e);
         }
         continue;
       }
@@ -1451,7 +1469,7 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
           await putLog({ userId, type: "reply-fetch-flag-mismatch", accountId: acct.accountId, status: "info", message: "flag missing but candidate fields matched", detail });
         }
       } catch (e) {
-        console.log('[warn] flag-mismatch logging failed in lambda:', e);
+            console.warn('[warn] flag-mismatch logging failed in lambda:', e);
       }
 
       const externalReplyId = String(rep.id);
@@ -1521,7 +1539,7 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
     return { created: 0, deleted: 0, skipped: true, debug: [{ reason: "no_slots", group: group.groupName }] } as any;
   }
   const useSlots = slots.slice(0, 10);
-  console.log(`[debug] auto-post group loaded: ${group.groupName} slots=${useSlots.length}`);
+  // debug removed
 
   const today = jstNow();
   const settings = await getUserSettings(userId);
@@ -1661,103 +1679,9 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
 
 /// ========== プラットフォーム直接API（Threads） ======
 // ====== GAS の実装に合わせた Threads 投稿 ======
-async function postToThreads({ accessToken, text, userIdOnPlatform, inReplyTo = undefined }: any) {
-  if (!accessToken) throw new Error("Threads accessToken 未設定");
-  if (!userIdOnPlatform) throw new Error("Threads userId 未設定");
-
-  const base = `https://graph.threads.net/v1.0`;
-
-  // --- コンテナ作成（公式ドキュメント準拠：media_type は必須） ---
-  // 🔧 公式ドキュメント準拠: reply_to_id を使用
-  // https://developers.facebook.com/docs/threads/retrieve-and-manage-replies/create-replies
-  const createPayload: any = {
-    media_type: "TEXT",
-    text,
-    access_token: accessToken,
-  };
-  if (inReplyTo) {
-    // ドキュメント準拠: reply_to_id を使用
-    // https://developers.facebook.com/docs/threads/retrieve-and-manage-replies/create-replies
-    createPayload.reply_to_id = inReplyTo;
-  }
-
-  // 🔧 公式ドキュメント準拠: Create は /me/threads を使用
-  const createRes = await fetch(`${base}/me/threads`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(createPayload),
-  });
-
-  // フォールバックは行わない
-
-  if (!createRes.ok) {
-    const t = await createRes.text().catch(() => "");
-    throw new Error(`Threads create error: ${createRes.status} ${t}`);
-  }
-
-  const createJson = await createRes.json().catch(() => ({}));
-  const creation_id = createJson?.id;
-  if (!creation_id) throw new Error("Threads creation_id 取得失敗");
-
-  // --- 公開（公式ドキュメント準拠） ---
-  // 🔧 公式ドキュメント準拠: Publish は /{threads-user-id}/threads_publish を使用
-  // Publish must use /me/threads_publish with form-urlencoded body { creation_id }
-  const pubRes = await fetch(`${base}/me/threads_publish?access_token=${encodeURIComponent(accessToken)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: `creation_id=${encodeURIComponent(creation_id)}`,
-  });
-  if (!pubRes.ok) {
-    const t = await pubRes.text().catch(() => "");
-    throw new Error(`Threads publish error: ${pubRes.status} ${t}`);
-  }
-  const pubJson = await pubRes.json().catch(() => ({}));
-  const initialPostId = pubJson?.id || creation_id;
-  
-  // リプライ妥当性を検証（reply_to_id による返信になっているか）
-  if (inReplyTo) {
-    try {
-      const verifyUrl = `${base}/${encodeURIComponent(initialPostId)}?fields=id,reply_to_id,parent_id&access_token=${encodeURIComponent(accessToken)}`;
-      const vRes = await fetch(verifyUrl);
-      const vText = await vRes.text().catch(() => "");
-      let vJson: any = {};
-      try { vJson = JSON.parse(vText); } catch {}
-      const ok = !!(vJson?.reply_to_id === inReplyTo || vJson?.parent_id === inReplyTo);
-      if (!ok) {
-        // 間違って通常投稿になっていた場合は削除し、上位にエラーを返す
-        try {
-          await fetch(`${base}/${encodeURIComponent(initialPostId)}?access_token=${encodeURIComponent(accessToken)}`, { method: "DELETE" });
-        } catch {}
-        throw new Error(`not_reply_posted: expected reply to ${inReplyTo} but created normal post`);
-      }
-    } catch (e) {
-      // 検証APIが使えない場合は続行（以後のpermalink取得で補助）
-      console.log(`[warn] reply verification failed: ${String(e).slice(0,200)}`);
-    }
-  }
-
-  // Threads APIで投稿詳細を取得してリンク用IDを取得
-  try {
-    const postDetailUrl = `https://graph.threads.net/v1.0/${encodeURIComponent(initialPostId)}?fields=id,permalink&access_token=${accessToken}`;
-    const detailRes = await fetch(postDetailUrl);
-    if (detailRes.ok) {
-      const detailJson = await detailRes.json();
-      // permalinkからリンク用IDを抽出: https://www.threads.net/@username/post/ABC123
-      const permalink = detailJson?.permalink;
-      if (permalink) {
-        const linkIdMatch = permalink.match(/\/post\/([^/?]+)/);
-        if (linkIdMatch) {
-          const linkId = linkIdMatch[1];
-          console.log(`[postToThreads] 投稿ID変換: ${initialPostId} -> ${linkId}`);
-          return { postId: linkId, numericId: initialPostId };
-        }
-      }
-    }
-  } catch (e) {
-    console.log("[postToThreads] permalink取得失敗、数字IDをそのまま使用:", e);
-  }
-  
-  return { postId: initialPostId };
+async function postToThreads({ accessToken, oauthAccessToken, text, userIdOnPlatform, inReplyTo = undefined }: any) {
+  // Delegate to shared implementation in src/lib/threads.ts to ensure consistent token selection
+  return await sharedPostToThreads({ accessToken: accessToken || '', oauthAccessToken: oauthAccessToken || undefined, text, userIdOnPlatform, inReplyTo });
 }
 
 /// ========== 5分ジョブ（実投稿・返信送信・2段階投稿） ==========
@@ -1865,9 +1789,9 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
     // 詳細デバッグ: 対象アカウントだったらフルアイテムとパース後オブジェクトを出力
     if (acct.accountId === 'remigiozarcorb618' || userId === 'b7b44a38-e051-70fa-2001-0260ae388816') {
       try {
-        console.log('[DEBUG-CAND] raw full.Item:', JSON.stringify(full.Item || {}));
-      } catch (e) { console.log('[DEBUG-CAND] failed stringify full.Item'); }
-      try { console.log('[DEBUG-CAND] unmarshalled x:', JSON.stringify(x || {})); } catch(e) { console.log('[DEBUG-CAND] failed stringify x'); }
+        // debug removed
+      } catch (e) { /* debug removed */ }
+      try { /* debug removed */ } catch(e) { /* debug removed */ }
     }
     const postedZero = !x.postedAt || x.postedAt === 0 || x.postedAt === "0";
     const stOK = (x.status || "") === "scheduled";
@@ -2059,7 +1983,7 @@ async function runRepliesForAccount(acct: any, userId = USER_ID, settings: any =
     }));
   } catch (e) {
     if (!isGsiMissing(e)) throw e;
-    console.log("[warn] GSI1 missing on Replies. fallback to PK Query");
+    console.warn("[warn] GSI1 missing on Replies. fallback to PK Query");
     res = await ddb.send(new QueryCommand({
       TableName: TBL_REPLIES,
       KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
@@ -2156,7 +2080,7 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
   const threshold = nowSec() - delayMin * 60;
 
   // 観測性向上: 入口ログ
-  console.log(`[second-stage] start account=${acct.accountId} delayMin=${delayMin} threshold=${threshold}`);
+  // debug removed
 
   let q;
   try {
@@ -2175,7 +2099,7 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
     }));
   } catch (e) {
     if (!isGsiMissing(e)) throw e;
-    console.log("[warn] GSI2 missing on ScheduledPosts. fallback to PK Query");
+    console.warn("[warn] GSI2 missing on ScheduledPosts. fallback to PK Query");
     q = await ddb.send(new QueryCommand({
       TableName: TBL_SCHEDULED,
       KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
@@ -2192,7 +2116,7 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
   }
 
   // 観測性向上: クエリ結果を記録
-  console.log(`[second-stage] query items=${q.Items?.length || 0}`);
+  // debug removed
   if (!q.Items || q.Items.length === 0) {
     await putLog({
       userId,
@@ -2261,7 +2185,7 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
   try {
     const text2 = acct.secondStageContent;
     // note: second-stage posting attempt logged minimally
-    try { console.log('[info] second-stage attempt', { account: acct.accountId, parent: firstPostId }); } catch (_) {}
+    try { console.info('[info] second-stage attempt', { account: acct.accountId, parent: firstPostId }); } catch (_) {}
     const { postId: pid2 } = await postToThreads({ accessToken: acct.accessToken, text: text2, userIdOnPlatform: acct.providerUserId, inReplyTo: firstPostId });
     await ddb.send(new UpdateItemCommand({
       TableName: TBL_SCHEDULED,
@@ -2320,14 +2244,14 @@ async function runHourlyJobForUser(userId: any) {
       const genRes = await processPendingGenerationsForAccount(userId, acct, 1);
       if (genRes && genRes.generated) createdCount += genRes.generated;
     } catch (e) {
-      console.log('[warn] processPendingGenerationsForAccount failed:', e);
+      console.warn('[warn] processPendingGenerationsForAccount failed:', e);
     }
   }
 
   const urls = await getDiscordWebhooks(userId);
   const now = new Date().toISOString();
   // minor debug: totals logged at info level only
-  try { console.log('[info] hourly totals', { createdCount, fetchedReplies, replyDrafts, skippedAccounts }); } catch (e) {}
+  try { console.info('[info] hourly totals', { createdCount, fetchedReplies, replyDrafts, skippedAccounts }); } catch (e) {}
   // `metrics` が空（= 実行なし）の場合は簡略化して 'hourly：実行なし' のみ送る
   const metrics = formatNonZeroLine([
     { label: "予約投稿作成", value: createdCount, suffix: " 件" },
@@ -2355,7 +2279,7 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
 
   // Prefer sparse GSI (needsContentAccount + nextGenerateAt) to find candidates needing content
   try {
-    console.log('[gen] processPendingGenerationsForAccount start', { userId, accountId: acct.accountId, limit });
+    // debug removed
     let q;
     // fetchLimit: how many candidates to fetch from GSI/PK before sorting and applying the user-requested `limit`
     const fetchLimit = Math.max(Number(limit) * 10, 100);
@@ -2390,7 +2314,7 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
     }
 
     const items = (q.Items || []);
-    console.log('[gen] query returned candidate keys', { count: items.length });
+    // debug removed
 
     // Prefetch full items so we can sort by scheduledAt (oldest first)
     const candidates: any[] = [];
@@ -2402,7 +2326,7 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
         const rec = unmarshall(full.Item || {});
         candidates.push({ pk, sk, rec });
       } catch (e) {
-        console.log('[gen] prefetch GetItem failed', { pk, sk, err: String(e) });
+        // debug removed
       }
     }
 
@@ -2412,18 +2336,18 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
     for (const c of candidates) {
       if (generated >= limit) break;
       const pk = c.pk; const sk = c.sk; const rec = c.rec || {};
-      console.log('[gen] evaluating candidate', { pk, sk });
+      // debug removed
       const contentEmpty = !rec.content || String(rec.content || '').trim() === '';
-      console.log('[gen] candidate record', { pk, sk, scheduledAt: rec.scheduledAt || null, contentEmpty, nextGenerateAt: rec.nextGenerateAt || null, generateAttempts: rec.generateAttempts || 0, generateLock: rec.generateLock || null });
+      // debug removed
       // 定期実行は「本文が空のデータ」のみに対して生成を行う
       if (!contentEmpty) {
-        console.log('[gen] skip candidate content present', { pk, sk });
+        // debug removed
         continue;
       }
       const nextGen = Number(rec.nextGenerateAt || 0);
       // nextGenerateAt が将来に設定されていればスキップ（バックオフ等）
       if (nextGen > now) {
-        console.log('[gen] skip candidate nextGenerateAt in future', { pk, sk, nextGen });
+        // debug removed
         continue;
       }
 
@@ -2432,7 +2356,7 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
       const lockExpireSec = 60 * 10; // ロック10分
       const expiresAt = now + lockExpireSec;
       try {
-        console.log('[gen] attempting to acquire lock', { pk, sk, worker: `worker:${process.env.AWS_LAMBDA_LOG_STREAM_NAME || 'lambda'}:${now}`, expiresAt });
+        // debug removed
         await ddb.send(new UpdateItemCommand({
           TableName: TBL_SCHEDULED,
           Key: { PK: { S: pk }, SK: { S: sk } },
@@ -2445,9 +2369,9 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
             ":now": { N: String(now) }
           }
         }));
-        console.log('[gen] lock acquired', { pk, sk });
+        // debug removed
       } catch (e) {
-        console.log('[gen] lock acquire failed, skipping', { pk, sk, err: String(e) });
+        // debug removed
         continue;
       }
 
@@ -2476,7 +2400,7 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
       } catch (e) { }
     }
   } catch (e) {
-    console.log('[warn] processPendingGenerationsForAccount query failed:', e);
+    console.warn('[warn] processPendingGenerationsForAccount query failed:', e);
   }
 
   if (generated > 0) await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'ok', message: `本文生成 ${generated} 件` });
@@ -2505,7 +2429,7 @@ async function runFiveMinJobForUser(userId: any) {
         // 観測ログ用記録
       }
     } catch (e) {
-      console.log('[warn] processPendingGenerationsForAccount failed (5min):', e);
+      console.warn('[warn] processPendingGenerationsForAccount failed (5min):', e);
     }
 
     totalAuto += a.posted || 0;
@@ -2528,7 +2452,7 @@ async function runFiveMinJobForUser(userId: any) {
         await performScheduledDeletesForAccount(acct, userId, settings);
       }
     } catch (e) {
-      console.log("[warn] performScheduledDeletesForAccount failed:", e);
+      console.warn("[warn] performScheduledDeletesForAccount failed:", e);
     }
   }
 
@@ -2591,7 +2515,7 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
               }
             }
           } catch (e) {
-            console.log("[warn] failed to load slots for delete inference:", String(e));
+            console.warn("[warn] failed to load slots for delete inference:", String(e));
           }
         }
       }
@@ -2690,17 +2614,17 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
         }));
 
         const fbItems = (fb.Items || []);
-        console.log('[gen] PK fallback returned', { count: fbItems.length });
+        // debug removed
           for (const fit of fbItems) {
           if (_fallback_generated >= _fallback_limit) break;
           const fpk = getS(fit.PK) || ''; const fsk = getS(fit.SK) || '';
-          console.log('[gen] fallback evaluating', { fpk, fsk });
+          // debug removed
           const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: fpk }, SK: { S: fsk } } }));
           const rec = unmarshall(full.Item || {});
           const contentEmpty = !rec.content || String(rec.content || '').trim() === '';
           const nextGen = Number(rec.nextGenerateAt || 0);
-          if (!contentEmpty) { console.log('[gen] fallback skip content present', { fpk, fsk }); continue; }
-          if (nextGen > now) { console.log('[gen] fallback skip nextGenerateAt future', { fpk, fsk, nextGen }); continue; }
+          if (!contentEmpty) { /* debug removed */ continue; }
+          if (nextGen > now) { /* debug removed */ continue; }
           // attempt lock
           try {
             await ddb.send(new UpdateItemCommand({
@@ -2712,23 +2636,23 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
               ExpressionAttributeValues: { ":id": { S: `worker:${process.env.AWS_LAMBDA_LOG_STREAM_NAME || 'lambda'}:${now}` }, ":ts": { N: String(now + 600) }, ":now": { N: String(now) } }
             }));
           } catch (e) {
-            console.log('[gen] fallback lock failed', { fpk, fsk, err: String(e) });
+            // debug removed
             continue;
           }
 
           try {
             await generateAndAttachContent(userId, acct, fsk.replace(/^SCHEDULEDPOST#/, ''), rec.theme || '', await getUserSettings(userId));
             _fallback_generated++;
-            console.log('[gen] fallback generated', { fpk, fsk });
+            // debug removed
           } catch (e) {
-            console.log('[gen] fallback generation failed', { fpk, fsk, err: String(e) });
+            // debug removed
           }
           try { await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: fpk }, SK: { S: fsk } }, UpdateExpression: "REMOVE generateLock, generateLockedAt" })); } catch(_) {}
         }
       }
-    } catch (e) { console.log('[gen] fallback error', String(e)); }
+    } catch (e) { console.warn('[gen] fallback error', String(e)); }
   } catch (e) {
-    console.log("[warn] performScheduledDeletesForAccount error:", e);
+    console.warn("[warn] performScheduledDeletesForAccount error:", e);
   }
 }
 
@@ -2774,7 +2698,7 @@ async function pruneOldScheduledPosts(userId: any) {
             deletedByAccount[acctId] = cur + 1;
           }
         } catch (e) {
-          console.log("[warn] prune delete failed for item", e);
+          console.warn("[warn] prune delete failed for item", e);
         }
       }
 
@@ -2792,7 +2716,7 @@ async function pruneOldScheduledPosts(userId: any) {
     }
     return totalDeleted;
   } catch (e) {
-    console.log("[warn] pruneOldScheduledPosts failed:", e);
+    console.warn("[warn] pruneOldScheduledPosts failed:", e);
     throw e;
   }
 }
@@ -2824,7 +2748,7 @@ async function pruneOldExecutionLogs(userId: any) {
             totalDeleted++;
           }
         } catch (e) {
-          console.log('[warn] prune log delete failed for item', e);
+          console.warn('[warn] prune log delete failed for item', e);
         }
       }
 
@@ -2836,7 +2760,7 @@ async function pruneOldExecutionLogs(userId: any) {
     }
     return totalDeleted;
   } catch (e) {
-    console.log('[warn] pruneOldExecutionLogs failed:', e);
+    console.warn('[warn] pruneOldExecutionLogs failed:', e);
     throw e;
   }
 }
@@ -2872,7 +2796,7 @@ async function countPruneExecutionLogs(userId: any) {
 
     return totalCandidates;
   } catch (e) {
-    console.log('[warn] countPruneExecutionLogs failed:', e);
+    console.warn('[warn] countPruneExecutionLogs failed:', e);
     throw e;
   }
 }
@@ -2888,7 +2812,7 @@ async function pruneOldExecutionLogsAll() {
     }
     return totalDeleted;
   } catch (e) {
-    console.log('[warn] pruneOldExecutionLogsAll failed:', e);
+    console.warn('[warn] pruneOldExecutionLogsAll failed:', e);
     throw e;
   }
 }
@@ -2922,7 +2846,7 @@ async function countPruneCandidates(userId: any) {
         status: it.status?.S || null,
         isDeleted: typeof it.isDeleted !== 'undefined' ? it.isDeleted?.BOOL === true : null,
       }));
-      try { console.log('[PRUNE-DBG] sample items for user', userId, dbgItems); } catch (_) {}
+      try { /* debug removed */ } catch (_) {}
 
       for (const it of (q.Items || [])) {
         try {
@@ -2941,7 +2865,7 @@ async function countPruneCandidates(userId: any) {
 
     return { candidates: totalCandidates, scanned: totalScanned };
   } catch (e) {
-    console.log("[warn] countPruneCandidates failed:", e);
+    console.warn("[warn] countPruneCandidates failed:", e);
     throw e;
   }
 }
@@ -2963,7 +2887,7 @@ async function countAllScheduledPosts() {
     } while (lastKey);
     return total;
   } catch (e) {
-    console.log('[warn] countAllScheduledPosts failed:', e);
+    console.warn('[warn] countAllScheduledPosts failed:', e);
     throw e;
   }
 }
@@ -2979,7 +2903,7 @@ async function pruneOldScheduledPostsAll() {
     }
     return totalDeleted;
   } catch (e) {
-    console.log('[warn] pruneOldScheduledPostsAll failed:', e);
+    console.warn('[warn] pruneOldScheduledPostsAll failed:', e);
     throw e;
   }
 }
@@ -3019,7 +2943,7 @@ async function countPostedCandidates(userId: any) {
 
     return { candidates: totalCandidates, scanned: totalScanned };
   } catch (e) {
-    console.log("[warn] countPostedCandidates failed:", e);
+    console.warn("[warn] countPostedCandidates failed:", e);
     throw e;
   }
 }
@@ -3051,7 +2975,7 @@ async function deletePostedForUser(userId: any) {
             await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: it.PK, SK: it.SK } }));
             totalDeleted++;
           }
-        } catch (e) { console.log('[warn] deletePosted failed for item', e); }
+        } catch (e) { console.warn('[warn] deletePosted failed for item', e); }
       }
 
       lastKey = q.LastEvaluatedKey;
@@ -3059,7 +2983,172 @@ async function deletePostedForUser(userId: any) {
 
     if (totalDeleted > 0) await putLog({ userId, type: 'prune', status: 'info', message: `deleted posted ${totalDeleted} items` });
     return totalDeleted;
-  } catch (e) { console.log('[warn] deletePostedForUser failed:', e); throw e; }
+  } catch (e) { console.warn('[warn] deletePostedForUser failed:', e); throw e; }
+}
+
+// Delete up to `limit` posted items for a given user/account. Returns { deletedCount, remaining }
+async function deleteUpTo100PostsForAccount(userId: any, accountId: any, limit = 100) {
+  try {
+    // Fetch up to `limit` posted scheduled posts for the user/account ordered by createdAt (oldest first)
+    const q = await ddb.send(new QueryCommand({
+      TableName: TBL_SCHEDULED,
+      KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
+      ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'SCHEDULEDPOST#' }, ':acc': { S: accountId }, ':posted': { S: 'posted' }, ':f': { BOOL: false } },
+      FilterExpression: 'accountId = :acc AND #st = :posted AND (attribute_not_exists(isDeleted) OR isDeleted = :f)',
+      ExpressionAttributeNames: { '#st': 'status' },
+      ScanIndexForward: true,
+      Limit: limit,
+    }));
+
+    const items = (q as any).Items || [];
+    let deletedCount = 0;
+
+    // obtain token for account from accounts table (try to read account item)
+    let token: string | null = null;
+    try {
+      const accOut = await ddb.send(new GetItemCommand({ TableName: TBL_THREADS_ACCOUNTS, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } }, ProjectionExpression: 'accessToken, oauthAccessToken, refreshToken, oauthTokenExpiresAt, clientId, clientSecret' }));
+      const accessToken = accOut.Item?.accessToken?.S || '';
+      let oauthAccessToken = accOut.Item?.oauthAccessToken?.S || '';
+      const refreshToken = accOut.Item?.refreshToken?.S || '';
+      const expiresAt = accOut.Item?.oauthTokenExpiresAt?.N ? Number(accOut.Item.oauthTokenExpiresAt.N) : 0;
+      const clientId = accOut.Item?.clientId?.S || process.env.THREADS_CLIENT_ID || '';
+      const clientSecret = accOut.Item?.clientSecret?.S || process.env.THREADS_CLIENT_SECRET || '';
+
+      const now = Math.floor(Date.now() / 1000);
+      // if oauthAccessToken is missing or expired, try refresh if refreshToken available
+      if ((!oauthAccessToken || oauthAccessToken.trim() === '' || (expiresAt && expiresAt <= now)) && refreshToken && clientId && clientSecret) {
+        try {
+          const tokenUrl = 'https://graph.threads.net/oauth/access_token';
+          const body = new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken, client_id: String(clientId), client_secret: String(clientSecret) });
+          const r = await fetch(tokenUrl, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
+          const j = await r.json().catch(() => ({}));
+          if (r.ok && j?.access_token) {
+            oauthAccessToken = j.access_token;
+            const expiresIn = Number(j.expires_in || 0);
+            const newExpiresAt = expiresIn ? Math.floor(Date.now() / 1000) + expiresIn : 0;
+            try {
+              await ddb.send(new UpdateItemCommand({ TableName: TBL_THREADS_ACCOUNTS, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } }, UpdateExpression: 'SET oauthAccessToken = :at, oauthTokenExpiresAt = :te, oauthSavedAt = :now', ExpressionAttributeValues: { ':at': { S: String(oauthAccessToken) }, ':te': { N: String(newExpiresAt) }, ':now': { N: String(Math.floor(Date.now() / 1000)) } } }));
+            } catch (_) {}
+          }
+        } catch (ee) {
+          await putLog({ userId, type: 'deletion', accountId, status: 'warn', message: 'refresh_token_failed', detail: { error: String(ee) } });
+        }
+      }
+
+      token = oauthAccessToken && String(oauthAccessToken).trim() ? oauthAccessToken : (accessToken || '');
+    } catch (e) {
+      await putLog({ userId, type: 'deletion', accountId, status: 'error', message: 'failed_read_account_token', detail: { error: String(e) } });
+      throw e;
+    }
+    if (!token) {
+      await putLog({ userId, type: 'deletion', accountId, status: 'error', message: 'missing_access_token' });
+      throw new Error('missing_access_token');
+    }
+
+    for (const it of items) {
+      const postId = getS(it.postId) || getS(it.numericPostId) || '';
+      if (!postId) continue;
+      try {
+        const base = process.env.THREADS_GRAPH_BASE || 'https://graph.threads.net/v1.0';
+        const url = `${base}/${encodeURIComponent(postId)}?access_token=${encodeURIComponent(token)}`;
+        const resp = await fetch(url, { method: 'DELETE' } as any);
+        const text = await resp.text().catch(() => '');
+        if (!resp.ok) throw new Error(`threads_delete_failed: ${resp.status} ${text}`);
+
+        // mark scheduled post as deleted
+        const key = { PK: { S: `USER#${userId}` }, SK: { S: getS(it.SK) } };
+        const now = Math.floor(Date.now() / 1000);
+        await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: key, UpdateExpression: 'SET isDeleted = :t, deletedAt = :ts', ExpressionAttributeValues: { ':t': { BOOL: true }, ':ts': { N: String(now) } } }));
+        deletedCount++;
+      } catch (e) {
+        await putLog({ userId, type: 'deletion', accountId, status: 'error', message: 'delete_failed', detail: { error: String(e), item: it } });
+        throw e;
+      }
+    }
+
+    // check remaining
+    const remQ = await ddb.send(new QueryCommand({ TableName: TBL_SCHEDULED, KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)', ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'SCHEDULEDPOST#' }, ':acc': { S: accountId }, ':posted': { S: 'posted' }, ':f': { BOOL: false } }, FilterExpression: 'accountId = :acc AND #st = :posted AND (attribute_not_exists(isDeleted) OR isDeleted = :f)', ExpressionAttributeNames: { '#st': 'status' }, Limit: 1 }));
+    const remaining = ((remQ as any).Items || []).length > 0;
+    return { deletedCount, remaining };
+  } catch (e) {
+    throw e;
+  }
+}
+
+// Process DeletionQueue: claim due items and run deletion batches
+async function processDeletionQueueForUser(userId: any) {
+  let totalDeleted = 0;
+  try {
+    // scan for due queue items
+    const now = nowSec();
+    // prefer AppConfig value for table name when available
+    await config.loadConfig();
+    const dqTable = config.getConfigValue('TBL_DELETION_QUEUE') || process.env.TBL_DELETION_QUEUE || 'DeletionQueue';
+    const out = await ddb.send(new ScanCommand({ TableName: dqTable }));
+    const items = (out as any).Items || [];
+    for (const it of items) {
+      const accountId = getS(it.accountId) || '';
+      const sk = getS(it.SK) || '';
+      const processing = it.processing?.BOOL === true;
+      const last = it.last_processed_at?.N ? Number(it.last_processed_at.N) : 0;
+      const currentRetryCount = it.retry_count?.N ? Number(it.retry_count.N) : 0;
+      // determine interval from AppConfig or env (hours)
+      const intervalHoursVal = config.getConfigValue('DELETION_PROCESSING_INTERVAL_HOURS') || process.env.DELETION_PROCESSING_INTERVAL_HOURS || '24';
+      const intervalHours = Number(intervalHoursVal) || 24;
+      const intervalSeconds = intervalHours * 3600;
+      const maxRetriesVal = config.getConfigValue('DELETION_RETRY_MAX') || process.env.DELETION_RETRY_MAX || process.env.DELETION_API_RETRY_COUNT || '3';
+      const maxRetries = Number(maxRetriesVal) || 3;
+      if (processing) continue;
+      if (!(last === 0 || now - last >= intervalSeconds)) continue;
+
+      // try to claim
+      try {
+        await ddb.send(new UpdateItemCommand({ TableName: dqTable, Key: { PK: { S: `ACCOUNT#${accountId}` }, SK: { S: sk } }, UpdateExpression: 'SET processing = :t', ConditionExpression: 'attribute_not_exists(processing) OR processing = :f', ExpressionAttributeValues: { ':t': { BOOL: true }, ':f': { BOOL: false } } }));
+      } catch (e) {
+        // someone else claimed
+        continue;
+      }
+
+      try {
+        // Load config - fail fast if AppConfig cannot be read
+        await config.loadConfig();
+        const batchSizeVal = config.getConfigValue('DELETION_BATCH_SIZE');
+        const batchSize = Number(batchSizeVal || '100') || 100;
+        const res = await deleteUpTo100PostsForAccount(userId, accountId, batchSize);
+        totalDeleted += Number(res?.deletedCount || 0);
+        if (!res.remaining) {
+          // deletion complete -> remove queue and set account status active
+          await ddb.send(new DeleteItemCommand({ TableName: dqTable, Key: { PK: { S: `ACCOUNT#${accountId}` }, SK: { S: sk } } }));
+          await ddb.send(new UpdateItemCommand({ TableName: TBL_THREADS_ACCOUNTS, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } }, UpdateExpression: 'SET #st = :s', ExpressionAttributeNames: { '#st': 'status' }, ExpressionAttributeValues: { ':s': { S: 'active' } } }));
+          await putLog({ userId, type: 'deletion', accountId, status: 'info', message: 'deletion_completed', detail: { deleted: res.deletedCount } });
+          // notify discord about completion
+          try { await postDiscordLog({ userId, content: `**[DELETION completed]** account=${accountId} deleted=${res.deletedCount}` }); } catch (_) {}
+        } else {
+          // update last_processed_at and release
+          await ddb.send(new UpdateItemCommand({ TableName: dqTable, Key: { PK: { S: `ACCOUNT#${accountId}` }, SK: { S: sk } }, UpdateExpression: 'SET processing = :f, last_processed_at = :ts', ExpressionAttributeValues: { ':f': { BOOL: false }, ':ts': { N: String(now) } } }));
+          await putLog({ userId, type: 'deletion', accountId, status: 'info', message: 'deletion_progress', detail: { deleted: res.deletedCount } });
+          // notify discord about progress
+          try { await postDiscordLog({ userId, content: `**[DELETION progress]** account=${accountId} deleted=${res.deletedCount} remaining=true` }); } catch (_) {}
+        }
+      } catch (e) {
+        // mark as error and release processing flag
+        try { await ddb.send(new UpdateItemCommand({ TableName: dqTable, Key: { PK: { S: `ACCOUNT#${accountId}` }, SK: { S: sk } }, UpdateExpression: 'SET processing = :f, last_processed_at = :ts, retry_count = if_not_exists(retry_count, :z) + :inc, last_error = :err', ExpressionAttributeValues: { ':f': { BOOL: false }, ':ts': { N: String(now) }, ':z': { N: '0' }, ':inc': { N: '1' }, ':err': { S: String((e as any)?.message || e) } } })); } catch (_) {}
+        // if retry count exceeded, mark account status deletion_error
+        try {
+          const newRetry = currentRetryCount + 1;
+          if (newRetry >= maxRetries) {
+            // set account status to deletion_error
+            await ddb.send(new UpdateItemCommand({ TableName: TBL_THREADS_ACCOUNTS, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } }, UpdateExpression: 'SET #st = :s', ExpressionAttributeNames: { '#st': 'status' }, ExpressionAttributeValues: { ':s': { S: 'deletion_error' } } }));
+            await putLog({ userId, type: 'deletion', accountId, status: 'error', message: 'deletion_max_retries_exceeded', detail: { retries: newRetry } });
+          }
+        } catch (_) {}
+        await putLog({ userId, type: 'deletion', accountId, status: 'error', message: 'deletion_batch_failed', detail: { error: String(e) } });
+      }
+    }
+  } catch (e) {
+    console.warn('[warn] processDeletionQueueForUser failed:', e);
+  }
+  return { deletedCount: totalDeleted };
 }
 
 /// ========== マスタ通知（集計サマリ） ==========
@@ -3070,13 +3159,13 @@ function getMasterWebhookUrl() {
 async function postDiscordMaster(content: any) {
   const url = getMasterWebhookUrl();
   if (!url) {
-    console.log("[info] MASTER_DISCORD_WEBHOOK 未設定のためマスタ通知スキップ");
+    console.info("[info] MASTER_DISCORD_WEBHOOK 未設定のためマスタ通知スキップ");
     return;
   }
   try {
     await postDiscord([url], content);
   } catch (e) {
-    console.log("[warn] master discord post failed:", String(e));
+    console.warn("[warn] master discord post failed:", String(e));
   }
 }
 
@@ -3101,6 +3190,7 @@ function formatMasterMessage({ job, startedAt, finishedAt, userTotal, userSuccee
       { label: "返信取得 合計", value: totals.fetchedReplies },
       { label: "下書き生成", value: totals.replyDrafts },
       { label: "スキップ件数", value: totals.skippedAccounts },
+      { label: "投稿削除 合計", value: totals.deletedCount || 0 },
     ]);
     return [
       `**[MASTER] 定期実行サマリ ${iso} (hourly)**`,

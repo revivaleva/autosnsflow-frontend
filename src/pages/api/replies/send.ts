@@ -42,7 +42,7 @@ async function postToThreads({ accessToken, text, userIdOnPlatform, inReplyTo }:
   // エラー時のリトライ（Lambda準拠）
   if (!createRes.ok) {
     const errText = await createRes.text().catch(() => "");
-    console.log(`[WARN] Threads create失敗、リトライ: ${createRes.status} ${errText}`);
+    console.warn(`[WARN] Threads create失敗、リトライ: ${createRes.status} ${errText}`);
     
     // パラメータ調整してリトライ
     const retryPayload = { ...createPayload };
@@ -80,8 +80,7 @@ async function postToThreads({ accessToken, text, userIdOnPlatform, inReplyTo }:
   const graphBase = process.env.THREADS_GRAPH_BASE || 'https://graph.threads.net/v1.0';
   const publishUrl = `${graphBase}/${encodeURIComponent(creation_id)}/publish`;
 
-  // Debug Discord webhook calls removed; keep console logs only
-  try { console.log('[DEBUG] threads publish - containerId=', creation_id, 'publishURL=', publishUrl, 'tokenOwner=', userIdOnPlatform || 'unknown'); } catch (_) {}
+  // debug output removed
 
   // Try publish with same access token; allow up to 2 retries (total attempts 3) if transient/permission-like errors occur
   let pubRes: any = null;
@@ -97,12 +96,7 @@ async function postToThreads({ accessToken, text, userIdOnPlatform, inReplyTo }:
       pubText = await pubRes.text().catch(() => '');
       // send debug to discord for each attempt
       try {
-        const masterUrl = process.env.MASTER_DISCORD_WEBHOOK || process.env.DISCORD_MASTER_WEBHOOK || '';
-        if (masterUrl) {
-          const safe = String(pubText || '').slice(0, 1500);
-          const content = `**[THREADS DEBUG] publish response (attempt ${attempt})**\nstatus=${pubRes.status}\n\n\`\`\`json\n${safe}\n\`\`\``;
-          fetch(masterUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }) }).catch(() => {});
-        }
+        // debug webhook removed
       } catch (_) {}
 
       if (pubRes.ok) break;
@@ -193,9 +187,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(400).json({ error: "Account missing accessToken or providerUserId" });
     }
 
-    // デバッグログ追加
-    console.log(`[DEBUG] リプライ送信開始: replyId=${replyId}, postId=${postId}, providerUserId=${providerUserId}`);
-    console.log(`[DEBUG] リプライ内容: ${replyContent.substring(0, 50)}...`);
+    // デバッグログ追加（ALLOW_DEBUG_EXEC_LOGS で制御）
+    const allowDebug = (process.env.ALLOW_DEBUG_EXEC_LOGS === 'true' || process.env.ALLOW_DEBUG_EXEC_LOGS === '1');
+    // debug output removed
 
     // Threadsにリプライを投稿（共通関数を使用）
     const { postId: responsePostId } = await postReplyViaThreads({
@@ -206,7 +200,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       text: replyContent,
     });
 
-    console.log(`[DEBUG] リプライ送信完了: responsePostId=${responsePostId}`);
+    // debug output removed
 
     // DBのステータスを更新
     const now = Math.floor(Date.now() / 1000);
