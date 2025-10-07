@@ -99,7 +99,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         accountId: { S: accountId },
         userId: { S: userId },
         createdAt: { N: String(now2) },
-        last_processed_at: { N: '0' },
+        // For immediate deletion path, set last_processed_at to now so periodic worker waits until interval passes.
+        last_processed_at: { N: String(now2) },
         processing: { BOOL: false },
         retry_count: { N: '0' },
       };
