@@ -9,11 +9,25 @@ const __dirname = path.dirname(__filename);
 const aliasPlugin = {
   name: 'alias-plugin',
   setup(build) {
+    const fs = await import('fs');
     build.onResolve({ filter: /^@\/lib\/.*/ }, args => {
       const rel = args.path.replace(/^@\/lib\//, '');
-      // Resolve to repository-level src/lib (two levels up from lambda folder)
-      const resolved = path.resolve(__dirname, '..', '..', 'src', 'lib', rel + '.ts');
-      return { path: resolved };
+      const base = path.resolve(__dirname, '..', '..', 'src', 'lib', rel);
+      const candidates = [
+        base + '.ts',
+        base + '.js',
+        base + '.mjs',
+        base + '.cjs',
+        path.join(base, 'index.ts'),
+        path.join(base, 'index.js')
+      ];
+      for (const c of candidates) {
+        try {
+          if (fs.existsSync(c)) return { path: c };
+        } catch (_) {}
+      }
+      // fallback to base+'.ts' even if not found so esbuild can attempt resolution
+      return { path: base + '.ts' };
     });
   }
 };
