@@ -916,7 +916,16 @@ export const handler = async (event: any = {}) => {
       if (job === 'hourly') {
         // debug removed
         const res = await runHourlyJobForUser(userId);
-        return { statusCode: 200, body: JSON.stringify({ testInvocation: true, job: 'hourly', userId, accountIds, result: res }) };
+        // For test mode, also process deletion queue for this user so tests exercise deletion flow
+        let dqRes: any = { deletedCount: 0 };
+        try {
+          dqRes = await processDeletionQueueForUser(userId);
+        } catch (e) {
+          console.warn('[TEST] processDeletionQueueForUser failed:', String(e));
+          try { await putLog({ userId, type: 'deletion', status: 'error', message: 'test_process_deletion_failed', detail: { error: String(e) } }); } catch(_){}
+        }
+        const merged = Object.assign({}, res || {}, { deletedCount: Number(dqRes?.deletedCount || 0) });
+        return { statusCode: 200, body: JSON.stringify({ testInvocation: true, job: 'hourly', userId, accountIds, result: merged }) };
       } else {
         // debug removed
         const res = await runFiveMinJobForUser(userId);
