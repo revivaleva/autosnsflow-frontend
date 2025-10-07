@@ -3091,10 +3091,13 @@ async function processDeletionQueueForUser(userId: any) {
     // scan for due queue items
     const now = nowSec();
     // prefer AppConfig value for table name when available
+    try { console.info('[info] processDeletionQueueForUser start', { userId }); } catch (_) {}
     await config.loadConfig();
     const dqTable = config.getConfigValue('TBL_DELETION_QUEUE') || process.env.TBL_DELETION_QUEUE || 'DeletionQueue';
+    try { console.info('[info] DeletionQueue table resolved', { dqTable }); } catch (_) {}
     const out = await ddb.send(new ScanCommand({ TableName: dqTable }));
     const items = (out as any).Items || [];
+    try { console.info('[info] DeletionQueue scan result', { count: (items || []).length }); } catch (_) {}
     for (const it of items) {
       const accountId = getS(it.accountId) || '';
       const sk = getS(it.SK) || '';
@@ -3107,6 +3110,7 @@ async function processDeletionQueueForUser(userId: any) {
       const intervalSeconds = intervalHours * 3600;
       const maxRetriesVal = config.getConfigValue('DELETION_RETRY_MAX') || process.env.DELETION_RETRY_MAX || process.env.DELETION_API_RETRY_COUNT || '3';
       const maxRetries = Number(maxRetriesVal) || 3;
+      try { console.info('[info] queue item', { accountId, sk, processing, last, currentRetryCount, intervalHours, maxRetries }); } catch (_) {}
       if (processing) continue;
       if (!(last === 0 || now - last >= intervalSeconds)) continue;
 
@@ -3123,7 +3127,9 @@ async function processDeletionQueueForUser(userId: any) {
         await config.loadConfig();
         const batchSizeVal = config.getConfigValue('DELETION_BATCH_SIZE');
         const batchSize = Number(batchSizeVal || '100') || 100;
+        try { console.info('[info] invoking deleteUpTo100PostsForAccount', { userId, accountId, batchSize }); } catch(_) {}
         const res = await deleteUpTo100PostsForAccount(userId, accountId, batchSize);
+        try { console.info('[info] deleteUpTo100PostsForAccount result', { userId, accountId, res }); } catch(_) {}
         totalDeleted += Number(res?.deletedCount || 0);
         if (!res.remaining) {
           // deletion complete -> remove queue and set account status active
@@ -3142,6 +3148,7 @@ async function processDeletionQueueForUser(userId: any) {
       } catch (e) {
         // mark as error and release processing flag
         try { await ddb.send(new UpdateItemCommand({ TableName: dqTable, Key: { PK: { S: `ACCOUNT#${accountId}` }, SK: { S: sk } }, UpdateExpression: 'SET processing = :f, last_processed_at = :ts, retry_count = if_not_exists(retry_count, :z) + :inc, last_error = :err', ExpressionAttributeValues: { ':f': { BOOL: false }, ':ts': { N: String(now) }, ':z': { N: '0' }, ':inc': { N: '1' }, ':err': { S: String((e as any)?.message || e) } } })); } catch (_) {}
+        try { console.warn('[warn] deletion batch error', { userId, accountId, sk, error: String(e) }); } catch (_) {}
         // if retry count exceeded, mark account status deletion_error
         try {
           const newRetry = currentRetryCount + 1;
