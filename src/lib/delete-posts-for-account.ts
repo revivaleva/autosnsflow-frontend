@@ -104,48 +104,30 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
 
       // After external delete (or missing-case), remove scheduled record if exists
       try {
+        // Query for any scheduled posts under this user that match the postId (string) or numericPostId (number)
         const q = await ddb.send(new QueryCommand({
           TableName: TBL_SCHEDULED,
           KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
           ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'SCHEDULEDPOST#' }, ':acc': { S: accountId }, ':f': { BOOL: false }, ':pid': { S: postId }, ':pidN': { N: postId } },
-          FilterExpression: '(postId = :pid OR numericPostId = :pid OR numericPostId = :pidN) AND accountId = :acc AND (attribute_not_exists(isDeleted) OR isDeleted = :f)',
-          ProjectionExpression: 'SK,postId,numericPostId',
-          Limit: 1,
+          FilterExpression: 'accountId = :acc AND (postId = :pid OR numericPostId = :pid OR numericPostId = :pidN) AND (attribute_not_exists(isDeleted) OR isDeleted = :f)',
+          ProjectionExpression: 'PK,SK,postId,numericPostId',
+          Limit: 100,
         }));
-        const found = ((q as any).Items || [])[0];
-        const sk = found ? (found.SK && found.SK.S) : undefined;
-        try { console.info('[delete-posts-for-account] scheduled lookup result', { userId, accountId, postId, found }); } catch(_) {}
-        if (!sk) {
-          // fallback: perform a limited Scan to surface nearby records for diagnostics
+        const foundItems = (q as any).Items || [];
+        try { console.info('[delete-posts-for-account] scheduled lookup results', { userId, accountId, postId, matchCount: foundItems.length, items: foundItems.slice(0,20) }); } catch(_) {}
+        // Delete all matched items by PK+SK
+        for (const it of foundItems) {
+          const skToDel = it?.SK?.S;
+          if (!skToDel) continue;
           try {
-            const scanOut = await ddb.send(new (require('@aws-sdk/client-dynamodb').ScanCommand)({
-              TableName: TBL_SCHEDULED,
-              FilterExpression: 'accountId = :acc AND (attribute_exists(postId) OR attribute_exists(numericPostId))',
-              ExpressionAttributeValues: { ':acc': { S: accountId } },
-              ExpressionAttributeNames: { '#st': 'status' },
-              ProjectionExpression: 'PK,SK,postId,numericPostId,accountId,#st,isDeleted',
-              Limit: 50
-            }));
-            const scanItems = (scanOut as any).Items || [];
-            try {
-              const mapped = (scanItems||[]).slice(0,100).map(i=>({ SK: i.SK?.S, postId: i.postId?.S, numericPostId: i.numericPostId?.S || i.numericPostId?.N, status: i['status']?.S || i['#st']?.S, isDeleted: i.isDeleted?.BOOL }));
-              console.info('[delete-posts-for-account] scheduled fallback scan sample', { userId, accountId, sampleCount: (scanItems||[]).length, sampleSlice: mapped });
-            } catch(_) {}
+            await ddb.send(new (require('@aws-sdk/client-dynamodb').DeleteItemCommand)({ TableName: TBL_SCHEDULED, Key: { PK: { S: `USER#${userId}` }, SK: { S: skToDel } } }));
+            try { console.info('[delete-posts-for-account] deleted scheduled record', { userId, accountId, sk: skToDel }); } catch(_) {}
           } catch (e) {
-            try { console.warn('[delete-posts-for-account] fallback scan failed', { userId, accountId, error: String(e) }); } catch(_) {}
+            try { console.warn('[delete-posts-for-account] failed to delete scheduled record', { userId, accountId, sk: skToDel, error: String(e) }); } catch(_) {}
+            throw e;
           }
-        }
-        if (sk) {
-          const delRes = await deleteScheduledRecord({ userId, sk, physical: true });
-          if (!delRes || delRes.ok !== true) {
-            // escalate to allow retry
-            console.warn('[delete-posts-for-account] scheduled record delete failed', { userId, accountId, sk, res: delRes });
-            throw new Error(`scheduled_delete_failed sk=${sk}`);
-          }
-          console.info('[delete-posts-for-account] scheduled record physically deleted', { userId, accountId, sk });
         }
       } catch (e) {
-        // If cleanup fails, escalate (so caller can retry/queue)
         const msg = stringifyError(e);
         console.warn('[delete-posts-for-account] db cleanup failed', { userId, accountId, postId, error: msg });
         throw new Error(msg);
