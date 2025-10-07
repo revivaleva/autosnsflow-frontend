@@ -50,6 +50,10 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
     threads = await fetchThreadsPosts({ userId, accountId, limit: limit as number });
     if (!Array.isArray(threads)) threads = [];
     console.info('[delete-posts-for-account] fetched threads', { userId, accountId, fetched: threads.length });
+    try {
+      const ids = (threads || []).map(t => String(t.id || t.postId || t.numericPostId)).slice(0, 50);
+      console.info('[delete-posts-for-account] fetched threads sample', { userId, accountId, sampleCount: ids.length, ids });
+    } catch (_) {}
   } catch (e) {
     const msg = stringifyError(e);
     await putLog({ userId, accountId, action: 'deletion', status: 'error', message: 'fetch_failed', detail: { error: msg } });
