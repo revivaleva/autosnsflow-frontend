@@ -1,5 +1,5 @@
 import { createDynamoClient } from '@/lib/ddb';
-import { QueryCommand } from '@aws-sdk/client-dynamodb';
+import { QueryCommand, DeleteItemCommand } from '@aws-sdk/client-dynamodb';
 import { fetchThreadsPosts } from '@/lib/fetch-threads-posts';
 import { getTokenForAccount, deleteThreadsPostWithToken } from '@/lib/threads-delete';
 import { putLog } from '@/lib/logger';
@@ -49,11 +49,6 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
   try {
     threads = await fetchThreadsPosts({ userId, accountId, limit: limit as number });
     if (!Array.isArray(threads)) threads = [];
-    console.info('[delete-posts-for-account] fetched threads', { userId, accountId, fetched: threads.length });
-    try {
-      const ids = (threads || []).map(t => String(t.id || t.postId || t.numericPostId)).slice(0, 50);
-      console.info('[delete-posts-for-account] fetched threads sample', { userId, accountId, sampleCount: ids.length, ids });
-    } catch (_) {}
   } catch (e) {
     const msg = stringifyError(e);
     await putLog({ userId, accountId, action: 'deletion', status: 'error', message: 'fetch_failed', detail: { error: msg } });
@@ -82,13 +77,12 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
     if (!postId) continue;
     try {
       try {
-        const delResp = await deleteThreadsPostWithToken({ postId, token });
-        console.info('[delete-posts-for-account] threads delete response', { userId, accountId, postId, resp: delResp?.status });
+        await deleteThreadsPostWithToken({ postId, token });
       } catch (err) {
         const msg = stringifyError(err);
         // treat missing post as success
         if (isMissingPostError(msg)) {
-          console.info('[delete-posts-for-account] threads post missing - treat as deleted', { userId, accountId, postId });
+          // treat missing post as deleted
         } else {
           // fatal (e.g., 4xx) or transient - escalate
           console.warn('[delete-posts-for-account] threads delete failed', { userId, accountId, postId, error: msg });
@@ -114,14 +108,12 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
           Limit: 100,
         }));
         const foundItems = (q as any).Items || [];
-        try { console.info('[delete-posts-for-account] scheduled lookup results', { userId, accountId, postId, matchCount: foundItems.length, items: foundItems.slice(0,20) }); } catch(_) {}
         // Delete all matched items by PK+SK
         for (const it of foundItems) {
           const skToDel = it?.SK?.S;
           if (!skToDel) continue;
           try {
-            await ddb.send(new (require('@aws-sdk/client-dynamodb').DeleteItemCommand)({ TableName: TBL_SCHEDULED, Key: { PK: { S: `USER#${userId}` }, SK: { S: skToDel } } }));
-            try { console.info('[delete-posts-for-account] deleted scheduled record', { userId, accountId, sk: skToDel }); } catch(_) {}
+            await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: `USER#${userId}` }, SK: { S: skToDel } } }));
           } catch (e) {
             try { console.warn('[delete-posts-for-account] failed to delete scheduled record', { userId, accountId, sk: skToDel, error: String(e) }); } catch(_) {}
             throw e;
@@ -152,9 +144,39 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
     remaining = true;
   }
 
-  // if finished, log to ExecutionLogs summary
+  // if finished, perform final cleanup: delete all scheduled posts for this account (PK + accountId)
   if (!remaining) {
-    await putLog({ userId, accountId, action: 'deletion', status: 'info', message: 'deletion_completed', detail: { deletedCount } });
+    try {
+      let lastKey: any = undefined;
+      let totalDeletedRecords = 0;
+      do {
+        const qAll = await ddb.send(new QueryCommand({
+          TableName: TBL_SCHEDULED,
+          KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
+          ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'SCHEDULEDPOST#' }, ':acc': { S: accountId } },
+          FilterExpression: 'accountId = :acc',
+          ProjectionExpression: 'PK,SK',
+          ExclusiveStartKey: lastKey,
+          Limit: 100,
+        }));
+        const items = (qAll as any).Items || [];
+        for (const it of items) {
+          const skToDel = it?.SK?.S;
+          if (!skToDel) continue;
+          try {
+            await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: `USER#${userId}` }, SK: { S: skToDel } } }));
+            totalDeletedRecords++;
+          } catch (e) {
+            // log and continue
+            try { console.warn('[delete-posts-for-account] final cleanup delete failed', { userId, accountId, sk: skToDel, error: String(e) }); } catch(_) {}
+          }
+        }
+        lastKey = (qAll as any).LastEvaluatedKey;
+      } while (lastKey);
+      await putLog({ userId, accountId, action: 'deletion', status: 'info', message: 'deletion_completed', detail: { deletedCount, cleanedRecords: totalDeletedRecords } });
+    } catch (e) {
+      try { console.warn('[delete-posts-for-account] final cleanup failed', { userId, accountId, error: String(e) }); } catch(_) {}
+    }
   }
 
   return { deletedCount, remaining };
