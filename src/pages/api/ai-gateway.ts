@@ -1,5 +1,6 @@
 // /src/pages/api/ai-gateway.ts
 // [MOD] personaMode による厳密な使い分け。互換の input.persona は削除。
+import './_init';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { DynamoDBClient, GetItemCommand } from '@aws-sdk/client-dynamodb';
 import jwt from 'jsonwebtoken';
