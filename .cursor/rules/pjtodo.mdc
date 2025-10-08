@@ -11,6 +11,8 @@
 - `Prevent creating ThreadsAccounts items when marking deletion_error; add conditional update (attribute_exists(PK))` — completed
 - `Investigate root cause of deletion_error records: correlate DeletionQueue, ExecutionLogs, ThreadsAccounts entries` — cancelled
 
+- `Deprecate accessToken usage: remove all checks/fallbacks and prefer oauthAccessToken` — pending
+
 （詳細は `.cursor/rules/pjspec.mdc` とソースの TODO コメントを参照）
 
 
