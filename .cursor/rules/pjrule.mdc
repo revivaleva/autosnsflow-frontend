@@ -210,6 +210,13 @@ DynamoDB の AttributeValue を直接返さない。必ず正規化。
   - 物理削除ユーティリティ `src/lib/scheduled-posts-delete.ts` は、キュー処理／即時処理のどちらから呼ばれても同一の振る舞いをするようにオプションで "物理削除時に失敗したら例外を throw して呼び出し元で再試行させる" 動作をサポートすること。
   - `deletePostsForAccount` は共通実装を提供し、`src/pages/api/accounts/[accountId]/delete-all.ts` の即時削除と `lambda/scheduled-autosnsflow/src/handler.ts` のキュー削除の両方から呼び出す。定期実行側は優先度に応じて段階的に切替える。
 
+### 追加: 裏画面（background）キュー作成ポリシー
+
+- 裏画面実行（`mode === 'background'`）では、Threads API の取得結果が `0` 件であっても**必ず** `DeletionQueue` にキューを作成するものとする。これは、外部に投稿が存在しない場合でも `ScheduledPosts` テーブル上のレコード（例: 既に投稿されたが ScheduledPosts に残っている等）を DB 側で一括クリーンアップするために必要である。
+- キュー作成時の `last_processed_at` は背景実行（キュー作成のみ）の場合 `0` を設定し、ワーカーが即時に処理できるようにする。即時削除（`mode !== 'background'`）でキューを作成するケースは `last_processed_at` に現在時刻を設定して、ワーカーの再処理を間隔に応じて遅延させる。
+
+これにより、運用者が「裏画面実行」を押したときに DB 側の最終クリーンアップが確実に行われることを保証する。
+
 
 ---
 
