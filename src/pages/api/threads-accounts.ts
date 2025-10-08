@@ -161,6 +161,33 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           // debug output removed
         }
       }
+      // === enforce per-user account creation limit ===
+      try {
+        const outSettings = await ddb.send(new GetItemCommand({ TableName: TBL_SETTINGS, Key: { PK: { S: `USER#${userId}` }, SK: { S: 'SETTINGS' } }, ProjectionExpression: 'maxThreadsAccounts' }));
+        const sitem: any = (outSettings as any).Item || {};
+        const maxAllowed = typeof sitem.maxThreadsAccounts?.N !== 'undefined' ? Number(sitem.maxThreadsAccounts.N) : null;
+        if (maxAllowed !== null) {
+          // 0 means "no additional accounts allowed"
+          if (maxAllowed === 0) {
+            return res.status(403).json({ error: 'account_limit_reached', message: 'アカウント作成は許可されていません' });
+          }
+          // count existing accounts for this user
+          try {
+            const qc = await ddb.send(new QueryCommand({ TableName: TBL, KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)', ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'ACCOUNT#' } }, Select: 'COUNT' }));
+            const existingCount = typeof (qc as any).Count === 'number' ? (qc as any).Count : Number((qc as any).Count || 0);
+            if (existingCount >= maxAllowed) {
+              return res.status(403).json({ error: 'account_limit_reached', message: `作成上限に達しています（上限: ${maxAllowed}）` });
+            }
+          } catch (e) {
+            console.warn('[threads-accounts] count existing accounts failed', e);
+            // if counting fails, allow creation to avoid accidental lockout
+          }
+        }
+      } catch (e) {
+        console.warn('[threads-accounts] read user settings failed', e);
+        // allow creation if settings cannot be read
+      }
+
       const now = `${Math.floor(Date.now() / 1000)}`;
       const item: any = {
         PK: { S: `USER#${userId}` },
