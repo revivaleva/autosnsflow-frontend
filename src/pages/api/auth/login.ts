@@ -5,6 +5,8 @@ import {
   CognitoIdentityProviderClient,
   InitiateAuthCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
+import { createDynamoClient } from "@/lib/ddb";
+import { PutItemCommand } from "@aws-sdk/client-dynamodb";
 
 const REGION = process.env.COGNITO_REGION || process.env.NEXT_PUBLIC_AWS_REGION || "ap-northeast-1";
 const USER_POOL_CLIENT_ID =
@@ -43,6 +45,48 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // [FIX] Cookie設定（1日）
     res.setHeader("Set-Cookie", cookieSerialize("idToken", idToken, 60 * 60 * 24));
+
+    // Create UserSettings record immediately on login if missing
+    try {
+      const ddb = createDynamoClient();
+      // Attempt to load AppConfig defaults for prompts
+      let masterDefault = "";
+      let replyDefault = "";
+      try {
+        const cfg = await import("@/lib/config");
+        await cfg.loadConfig();
+        masterDefault = cfg.getConfigValue("MASTER_PROMPT") || "";
+        replyDefault = cfg.getConfigValue("REPLY_PROMPT") || "";
+      } catch (e) {
+        // ignore - fall back to empty strings
+      }
+
+      const userId = idToken ? JSON.parse(Buffer.from(idToken.split(".")[1], "base64").toString("utf8")).sub : null;
+      if (userId) {
+        const Key = { PK: { S: `USER#${userId}` }, SK: { S: "SETTINGS" } };
+        await ddb
+          .send(
+            new PutItemCommand({
+              TableName: process.env.TBL_SETTINGS || "UserSettings",
+              Item: {
+                ...Key,
+                createdAt: { N: String(Math.floor(Date.now() / 1000)) },
+                updatedAt: { N: String(Math.floor(Date.now() / 1000)) },
+                maxThreadsAccounts: { N: "0" },
+                masterPrompt: { S: masterDefault || "" },
+                replyPrompt: { S: replyDefault || "" },
+              },
+              ConditionExpression: "attribute_not_exists(PK) AND attribute_not_exists(SK)",
+            })
+          )
+          .catch(() => {
+            // ignore if already exists or any conditional failure
+          });
+      }
+    } catch (e) {
+      console.error("create user-settings on login failed:", e?.message || e);
+    }
+
     return res.status(200).json({ ok: true });
   } catch (e: any) {
     return res.status(401).json({ error: "Invalid credentials" });

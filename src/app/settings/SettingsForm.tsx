@@ -57,11 +57,25 @@ export default function SettingsForm() {
         if (r.ok) {
           const j = await r.json();
           const s = j?.settings || j || {};
+          // If settings missing, try to get AppConfig defaults
+          let masterDefault = s.masterPrompt ?? "";
+          let replyDefault = s.replyPrompt ?? "";
+          if (!masterDefault || !replyDefault) {
+            try {
+              const cfgMod = await import('@/lib/config');
+              await cfgMod.loadConfig();
+              masterDefault = masterDefault || cfgMod.getConfigValue('MASTER_PROMPT') || masterDefault;
+              replyDefault = replyDefault || cfgMod.getConfigValue('REPLY_PROMPT') || replyDefault;
+            } catch (e) {
+              // ignore
+            }
+          }
+
           setValues({
             discordWebhook: s.discordWebhook ?? "",
             errorDiscordWebhook: s.errorDiscordWebhook ?? "",
-            masterPrompt: s.masterPrompt ?? "",
-            replyPrompt: s.replyPrompt ?? "",
+            masterPrompt: masterDefault,
+            replyPrompt: replyDefault,
             autoPost: !!s.autoPost,
             doublePostDelay: String(s.doublePostDelay ?? "5"),
             doublePostDelete: !!s.doublePostDelete,
