@@ -59,8 +59,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     res.status(400).json({ error: "userid and purpose required", detail: { hasUserId: !!userId, hasPurpose: !!purpose } }); return;  // [MOD] Next API は void を返す
   }
 
-  let openaiApiKey = "", selectedModel = "gpt-5-mini", masterPrompt = "";
+  let openaiApiKey = "", selectedModel = "gpt-5-nano", masterPrompt = "";
   try {
+    // 1) Read per-account UserSettings as before (used as a fallback)
     const result = await client.send(new GetItemCommand({
       TableName: 'UserSettings',
       Key: { PK: { S: `USER#${userId}` }, SK: { S: "SETTINGS" } },
@@ -72,9 +73,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         "#mp": "masterPrompt",
       }
     }));
-    openaiApiKey = result.Item?.openaiApiKey?.S || "";
-    // Prefer explicit selectedModel (user choice) over modelDefault
-    const rawModel = result.Item?.selectedModel?.S || result.Item?.modelDefault?.S || "gpt-5-mini";
+    const userOpenaiKey = result.Item?.openaiApiKey?.S || "";
+    const userRawModel = result.Item?.selectedModel?.S || result.Item?.modelDefault?.S || "";
+    masterPrompt = result.Item?.masterPrompt?.S || "";
+
+    // 2) Try to read AppConfig (AppConfig is authoritative). Use dynamic import to avoid circular deps.
+    let cfgOpenAiKey: string | undefined;
+    let cfgDefaultModel: string | undefined;
+    try {
+      const cfg = await import('@/lib/config');
+      cfgOpenAiKey = cfg.getConfigValue('OPENAI_API_KEY') || undefined;
+      cfgDefaultModel = cfg.getConfigValue('OPENAI_DEFAULT_MODEL') || undefined;
+    } catch (err) {
+      // If AppConfig isn't available for some reason, we'll silently fall back to user settings/env.
+    }
+
+    // 3) Determine final API key and model with the priority: AppConfig -> UserSettings -> process.env -> hardcoded default
+    openaiApiKey = cfgOpenAiKey || userOpenaiKey || process.env.OPENAI_API_KEY || "";
+
     const allow = new Set([
       "gpt-5-mini",
       "gpt-5-nano",
@@ -83,8 +99,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       "gpt-4.1",
       "gpt-4.1-mini",
     ]);
-    selectedModel = allow.has(rawModel) ? rawModel : "gpt-5-mini";
-    masterPrompt = result.Item?.masterPrompt?.S || "";
+
+    const candidateModel = (cfgDefaultModel || userRawModel || process.env.OPENAI_DEFAULT_MODEL || "gpt-5-nano").toString();
+    selectedModel = allow.has(candidateModel) ? candidateModel : "gpt-5-nano";
+
     if (!openaiApiKey) throw new Error("APIキー未設定です");
   } catch (e) {
     res.status(500).json({ error: "APIキーの取得に失敗: " + String(e) }); return;  // [MOD] Next API は void を返す
