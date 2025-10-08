@@ -71,7 +71,6 @@ packages/**/package-lock.json
 !.cursor/
 !.cursor/rules/
 !.cursor/rules/pjrule.mdc
-!.cursor/rules/pjrulestodo.mdc
 !.cursor/rules/pjtodo.mdc
 !.cursor/rules/pjspec.mdc
 
