@@ -1,0 +1,54 @@
+## 機能仕様集（feature specs）
+
+本ファイルは `pjrule` に記載されていた各機能の詳細仕様・実装注意・テスト手順を収録します。
+主要項目: 投稿削除フロー、`DeletionQueue` 設計、GSI 推奨、テストフロー等。
+
+### 投稿削除（共通方針 - deletePostsForAccount / deleteUserPosts）
+
+- 目的
+  - アカウント編集モーダル（即時削除）および定期実行（キュー処理）で同一の削除フローを実行する。
+
+- 呼び出し先
+  - `src/lib/delete-posts-for-account.ts` に共通実装を用意。`/api/accounts/{accountId}/delete-all` と Lambda のキュー処理の双方から呼ぶ。
+
+- 入力
+  - `userId` (必須)
+  - `accountId` (必須)
+  - `limit` (任意、既定は AppConfig `DELETION_BATCH_SIZE` または 100)
+
+- 挙動（厳密手順）
+  1. 取得: `fetchThreadsPosts({ userId, accountId, limit })` を実行して Threads 側の投稿IDリストを取得。API エラーは即時中断して例外を投げる。
+  2. 削除 (API 優先): 取得した各 `postId` に対し、DB の存在有無に関わらず必ず Threads DELETE API を実行する。成功判定は既存の `src/pages/api/threads/delete-post.ts` と同一の基準を使う（404 や Facebook の `error_subcode===33` 等は「存在しない」扱いで成功とする）。
+  3. DB 同期: 外部 DELETE が成功（または存在しない扱い）なら、その `postId` と `accountId` で `ScheduledPosts` を検索し、該当レコードがあれば **物理削除**（DeleteItemCommand）を行う。
+  4. 完了判定: 指定件数を処理後、追加で `fetchThreadsPosts(..., limit:1)` を実行して 0 件なら `remaining=false` とし、キューがあれば削除・アカウント `status` を `active` に戻す。残件があれば `remaining=true` を返す。
+
+- エラー・ログ方針
+  - `ExecutionLogs`（`putLog`）へ永続化するのは下記のみ:
+    - `fetchThreadsPosts` の致命的エラーで処理中断（`deletion_error`）
+    - 外部 DELETE の致命的エラー（権限不足等）で処理中断（`deletion_error`）
+    - 削除完了時の要約（`deletion_completed`）に `deletedCount` を含める
+  - それ以外の詳細ログ（取得結果一覧、各 DELETE の HTTP レスポンス、マッピングサンプル等）は CloudWatch（console.info/warn/error）へ出力する。外部通知や大量ログは `ALLOW_DEBUG_EXEC_LOGS` で制御する。
+
+- DB 操作順序の厳守
+  - 必ず API → DB（Threads API を先に呼ぶ）で行うこと。DB を参照してから API を呼ぶことはしない。
+
+- 戻り値
+  - `{ deletedCount: number, remaining: boolean }`
+
+- 実装補足
+  - 物理削除ユーティリティ `src/lib/scheduled-posts-delete.ts` は物理削除指定（`physical=true`）時に失敗したら例外を throw し、呼び出し元で再試行できるようにすること。
+  - `deletePostsForAccount` は即時削除（UI）とキュー削除（Lambda）両方から利用されるため冪等性に注意する。
+
+### 裏画面（background）キュー作成ポリシー
+
+- 裏画面実行（`mode === 'background'`）では、Threads API の取得が `0` 件でも **必ず** `DeletionQueue` にキューを作成する。目的は `ScheduledPosts` の DB 側クリーンアップを確実に行うため。
+- キュー作成時の `last_processed_at`:
+  - 背景キュー作成（mode==='background'）: `0` を設定
+  - 即時削除に伴うキュー作成: 現在時刻を設定してワーカー側の即時再処理を回避
+
+### ルール更新履歴（要約）
+
+- 即時削除とキュー削除を統一（API 優先 → DB 物理削除）
+- `last_processed_at` の扱いを明確化（即時=now / background=0）
+- `dryrun` オプションは恒常化せずテストコードとして扱うことを推奨
+
