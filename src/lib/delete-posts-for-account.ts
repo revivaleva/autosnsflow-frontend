@@ -55,7 +55,10 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
     throw new Error(`fetchThreadsPosts failed: ${msg}`);
   }
 
-  if (threads.length === 0) return { deletedCount: 0, remaining: false };
+  // If no threads were returned from fetch, do not return early.
+  // Continue to the remaining check and final cleanup so DB-side
+  // scheduled-posts cleanup runs even when there are 0 external candidates.
+  // (deletedCount remains 0 and the per-thread delete loop is effectively skipped.)
 
   let deletedCount = 0;
   // token reuse per account (accountId fixed here)

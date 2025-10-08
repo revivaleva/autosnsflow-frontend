@@ -543,7 +543,7 @@ export default function SNSAccountModal({
         onApply={handleApplyAIPersona}
       />
       <div className="relative min-w-[520px] max-h-[90vh] w-full max-w-[80vw]">
-        <LoadingOverlay open={deletingLoading} message={deletingLoading ? '投稿を削除しています。しばらくお待ちください...' : ''} />
+        <LoadingOverlay open={deletingLoading} message={deletingLoading ? '削除キューを作成しています。しばらくお待ちください。' : ''} />
         <button
           type="button"
           className="absolute top-2 right-2 text-gray-400 text-2xl p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 z-20"
