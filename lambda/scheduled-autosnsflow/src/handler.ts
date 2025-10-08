@@ -502,8 +502,9 @@ async function getThreadsAccounts(userId = USER_ID) {
           ":pk": { S: `USER#${userId}` },
           ":pfx": { S: "ACCOUNT#" },
         },
+        // Include oauthAccessToken in projection and prefer it when mapping below.
         ProjectionExpression:
-          "SK, displayName, autoPost, autoReply, secondStageContent, rateLimitUntil, autoGenerate, autoPostGroupId, #st, platform, accessToken, providerUserId",
+          "SK, displayName, autoPost, autoReply, secondStageContent, rateLimitUntil, autoGenerate, autoPostGroupId, #st, platform, accessToken, oauthAccessToken, providerUserId",
         ExpressionAttributeNames: { "#st": "status" },
         ExclusiveStartKey: lastKey,
       })
@@ -523,7 +524,8 @@ async function getThreadsAccounts(userId = USER_ID) {
     autoPostGroupId: i.autoPostGroupId?.S || "",
     status: i.status?.S || "active",
     platform: i.platform?.S || "threads",
-    accessToken: i.accessToken?.S || "",
+    // Prefer oauthAccessToken when present, else fall back to accessToken
+    accessToken: (i.oauthAccessToken?.S && String(i.oauthAccessToken.S).trim()) ? i.oauthAccessToken.S : (i.accessToken?.S || ""),
     providerUserId: i.providerUserId?.S || "",
   }));
 }
