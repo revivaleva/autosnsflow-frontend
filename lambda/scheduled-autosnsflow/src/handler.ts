@@ -1091,6 +1091,56 @@ export const handler = async (event: any = {}) => {
         return { statusCode: 400, body: JSON.stringify({ error: 'confirmFull flag required for full-table prune; use dryRun or provide userId for safe operations' }) };
       }
       try {
+        // Before performing a full-table prune, reset any accounts that are
+        // in `deleting` state but have no DeletionQueue entry. This avoids
+        // accounts stuck in deleting when the queue was removed or never created.
+        try {
+          await config.loadConfig();
+          const dqTable = config.getConfigValue('TBL_DELETION_QUEUE') || process.env.TBL_DELETION_QUEUE || 'DeletionQueue';
+          const tThreads = config.getConfigValue('TBL_THREADS_ACCOUNTS') || process.env.TBL_THREADS_ACCOUNTS || 'ThreadsAccounts';
+          const resetAge = Number(config.getConfigValue('DELETION_RESET_AGE_SECONDS') || process.env.DELETION_RESET_AGE_SECONDS || '86400') || 86400;
+          const nowTs = nowSec();
+
+          // build set of queued accountIds
+          const queued = new Set();
+          let lastK: any = undefined;
+          do {
+            const s = await ddb.send(new ScanCommand({ TableName: dqTable, ProjectionExpression: 'accountId', ExclusiveStartKey: lastK, Limit: 1000 }));
+            const its = (s as any).Items || [];
+            for (const it of its) {
+              const aid = getS(it.accountId);
+              if (aid) queued.add(aid);
+            }
+            lastK = (s as any).LastEvaluatedKey;
+          } while (lastK);
+
+          // scan ThreadsAccounts for status = deleting and reset stale ones
+          let lastKey2: any = undefined;
+          do {
+            const scanRes = await ddb.send(new ScanCommand({ TableName: tThreads, ProjectionExpression: 'PK,SK,accountId,updatedAt,status', FilterExpression: '#st = :d', ExpressionAttributeNames: { '#st': 'status' }, ExpressionAttributeValues: { ':d': { S: 'deleting' } }, ExclusiveStartKey: lastKey2, Limit: 200 }));
+            const items2 = (scanRes as any).Items || [];
+            for (const it of items2) {
+              const accId = getS(it.accountId) || '';
+              if (!accId) continue;
+              if (queued.has(accId)) continue; // still queued
+              const updatedAt = it.updatedAt?.N ? Number(it.updatedAt.N) : 0;
+              if (nowTs - updatedAt < resetAge) continue; // too recent
+              const pk = getS(it.PK) || '';
+              const sk = getS(it.SK) || '';
+              const ownerUserId = pk.startsWith('USER#') ? pk.replace(/^USER#/, '') : pk;
+              try {
+                await ddb.send(new UpdateItemCommand({ TableName: tThreads, Key: { PK: { S: pk }, SK: { S: sk } }, UpdateExpression: 'SET #st = :a, updatedAt = :n', ConditionExpression: '#st = :d', ExpressionAttributeNames: { '#st': 'status' }, ExpressionAttributeValues: { ':a': { S: 'active' }, ':n': { N: String(nowTs) }, ':d': { S: 'deleting' } } }));
+                await putLog({ userId: ownerUserId, action: 'deletion_reset', status: 'info', accountId: accId, message: 'reset deleting->active', detail: { resetAge } });
+              } catch (e) {
+                // conditional update may fail if status changed concurrently; ignore
+              }
+            }
+            lastKey2 = (scanRes as any).LastEvaluatedKey;
+          } while (lastKey2);
+        } catch (e) {
+          console.warn('[warn] deletion reset scan failed:', String(e));
+        }
+
         const allDeleted = await pruneOldScheduledPostsAll();
         // also perform full-table execution logs prune
         let allLogDeleted = 0;
