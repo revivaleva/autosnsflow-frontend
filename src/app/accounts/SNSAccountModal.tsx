@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import LoadingOverlay from '@/components/LoadingOverlay';
 import AIGeneratedPersonaModal from "./AIGeneratedPersonaModal";
 import AccountCopyModal from "./AccountCopyModal";
 
@@ -112,6 +113,12 @@ export default function SNSAccountModal({
   const [aiPreviewModalOpen, setAiPreviewModalOpen] = useState(false);
   const [aiPersonaDetail, setAiPersonaDetail] = useState("");
   const [aiPersonaSimple, setAiPersonaSimple] = useState("");
+  // preview for fetched posts when doing immediate delete count
+  const [previewPosts, setPreviewPosts] = useState<any[]>([]);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  // deletionMessage removed from UI; keep only for potential future use
+  const [deletionMessage, setDeletionMessage] = useState<string | null>(null);
+  const [deletionExecuted, setDeletionExecuted] = useState(false);
   const [bulkPersonaOpen, setBulkPersonaOpen] = useState(false);
   const [bulkPersonaText, setBulkPersonaText] = useState("");
 
@@ -232,7 +239,7 @@ export default function SNSAccountModal({
       setAiPersonaDetail((data as any).personaDetail || "");
       setAiPersonaSimple((data as any).personaSimple || "");
       setAiPreviewModalOpen(true);
-    } catch (e: unknown) {
+    } catch (e) {
       setError("AI生成エラー: " + String(e));
       setAiLoading(false);
     }
@@ -301,10 +308,131 @@ export default function SNSAccountModal({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data?.error) throw new Error(data?.error || "delete failed");
+      // show success alert then refresh list and close modal
+      try { alert('アカウントを削除しました'); } catch {}
       await reloadAccounts();
       onClose();
     } catch (e: any) {
       alert("削除に失敗しました: " + (e?.message || e));
+    }
+  };
+
+  // 投稿全削除ハンドラ（編集時のみ使用） — 二重確認ダイアログを表示
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deletingLoading, setDeletingLoading] = useState(false);
+  // preview removed per user request
+  
+
+  const handleDeleteAllPosts = () => {
+    if (!originalAccountId) return;
+    setShowDeleteConfirm(true);
+  };
+
+  const doImmediateDelete = async () => {
+    if (!originalAccountId) return;
+    if (!confirm("本当に全投稿を即時で削除します。取り消せません。\n即時削除は非常に時間がかかります。裏画面実行を使用することをおすすめします。続行しますか？")) return;
+    // close confirm and show loading overlay in edit modal
+    setShowDeleteConfirm(false);
+    setDeletingLoading(true);
+    try {
+      // debug log removed
+      setDeletionMessage(null);
+      const res = await fetch(`/api/accounts/${encodeURIComponent(originalAccountId)}/delete-all`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ mode: 'immediate' }),
+      });
+      const text = await res.text().catch(() => '');
+      // debug log removed
+      let data: any = {};
+      try { data = text ? JSON.parse(text) : {}; } catch { data = { rawText: text }; }
+      // server-side logs will contain debug info; keep UI unchanged
+      // debug logs removed - do not log tokens or responses in client code
+      if (!res.ok || data?.error) throw new Error(data?.error || "delete-all failed");
+      if (data?.status === 'count') {
+        const n = Number(data?.totalCandidates || 0);
+        const fetched = Number(data?.fetchedCount || 0);
+        // show blocking native alert as requested
+        const msg = `取得件数: ${fetched} 件\n候補合計: ${n} 件`;
+        try { alert(msg); } catch (e) { console.warn('alert failed', e); }
+        // mark executed so closing modal triggers reload
+        setDeletionExecuted(true);
+        // try to load preview posts but do not block or alert
+        try {
+          const postsRes = await fetch(`/api/accounts/${encodeURIComponent(originalAccountId)}/fetch-posts?limit=${fetched}`, { credentials: 'include' });
+          const postsJson = await postsRes.json().catch(() => ({}));
+          if (postsRes.ok && postsJson?.posts) {
+            setPreviewPosts(postsJson.posts || []);
+            setPreviewOpen(true);
+          }
+        } catch (e) {
+        // debug warn removed
+        }
+      } else if (data?.status === 'no_posts') {
+        // debug log removed
+        const msgNo = '削除対象の投稿はありませんでした';
+        try { alert(msgNo); } catch (e) { console.warn('alert failed', e); }
+        setDeletionExecuted(true);
+      } else {
+        console.log('[client] delete-all started', { body: data });
+        if (data?.status === 'queued') {
+          // immediate deletion couldn't finish all items; instruct user about background processing
+          const msgQueued = '上限を超えたため削除できなかった投稿があります。残数は裏画面で実行します。';
+          try { alert(msgQueued); } catch (e) { console.warn('alert failed', e); }
+        } else if (data?.status === 'completed') {
+          const msgDone = 'すべての投稿の削除が完了しました';
+          try { alert(msgDone); } catch (e) { console.warn('alert failed', e); }
+        } else {
+          const msgStart = data?.message || '投稿削除の処理を開始しました';
+          try { alert(msgStart); } catch (e) { console.warn('alert failed', e); }
+        }
+        setDeletionExecuted(true);
+      }
+      // keep modal open; do not auto-refresh the accounts list here
+    } catch (e: any) {
+      // debug error removed
+      alert("投稿全削除に失敗しました: " + (e?.message || e));
+    } finally {
+      // debug log removed
+      setDeletingLoading(false);
+    }
+  };
+
+
+  const doBackgroundDelete = async () => {
+    if (!originalAccountId) return;
+    if (!confirm("裏画面で削除処理を開始します。よろしいですか？")) return;
+    setShowDeleteConfirm(false);
+    setDeletingLoading(true);
+    try {
+      // debug log removed
+      const res = await fetch(`/api/accounts/${encodeURIComponent(originalAccountId)}/delete-all`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ mode: 'background' }),
+      });
+      const text = await res.text().catch(() => '');
+      // debug log removed
+      let data: any = {};
+      try { data = text ? JSON.parse(text) : {}; } catch { data = { rawText: text }; }
+      if (!res.ok || data?.error) throw new Error(data?.error || "queue failed");
+      if (data?.status === 'queued') {
+        // do not show counts for background; show generic started message
+        alert('削除を開始しました。');
+        setDeletionExecuted(true);
+      } else {
+        alert(data?.message || '削除を開始しました。');
+        setDeletionExecuted(true);
+      }
+      // keep modal open; do not auto-refresh the accounts list here
+    } catch (e: any) {
+      // debug error removed
+      alert("裏画面実行に失敗しました: " + (e?.message || e));
+    } finally {
+      // debug log removed
+      setDeletingLoading(false);
     }
   };
 
@@ -343,24 +471,15 @@ export default function SNSAccountModal({
             body: JSON.stringify({ accountId: originalAccountId }),
           });
         }
-      // 新規作成時: 同一 accountId の存在チェック
-      if (mode === "create") {
-        try {
-          const checkRes = await fetch(`/api/threads-accounts`, { credentials: "include" });
-          if (checkRes.ok) {
-            const checkData = await checkRes.json();
-            const existing = (checkData.items || checkData.accounts || []).find((a: any) => String(a.accountId || a.username || "") === String(accountId));
-            if (existing) {
-              setError("既に登録されたアカウントです");
-              setSaving(false);
-              return;
-            }
+
+        // 新規作成時: 同一 accountId の存在チェック（失敗しても続行）
+        if (mode === "create") {
+          try {
+            await fetch(`/api/threads-accounts?accountId=${encodeURIComponent(accountId)}`, { method: "GET", credentials: "include" });
+          } catch (_) {
+            // ignore
           }
-        } catch (e) {
-          // チェック失敗は無視して続行（APIエラーがある場合は後続のConditionExpressionで弾かれる）
-          console.log("dup-check failed:", e);
         }
-      }
       const method = mode === "create" ? "POST" : "PUT";
       const res = await fetch("/api/threads-accounts", {
         method,
@@ -399,7 +518,7 @@ export default function SNSAccountModal({
       } else {
         setError(data.error || "保存に失敗しました"); // [FIX]
       }
-    } catch (e: unknown) {
+    } catch (e) {
       setError("通信エラー: " + String(e));
       setSaving(false);
     }
@@ -424,10 +543,16 @@ export default function SNSAccountModal({
         onApply={handleApplyAIPersona}
       />
       <div className="relative min-w-[520px] max-h-[90vh] w-full max-w-[80vw]">
+        <LoadingOverlay open={deletingLoading} message={deletingLoading ? '削除キューを作成しています。しばらくお待ちください。' : ''} />
         <button
           type="button"
           className="absolute top-2 right-2 text-gray-400 text-2xl p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 z-20"
-          onClick={onClose}
+          onClick={() => {
+            try {
+              if (deletionExecuted && reloadAccounts) reloadAccounts();
+            } catch (e) {}
+            onClose();
+          }}
           aria-label="閉じる"
         >
           ×
@@ -560,7 +685,7 @@ export default function SNSAccountModal({
         <label className="block">キャラクターイメージ</label>
         <div className="flex gap-2 mb-2">
           <input
-            className="border rounded px-2 py-1 w-full"
+            className="border rounded px-2 py-1 flex-1 min-w-0"
             type="text"
             value={characterImage}
             onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCharacterImage(e.target.value)}
@@ -568,7 +693,7 @@ export default function SNSAccountModal({
           />
           <button
             type="button"
-            className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 disabled:bg-gray-400"
+            className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 disabled:bg-gray-400 whitespace-nowrap"
             onClick={handleAIGenerate}
             disabled={aiLoading}
           >
@@ -735,7 +860,7 @@ export default function SNSAccountModal({
           onChange={(e) => setSecondStageContent(e.target.value)}
         />
 
-        <div className="mt-6 flex items-center justify-between">
+          <div className="mt-6 flex items-center justify-between">
           <div>
             {mode === "edit" && (
               <button
@@ -744,6 +869,15 @@ export default function SNSAccountModal({
                 className="rounded bg-red-600 px-4 py-2 text-white hover:bg-red-700"
               >
                 削除
+              </button>
+            )}
+            {mode === "edit" && (
+              <button
+                type="button"
+                onClick={handleDeleteAllPosts}
+                className="ml-2 rounded bg-red-800 px-4 py-2 text-white hover:bg-red-900"
+              >
+                投稿全削除
               </button>
             )}
           </div>
@@ -758,6 +892,22 @@ export default function SNSAccountModal({
             {/* Cancel removed - use top-right × to close */}
           </div>
         </div>
+        {showDeleteConfirm && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center">
+            <div className="absolute inset-0 bg-black opacity-40" onClick={() => setShowDeleteConfirm(false)} />
+            <div className="relative bg-white dark:bg-gray-900 rounded shadow-lg p-6 w-full max-w-lg z-50">
+              <div className="mb-2 font-semibold">投稿全削除の確認</div>
+              <div className="text-sm mb-4">操作を選んでください。即時削除は最大100件を取得して削除します。即時削除は非常に時間がかかります。裏画面実行を使用することをおすすめします。</div>
+              <div className="flex gap-2 justify-end">
+                <button type="button" onClick={() => { setShowDeleteConfirm(false); doImmediateDelete(); }} className="bg-red-700 text-white px-3 py-1 rounded hover:bg-red-800">即時削除(100件)</button>
+                <button type="button" onClick={() => { setShowDeleteConfirm(false); doBackgroundDelete(); }} className="px-3 py-1 border rounded bg-white hover:bg-gray-50">裏画面実行(キュー化)</button>
+                <button type="button" onClick={() => setShowDeleteConfirm(false)} className="px-3 py-1 border rounded">キャンセル</button>
+              </div>
+            </div>
+          </div>
+        )}
+        {/* preview removed per user request */}
+        {/* deletionMessage removed per user request */}
       </form>
     </div>
   </div>

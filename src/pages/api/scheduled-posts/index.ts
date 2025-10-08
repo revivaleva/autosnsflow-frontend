@@ -34,7 +34,7 @@ async function putLog({
   const allowDebug = (process.env.ALLOW_DEBUG_EXEC_LOGS === 'true' || process.env.ALLOW_DEBUG_EXEC_LOGS === '1');
   const shouldPersist = (status === 'error' && !!userId) || allowDebug;
   if (!shouldPersist) {
-    try { console.log('[debug] putLog skipped persist', { userId, type, status, message }); } catch (_) {}
+    // debug output removed
     return;
   }
 
@@ -52,7 +52,7 @@ async function putLog({
   try {
     await ddb.send(new PutItemCommand({ TableName: TBL_LOGS, Item: item }));
   } catch (e) {
-    console.log("[warn] putLog skipped:", String((e as Error)?.message || e));
+    console.warn("[warn] putLog skipped:", String((e as Error)?.message || e));
   }
 }
 
@@ -62,7 +62,7 @@ async function getReplyStatusForPost(userId: string, postId: string | undefined,
   
   try {
     const searchIds = [postId, numericPostId].filter(Boolean);
-    console.log(`[DEBUG] リプライ状況検索開始 - 検索ID: [${searchIds.join(', ')}]`);
+    // debug output removed
     
     const allItems: any[] = [];
     
@@ -84,7 +84,7 @@ async function getReplyStatusForPost(userId: string, postId: string | undefined,
       }));
       
       if (result.Items) {
-        console.log(`[DEBUG] postId "${searchId}" で ${result.Items.length} 件のリプライを発見`);
+        // debug output removed
         allItems.push(...result.Items);
       }
     }
@@ -101,10 +101,7 @@ async function getReplyStatusForPost(userId: string, postId: string | undefined,
     const total = uniqueItems.length;
     const replied = uniqueItems.filter((item: any) => item.status?.S === "replied").length;
     
-    console.log(`[DEBUG] 最終リプライ状況: ${replied}/${total} (重複除去後)`);
-    if (total > 0) {
-      console.log(`[DEBUG] 見つかったリプライのpostId例:`, uniqueItems.slice(0, 3).map((i: any) => i.postId?.S));
-    }
+    // debug output removed
     
     return { replied, total };
   } catch (e) {
@@ -307,23 +304,17 @@ export default async function handler(
 
         // 未投稿 (status !== 'posted') の場合は物理削除
         if (status !== "posted") {
-          await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: key }));
-          res.status(200).json({ ok: true, deleted: true });
+          const { deleteScheduledRecord } = await import('@/lib/scheduled-posts-delete');
+          const r = await deleteScheduledRecord({ userId, sk: `SCHEDULEDPOST#${body.scheduledPostId}`, physical: true });
+          res.status(200).json({ ok: Boolean(r.ok), deleted: Boolean(r.physical), result: r });
           return;
         }
 
         // 投稿済みの場合は Threads API を呼ばず、サーバ側では論理削除のみ行う
-        // （実投稿の削除は行わない。フロントはデフォルトで論理削除済を非表示にしているため即時一覧から消える）
+        const { deleteScheduledRecord } = await import('@/lib/scheduled-posts-delete');
         const now = Math.floor(Date.now() / 1000);
-        await ddb.send(
-          new UpdateItemCommand({
-            TableName: TBL_SCHEDULED,
-            Key: key,
-            UpdateExpression: "SET isDeleted = :t, deletedAt = :ts",
-            ExpressionAttributeValues: { ":t": { BOOL: true }, ":ts": { N: String(now) } },
-          })
-        );
-        res.status(200).json({ ok: true, deleted: false, deletedAt: now });
+        const r = await deleteScheduledRecord({ userId, sk: `SCHEDULEDPOST#${body.scheduledPostId}`, physical: false });
+        res.status(200).json({ ok: true, deleted: false, deletedAt: now, result: r });
         return;
       }
 
@@ -371,10 +362,7 @@ export default async function handler(
         return;
       }
 
-      // Debug: log the update expression and values to help diagnose missing fields
-      console.log(`[DEBUG] PATCH scheduled-posts update - key=${JSON.stringify(key)} expr=${JSON.stringify(
-        expr
-      )} names=${JSON.stringify(names)} values=${JSON.stringify(values)}`);
+      // debug output removed
 
       // Retrieve existing item to determine accountId for GSI marker
       const existingForPatch = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: key }));
@@ -397,7 +385,7 @@ export default async function handler(
         const updated = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: key }));
         return res.status(200).json({ ok: true, post: mapItem(updated.Item || {}) });
       } catch (e) {
-        console.log('[WARN] failed to fetch updated item after patch:', String(e));
+        console.warn('[WARN] failed to fetch updated item after patch:', String(e));
         return res.status(200).json({ ok: true });
       }
       return;

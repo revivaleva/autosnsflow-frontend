@@ -71,6 +71,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         autoReply: it.autoReply,
 
         statusMessage: it.statusMessage,
+        // アカウントの状態 (deleting / deletion_error / active 等)。backend-core に無ければ 'active' をデフォルト
+        status: (it as any).status || (it as any).state || 'active',
 
         personaMode: it.personaMode,
         personaSimple: it.personaSimple,
@@ -85,20 +87,38 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }));
 
       // If backend-core didn't return clientId/secret fields, fetch them directly from DynamoDB as fallback
+      // Also always read status from DynamoDB to reflect deletion state even if backend-core omits it.
       for (let i = 0; i < items.length; i++) {
         const acc = items[i];
-        if (acc.clientId && acc.hasClientSecret) continue; // already present
         try {
           const out = await ddb.send(new GetItemCommand({
             TableName: TBL,
             Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${acc.accountId}` } },
-            ProjectionExpression: 'clientId, clientSecret',
+            ProjectionExpression: 'clientId, clientSecret, #st',
+            ExpressionAttributeNames: { '#st': 'status' },
           }));
           const it: any = (out as any).Item || {};
           if (!acc.clientId && it.clientId && it.clientId.S) acc.clientId = it.clientId.S;
           if (!acc.hasClientSecret && it.clientSecret && it.clientSecret.S) acc.hasClientSecret = true;
+          // DynamoDB 側に status が保存されている場合は反映（backend-core の値を上書きしない）
+          if (it.status && it.status.S) acc.status = it.status.S;
+          // 追加: DeletionQueue にアイテムが存在するか確認し、存在すれば強制的に deleting を返す
+          try {
+            const dq = await ddb.send(new QueryCommand({
+              TableName: process.env.TBL_DELETION_QUEUE || 'DeletionQueue',
+              KeyConditionExpression: 'PK = :pk',
+              ExpressionAttributeValues: { ':pk': { S: `ACCOUNT#${acc.accountId}` } },
+              Limit: 1,
+            }));
+            const dqItems = (dq as any).Items || [];
+            if (dqItems.length > 0) {
+              acc.status = 'deleting';
+            }
+          } catch (e) {
+            console.warn('[threads-accounts] deletionQueue check failed', e);
+          }
         } catch (e) {
-          console.log('[threads-accounts] fallback read clientId failed', e);
+          console.warn('[threads-accounts] fallback read item failed', e);
         }
       }
 
@@ -138,7 +158,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             if (existingUser !== userId) return res.status(409).json({ error: 'accountId already registered for another user' });
           }
         } catch (e2) {
-          console.log('[threads-accounts] account uniqueness check failed', e2);
+          // debug output removed
         }
       }
       const now = `${Math.floor(Date.now() / 1000)}`;
@@ -173,7 +193,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             item.clientSecret = { S: s.defaultThreadsClientSecret.S };
           }
         } catch (e) {
-          console.log('[threads-accounts] fallback settings read failed', e);
+          // debug output removed
         }
       }
 
@@ -223,7 +243,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             effectiveClientSecret = s.defaultThreadsClientSecret.S;
           }
         } catch (e) {
-          console.log('[threads-accounts] fallback settings read failed', e);
+          // debug output removed
         }
       }
       if ("clientId" in body) setStr("clientId", effectiveClientId);

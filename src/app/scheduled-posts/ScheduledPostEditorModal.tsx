@@ -244,7 +244,7 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
           if (a) setAccountName(a.displayName);
         }
       } catch (e) {
-        console.log("accounts load error:", e);
+        // accounts load error ignored in client
       }
     })();
 
@@ -258,7 +258,7 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
         }));
         setGroups(normalized);
       } catch (e) {
-        console.log("auto-post-groups load error:", e);
+        // auto-post-groups load error ignored in client
       }
     })();
 
@@ -276,7 +276,7 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
           setUserSettings(s || null);
         }
       } catch (e) {
-        console.log("settings load error:", e);
+        // settings load error ignored in client
       }
     })();
 

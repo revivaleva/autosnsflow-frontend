@@ -9,7 +9,7 @@ const { DynamoDBClient, ScanCommand, UpdateItemCommand } = require('@aws-sdk/cli
     const region = process.env.AWS_REGION || 'ap-northeast-1';
     const ddb = new DynamoDBClient({ region });
 
-    console.log('Scanning table', table);
+    // debug removed
     let items = [];
     let lastKey;
     do {
@@ -22,10 +22,10 @@ const { DynamoDBClient, ScanCommand, UpdateItemCommand } = require('@aws-sdk/cli
     // Filter items that contain legacy attributes (check both spellings)
     const legacyItems = items.filter(i => i.openAiApiKey || i.openaiApiKey || i.modelDefault);
 
-    console.log(`Found ${legacyItems.length} items with legacy attributes`);
+  // debug removed
     const backupFile = path.resolve(process.cwd(), `migration-backup-UserSettings-${Date.now()}.json`);
     fs.writeFileSync(backupFile, JSON.stringify(legacyItems, null, 2));
-    console.log('Wrote backup to', backupFile);
+  // debug removed
 
     for (const it of legacyItems) {
       const pk = it.PK.S; const sk = it.SK.S;
@@ -45,13 +45,13 @@ const { DynamoDBClient, ScanCommand, UpdateItemCommand } = require('@aws-sdk/cli
       };
       try{
         await ddb.send(new UpdateItemCommand(updateParams));
-        console.log('Removed', removes.join(','), 'from', pk, sk);
+        // debug removed
       }catch(e){
         console.error('Failed to remove for', pk, sk, e);
       }
     }
 
-    console.log('Migration done');
+    // debug removed
   }catch(e){
     console.error('Migration failed:', e);
     process.exit(1);

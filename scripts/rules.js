@@ -36,7 +36,7 @@ function decideBranch(changedFiles = []) {
 if (require.main === module) {
   const args = process.argv.slice(2);
   const files = args.length ? args : ['.'];
-  console.log('decideBranch ->', decideBranch(files));
+  // debug removed
 }
 
 module.exports = { loadRuleFile, decideBranch };

@@ -1,3 +1,20 @@
+AppConfig 管理方針
+
+- テーブル名: `AppConfig` (DynamoDB)
+- スキーマ: Primary Key = `Key` (string), 属性 `Value` (string)
+- 保存方針: 平文で保存（ユーザー指定）。監査/更新履歴は不要。
+- 読み込み: サーバ起動時に一括取得してメモリキャッシュ。設定変更は基本サーバ再起動で反映する運用。
+- 例外: Amplify のビルド時に必要な変数は除外（ビルドプロセスで env に注入する運用）。
+- 優先移行キー:
+  - MASTER_DISCORD_WEBHOOK
+  - TBL_DELETION_QUEUE
+  - THREADS_OAUTH_REDIRECT_PROD
+  - その他削除処理に関わる変数
+
+運用注意:
+- Amplify / Lambda で IAM ユーザーが別になるため、DynamoDB へのアクセス権限はそれぞれ別に設定する。
+- AppConfig 参照が不能な場合は起動エラーとする（fail-fast）。
+
 ### Deferred implementation: 二段階投稿削除 / 投稿削除
 
 - 状況: フロントエンド側での UI 表示は一時的に非表示にしました。バックエンドの安全な実装（並列実行対策、削除の整合性チェック、ログ保存と実行確認）が完了するまで、ユーザーに誤操作をさせないために削除系の操作は無効化します。
@@ -11,6 +28,18 @@
   - キュー: 新規 DynamoDB テーブル `DeletionQueue` を作成する。スキーマ案:
     - `id` (PK), `account_id`, `created_at`, `last_processed_at` (nullable), `processing` (bool), `retry_count` (int), `last_error` (string JSON)
   - ログ: 定期実行中の削除エラーおよび完了ログは既存の `ExecutionLogs` テーブルへ保存する。その他のログは既存の仕様に従う。
+
+  - 追加ユーティリティ: `deleteUserPosts` 関数（`src/lib/delete-user-posts.ts`）
+    - 目的: 指定ユーザーの投稿を古い順に取得して一括削除（最大 `limit` 件）する共通処理。即時削除API・定期ワーカー両方から呼び出す。
+    - 挙動（要点）:
+      - `userId`（必須）、`accountId`（任意：優先的に使用）、`limit`（省略時100）を受け取る。
+      - 対象ユーザーの `ScheduledPosts` を古い順に取得し、`status === 'posted'` かつ `isDeleted !== true` の投稿を削除対象とする。
+      - 各投稿について `deleteThreadsPost`（既存の Threads 削除関数）を呼び出して外部投稿を削除し、該当する予約レコードが存在する場合は `isDeleted` と `deletedAt` をセットして論理削除する。
+      - 途中で外部APIのエラー（権限不足等）が発生した場合は `ExecutionLogs` へ `deletion_error` を記録して例外を投げ、呼び出し元で停止 or キュー化の判断を行う。
+      - 戻り値: `{ deletedCount, remaining }`（remaining==true の場合は未削除の投稿が残っている）。
+      - 注意（テストコード）: 本処理のためにリポジトリへ追加するテストコードは一時的なものとし、実行・レビュー完了後に必ずリポジトリから削除すること。テストコードを恒久的に残さない運用を徹底してください。
+      - 追記（今回対応）: AppConfig 参照の実装を行ったため、`DELETION_BATCH_SIZE`, `TBL_DELETION_QUEUE`, `DELETION_NOTIFY_ON_ERROR` などのキーを使った動作確認テストを必ず実施すること。テストはレビュー完了後に削除してください。
+
   - アカウントステータス: 既存の `threadsAccounts` / `user_settings` の命名規約に合わせる。利用予定のステータス値: `deleting`, `deletion_error`, `active`。
   - 即時削除ボタン: アカウント編集モーダルに `投稿全削除` ボタンを追加。押下で二重確認ダイアログを表示した上で `POST /api/accounts/{accountId}/delete-all` を呼び出す。
     - 即時削除の挙動: サーバはまず対象アカウントの投稿を取得して最大100件（残件が100件未満なら全件）を削除する。
@@ -53,18 +82,6 @@
     - UI からの即時実行フロー（`/api/scheduled-posts/second-stage`）が成功レスポンスを受け取り、`doublePostStatus`/`secondStagePostId` を反映しているか。
   - 期限: 優先度高。まずはログの粒度を上げて再現ケースを収集し、修正 PR を作成する。
 
-### Dashboard: ExecutionLogs をダッシュボードに表示
-
-- 状況: ダッシュボードの「最近のエラー」領域に `ExecutionLogs` テーブルのログが表示されておらず、ユーザーからの問い合わせが発生しています。付与された CSV サンプルには多数の `error` / `info` ログが含まれており、現状 UI 側で参照できていません。
-
-- 実装目的: ログイン中のアカウントに紐づく `ExecutionLogs` の直近7日分をダッシュボードに表示することで、投稿・返信・アカウントに関するエラーの原因特定を迅速化し、運用負荷を低減します。
-
-- 実装内容:
-  - Backend: `src/pages/api/dashboard-stats.ts` を拡張し、環境変数 `TBL_EXECUTION_LOGS`（未設定時は `ExecutionLogs`）を参照して DynamoDB をクエリする。クエリは `PK = USER#<sub>` かつ `begins_with(SK, "LOG#")` で絞り、取得したログのうち直近7日分を既存の `recentErrors` にマージする。読み取り失敗時はダッシュボード全体を致命化させず、サーバ側でエラーログを出力する。
-  - Frontend: `src/app/dashboard/page.tsx`（および必要に応じて新規 `ErrorLogsPanel`）で `recentErrors` にマージされた ExecutionLogs を表示する。`detail` フィールドが JSON の場合は安全にパースして要約を表示し、長いメッセージは切り詰める。PII（アクセストークン等）は表示しない／マスクする。
-  - セキュリティ・運用: ユーザーは自分のアカウントに紐づくログのみ閲覧可能とする。CloudWatch や DynamoDB のクエリコストに注意し、必要なら error のみ初期表示にするなど段階的ロールアウトを行う。
-  - テスト: ExecutionLogs をモックした API 単体テストと、ログインした実ユーザーでダッシュボードにログが表示される E2E テストを追加する。
-
 Note: このファイルはプロジェクトルールにより Git 管理対象外にしています（.gitignore に .cursor/ を追加済）。
 
  - 追記: WSL 環境で作業する際の Git 操作について
@@ -87,4 +104,113 @@ Note: このファイルはプロジェクトルールにより Git 管理対象
     4. CI の前に `git push` する。staging に直接 force push する場合はチームに通知し、`--force-with-lease` を用いること。
   - DynamoDB の AttributeValue（例: `{ S: '...' }`）が API の JSON に混入すると型エラーやランタイム問題の原因になります。API で返す前に文字列へ正規化すること。
 
+
+---
+## 進捗（ここまで実施したこと）
+
+- `deleteUserPosts` のリファクタ実装を完了しました（`src/lib/delete-user-posts.ts`: Threads 取得 → 削除 → DB 更新 → 残件確認）。
+- `POST /api/accounts/{accountId}/delete-all` を AppConfig 読み込みの fail-fast 化と新フロー呼び出しに合わせて修正しました（取得失敗時はエラー返却）。
+- Threads 側で取得した投稿 ID から `ScheduledPosts` の `SK` をマップする処理を追加し、指定アカウント分のみ DB を更新するように修正しました（他アカウントへ影響しないようガード）。
+- 存在しない投稿（Threads API error_subcode:33 等）は idempotent として扱い、該当レコードをクリーンにする処理を追加しました。
+- `LoadingOverlay` を共通化し、`ScheduledPostsTable` と `SNSAccountModal` の削除処理で利用するよう変更しました。pjrule に共通化ルールを追記済みです。
+- GSI 追加の推奨（目的・具体例・移行手順）を ruletodo に追記しました。
+
+## 残タスク（優先順）
+
+1. `Fix existing-account copy behavior in SNSAccountModal`（フロントの既存アカウント複製挙動修正） — 現状: pending
+2. ステージング反映とスモークテスト
+   - staging へ push → 即時削除（UI）・裏画面キュー作成（UI）・Lambda ワーカー処理の一連検証。問題なければ lambda ブランチへ反映。
+3. テスト用コード・一時ログの削除（レビュー後）
+4. 運用改善（中長期）: GSI の infra 定義作成、既存データのバックフィル計画、監視/アラート整備（CloudWatch / Discord）
+5. 監視・障害対応ルールの整備: 削除ジョブ失敗時の自動通知・アカウントステータス遷移ポリシー作成
+
+各タスクは影響範囲が大きいため、staging での段階的検証を推奨します。
+
+## 次のテスト実行用 TODO（ローカル→UI→Lambda → 本番移行）
+
+- テストフロー（順序）:
+  1. ローカルビルドと型チェック（WSL 実行: `wsl -d Ubuntu -u revival bash -lc "cd /home/revival/projects/AutoSNSFlow/frontend && npm run build"`）。コンパイルエラーが出れば修正して再ビルド。
+  2. フロントから「即時削除」ボタンで即時バッチ削除を実行しレスポンス/ExecutionLogs を確認。
+  3. フロントから「裏画面実行（キュー化）」を実行し `DeletionQueue` テーブルにエントリが作成されることを確認。
+  4. Lambda のテストイベント（新しいバージョンで登録）を用いてキュー処理を実行し、キュー処理の動作を確認（`processing` フラグ・楽観ロックの検証）。
+  5. 問題なければテスト用のダミー/モックコードを削除し、実データで実削除を試行。
+  6. 問題なければ staging と lambda ブランチへ反映。
+
+- 注意:
+  - テスト中に追加したテストコードや一時的なログ出力は必ず削除すること（`pjrule` / `pjrulestodo` にも記載済み）。
+  - AppConfig（`DELETION_BATCH_SIZE`, `TBL_DELETION_QUEUE`, `DELETION_NOTIFY_ON_ERROR` 等）を必ず本番と合わせて設定してから実行すること。
+
+- テスト用 TODO（実施順に作業状態を管理）:
+  - `Run local build and fix compile errors` [in_progress]
+  - `Test immediate deletion via UI` [pending]
+  - `Test background queue creation via UI (裏画面実行)` [pending]
+  - `Trigger Lambda test event to process DeletionQueue` [pending]
+  - `Remove test code and run real deletion tests` [pending]
+  - `Push changes to staging and lambda` [pending]
+
+## 追加: フロントの修正/確認 TODO
+
+- `Fix existing-account copy behavior in SNSAccountModal` [pending]
+  - 説明: アカウント編集モーダルの「既存アカウント複製」機能で不正な挙動が見られるため、再現箇所の調査と修正を行うこと。
+
+- `Ensure account delete shows confirm dialog and alert` [completed]
+  - 説明: アカウント削除ボタン押下時に確認ダイアログを表示し、削除成功時に alert を出す UX を追加済み。動作確認後に不要コードは削除すること。
+
+## 直近の作業履歴（デバッグログ整理）
+
+- 日付: 2025-10-05
+- 実施者: 開発チーム（AI支援で編集）
+- 実施内容:
+  - API 側 (`src/pages/api/**`) の不要な `console.log` を削除、もしくは `console.warn` / `console.info` に置換しました。
+  - クライアント側（`src/app/*`）の開発用 `console.debug` / `console.log` を削除またはコメント化しました。
+  - `src/lib/debug.ts` を追加/更新し、`isDebugEnabled` / `debugLog` / `debugWarn` を実装して `ALLOW_DEBUG_EXEC_LOGS` 環境変数で制御できるようにしました（本番では無効化推奨）。
+  - `src/lib/logger.ts` の `putLog`/`logEvent` の例外出力を `console.warn` に統一しました。
+  - Lambda 内スクリプトやユーティリティ（`lambda/scheduled-autosnsflow/*`, `scripts/*`）の冗長な `console.log` を整理しました。
+
+- 影響/備考:
+  - 編集ファイルに対して lint を実行しエラーは確認されていません。対象ファイルの型チェックは部分的に実行済み（フル型チェックは環境依存で未完了）。
+  - `ExecutionLogs` と CloudWatch（`error`/`warn`）への永続ログは今回の削除対象から除外しています。
+  - push は保留。staging へのコミット・push はユーザーの承認後に実行予定です。
+
+## 推奨: DynamoDB GSI の追加（性能・運用性向上）
+
+目的:
+
+- 大量アカウント／大量投稿をスケールして処理する際に、現状のユーザー単位の Query や一時的な Scan によるコスト・レイテンシを低減するため。
+- DeletionQueue や ScheduledPosts を効率的に検索・集約し、ワーカーが問題なく未処理項目を高速に取り出せるようにする。
+
+推奨する GSI 定義（例）:
+
+1) ScheduledPostsByUserStatusIndex
+ - PK: `userId` (string)
+ - SK: `status_createdAt` (string) — 例: `${status}#${createdAt}`（`status` は `posted` / `deleted` 等）
+ - 用途: 特定ユーザーの未削除投稿（`status = 'posted'` かつ `isDeleted != true`）を作成日時順に効率的に取得。ワーカーの削除候補抽出で Query に利用。
+
+2) ScheduledPostsByPostIdIndex
+ - PK: `numericPostId` (string)
+ - SK: `SK` (string)
+ - 用途: Threads から取得した投稿 ID から直接 ScheduledPosts のレコードを特定するための高速マッピング。現在行っている `postId->SK` マップ生成を GSI で置換すれば Query 回数を減らせる。
+
+3) DeletionQueueByStatusIndex
+ - PK: `status` (string) 例: `pending` / `processing` / `error`
+ - SK: `createdAt` (number/string)
+ - 用途: ワーカーが未処理キュー（`pending`）を優先的に取得し、処理を横展開できるようにする。
+
+設計上の注意:
+
+- GSI を追加すると二次インデックスの更新コストが発生します。運用中に GSI を追加する場合は書き込み負荷の影響を評価してください。
+- `numericPostId` は一意にインデックス可能な文字列として正規化して保存すること（空文字や null は避ける）。
+- クエリのアクセスパターンを事前に洗い出し、必要な属性だけを GSI に載せる（Projection を限定）ことでコストを抑える。
+- 大量データ移行時のバックフィル（既存レコードへ GSI 用属性を埋める作業）を計画する必要があります。Lambda バッチや ETL で段階的に補完するのが現実的です。
+
+移行手順（概略）:
+
+1. GSI 定義を `infrastructure` または `CloudFormation/Amplify` 定義に追加（まずは staging で追加）。
+2. GSI 追加時に既存データが即座に反映されない場合があるため、バックフィル用のバッチジョブ（Lambda）を準備して既存レコードへ `numericPostId` 等のフィールドを埋める。小さなバッチに分けて実行すること。 
+3. ワーカー/アプリを GSI を用いるように切替え（`deleteUserPosts` などを更新）。
+4. 監視を強化（CloudWatch: ProvisionedThroughputExceeded / ThrottledRequests 等）し、必要なら GSI のスループット調整を行う。
+
+この GSI 追加案は現行の削除フローのスケーラビリティを大きく向上させます。staging 環境での影響試験を推奨します。
+
+---
 

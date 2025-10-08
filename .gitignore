@@ -94,6 +94,10 @@ vscode-remote-server-*/
 /tmp/
 *.log
 
+# Temporary app config dump (dev only)
+/.tmp/
+/.tmp/app-config.json
+
 # Platform-specific
 AppData/
 OneDrive/

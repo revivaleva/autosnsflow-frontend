@@ -30,12 +30,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Verify signature if App Secret is available
     const appSecret = process.env.THREADS_CLIENT_SECRET || process.env.THREADS_APP_SECRET || '';
-    if (appSecret && parts.length >= 2) {
+      if (appSecret && parts.length >= 2) {
       const sig = parts[0];
       const expected = crypto.createHmac('sha256', appSecret).update(parts[1]).digest('base64');
       const expectedUrl = expected.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
       if (sig !== expectedUrl) {
-        console.log('[deauth] signed_request signature mismatch', { sig, expectedUrl });
+        // debug output removed
         return res.status(400).json({ error: 'invalid_signature' });
       }
     }
@@ -53,9 +53,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           Key: key,
           UpdateExpression: 'REMOVE accessToken'
         }));
-        console.log('[deauth] token removed for', userId);
       } else {
-        console.log('[deauth] no direct account item for', userId, '- no action');
+        // debug output removed
       }
     } catch (e) {
       console.error('[deauth] cleanup error', e);

@@ -86,8 +86,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     // デバッグログ追加
-    console.log(`[DEBUG] 二段階投稿開始: scheduledPostId=${scheduledPostId}, postId=${postId}, providerUserId=${providerUserId}`);
-    console.log(`[DEBUG] 二段階投稿パラメータ: inReplyTo=${postId}, text=${secondStageContent.substring(0, 50)}...`);
+    // debug output removed
 
     // Threadsに二段階投稿（元の投稿にリプライ）- 修正済みのpostToThreads使用
     const { postId: secondStagePostId } = await postToThreads({
@@ -97,7 +96,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       inReplyTo: postId, // 元の投稿IDにリプライ
     });
 
-    console.log(`[DEBUG] 二段階投稿完了: secondStagePostId=${secondStagePostId}`);
+    // debug output removed
 
     // DBのステータスを更新
     const now = Math.floor(Date.now() / 1000);

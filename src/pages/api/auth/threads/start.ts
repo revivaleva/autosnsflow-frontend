@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { createDynamoClient } from "@/lib/ddb";
-import { logEvent } from '@/lib/logger';
+import { logEvent, putLog } from '@/lib/logger';
 import { verifyUserFromRequest } from "@/lib/auth";
 import { GetItemCommand } from "@aws-sdk/client-dynamodb";
 
@@ -31,7 +31,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     redirectUri = String(redirectUri).trim();
     if (typeof redirectUri !== 'string' || !/^https?:\/\//i.test(redirectUri)) {
-      console.warn('[oauth:start] invalid redirectUri resolved, falling back to default', redirectUri);
+      // debug warn removed
       redirectUri = 'https://threadsbooster.jp/api/auth/threads/callback';
     }
   } catch (e) {
@@ -56,8 +56,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         if (it.clientId && it.clientId.S) {
           clientId = it.clientId.S;
         }
-      } catch (e) {
-        console.log("[oauth:start] read account failed", e);
+    } catch (e) {
+        // debug warn removed
       }
     }
 
@@ -68,11 +68,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const it = (out as unknown as { Item?: Record<string, { S?: string }> }).Item || {};
         if (it.defaultThreadsClientId && it.defaultThreadsClientId.S) clientId = it.defaultThreadsClientId.S;
       } catch (e) {
-        console.log("[oauth:start] read settings failed", e);
+        // debug warn removed
       }
     }
   } catch (e) {
-    console.log("[oauth:start] clientId resolution error", e);
+    // debug warn removed
   }
 
   if (!clientId) {
@@ -95,12 +95,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
   // Debug log: output resolved values and the URL so frontend/local dev can inspect
   // NOTE: do not log any secrets
-  console.log("[oauth:start] resolved", { accountId, clientId, redirectUri, state: stateObj });
-  console.log("[oauth:start] auth_url: ", url);
+  // debug output removed
   try {
-    await logEvent('threads_start', { redirectUri, hasProd: !!process.env.THREADS_OAUTH_REDIRECT_PROD, q: req.query });
+    await putLog({ action: 'threads_start', status: 'info', message: 'oauth start', detail: { redirectUri, hasProd: !!process.env.THREADS_OAUTH_REDIRECT_PROD, q: req.query } });
   } catch (e) {
-    console.log('[oauth:start] logEvent failed', e);
+    console.warn('[oauth:start] putLog failed', e);
   }
   res.redirect(url);
   return;

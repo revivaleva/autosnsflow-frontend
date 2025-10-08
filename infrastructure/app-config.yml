@@ -1,0 +1,19 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: DynamoDB table for application configuration (Key/Value)
+Resources:
+  AppConfigTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: AppConfig
+      AttributeDefinitions:
+        - AttributeName: Key
+          AttributeType: S
+      KeySchema:
+        - AttributeName: Key
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      Tags:
+        - Key: project
+          Value: AutoSNSFlow
+
+

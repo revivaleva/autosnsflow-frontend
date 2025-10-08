@@ -210,15 +210,12 @@ export default function RepliesList() {
     
     setFetchingReplies(true);
     try {
-      console.log("[CLIENT] リプライ取得開始...");
+      // client debug: リプライ取得開始 (開発時のみ手元で出力してください)
       const response = await fetch("/api/fetch-replies", { 
         method: "POST",
         credentials: "include" 
       });
-      console.log("[CLIENT] API応答:", response.status, response.statusText);
-      
       const data = await response.json();
-      console.log("[CLIENT] レスポンスデータ:", data);
 
       
       if (data.ok) {
@@ -419,7 +416,6 @@ export default function RepliesList() {
       setEditModalOpen(false);
       
       // 成功メッセージ
-      console.log("✅ リプライ内容を保存しました");
       
     } catch (error: any) {
       console.error("Edit save error:", error);
