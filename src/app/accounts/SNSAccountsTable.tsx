@@ -40,6 +40,8 @@ export default function SNSAccountsTable() {
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   // 表示制御: 設定でアプリ列を非表示にできる
   const [showAppColumn, setShowAppColumn] = useState<boolean>(true);
+  // 新規作成を許可するかどうかのフラグ（UserSettings.maxThreadsAccounts を考慮）
+  const [canCreateAccount, setCanCreateAccount] = useState<boolean>(true);
 
   // /src/app/accounts/SNSAccountsTable.tsx
   // [FIX] GET応答が {accounts} / {items} 両方来ても動くように
@@ -108,6 +110,28 @@ export default function SNSAccountsTable() {
           const j = await r.json();
           const s = j?.settings || j || {};
           setShowAppColumn(!!s.enableAppColumn);
+          // 新規作成制御: maxThreadsAccounts が存在する場合は利用状況をチェック
+          try {
+            const max = typeof s.maxThreadsAccounts === 'number' ? s.maxThreadsAccounts : Number(s.maxThreadsAccounts || 0);
+            if (typeof max === 'number') {
+              if (max === 0) {
+                setCanCreateAccount(false);
+              } else {
+                // count current accounts
+                try {
+                  const qc = await fetch('/api/threads-accounts', { credentials: 'include' });
+                  if (qc.ok) {
+                    const data = await qc.json();
+                    const items = data.items || data.accounts || [];
+                    const count = Array.isArray(items) ? items.length : 0;
+                    setCanCreateAccount(count < max);
+                  }
+                } catch (e) {
+                  // ignore - keep default true
+                }
+              }
+            }
+          } catch (e) {}
         }
       } catch (_) {}
     })();
@@ -233,8 +257,10 @@ export default function SNSAccountsTable() {
             {loading ? "読み込み中..." : "再読み込み"}
           </button>
           <button
-            className="bg-green-500 text-white rounded px-4 py-2 hover:bg-green-600"
+            className={`bg-green-500 text-white rounded px-4 py-2 hover:bg-green-600 ${!canCreateAccount ? 'opacity-50 cursor-not-allowed' : ''}`}
             onClick={handleAddClick}
+            disabled={!canCreateAccount}
+            title={!canCreateAccount ? 'アカウント作成の上限に達しているため追加できません' : undefined}
           >
             ＋新規追加
           </button>
