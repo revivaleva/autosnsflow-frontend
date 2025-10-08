@@ -50,7 +50,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
       const totalCandidates = dr.totalCandidates || 0;
       const fetchedCount = dr.fetchedCount || 0;
-      if (totalCandidates === 0) return res.status(200).json({ status: 'no_posts', totalCandidates: 0, fetchedCount });
+      // Always create a deletion queue entry for background mode so we can perform
+      // DB-side cleanup even when there are 0 external candidates.
       const now = Math.floor(Date.now() / 1000);
       const qItem: any = {
         PK: { S: `ACCOUNT#${accountId}` },
@@ -58,6 +59,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         accountId: { S: accountId },
         userId: { S: userId },
         createdAt: { N: String(now) },
+        // For background mode we still set last_processed_at to 0 so worker can run immediately.
         last_processed_at: { N: '0' },
         processing: { BOOL: false },
         retry_count: { N: '0' },
