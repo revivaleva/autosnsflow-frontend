@@ -57,15 +57,17 @@ export default function SettingsForm() {
         if (r.ok) {
           const j = await r.json();
           const s = j?.settings || j || {};
-          // If settings missing, try to get AppConfig defaults
+          // If settings missing, try to get AppConfig defaults via API
           let masterDefault = s.masterPrompt ?? "";
           let replyDefault = s.replyPrompt ?? "";
           if (!masterDefault || !replyDefault) {
             try {
-              const cfgMod = await import('@/lib/config');
-              await cfgMod.loadConfig();
-              masterDefault = masterDefault || cfgMod.getConfigValue('MASTER_PROMPT') || masterDefault;
-              replyDefault = replyDefault || cfgMod.getConfigValue('REPLY_PROMPT') || replyDefault;
+              const r2 = await fetch('/api/app-config', { method: 'GET', credentials: 'include' });
+              if (r2.ok) {
+                const j2 = await r2.json();
+                masterDefault = masterDefault || j2?.MASTER_PROMPT || masterDefault;
+                replyDefault = replyDefault || j2?.REPLY_PROMPT || replyDefault;
+              }
             } catch (e) {
               // ignore
             }

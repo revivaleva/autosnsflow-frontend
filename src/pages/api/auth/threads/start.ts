@@ -17,8 +17,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Use backend-core helper if available
     try {
       const repo = await import('@autosnsflow/backend-core/dist/repositories/userSettings');
-      if (repo && typeof repo.ensureUserSettingsExist === 'function') {
-        await repo.ensureUserSettingsExist(userId);
+      const anyRepo: any = repo;
+      const fn = anyRepo.ensureUserSettingsExist || anyRepo.default?.ensureUserSettingsExist;
+      if (fn && typeof fn === 'function') {
+        await fn(userId);
       }
     } catch (e) {
       // fallback: create minimal record directly

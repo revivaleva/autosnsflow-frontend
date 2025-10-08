@@ -84,7 +84,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           });
       }
     } catch (e) {
-      console.error("create user-settings on login failed:", e?.message || e);
+      console.error("create user-settings on login failed:", (e as any)?.message || e);
     }
 
     return res.status(200).json({ ok: true });
