@@ -2479,6 +2479,17 @@ async function runFiveMinJobForUser(userId: any) {
   const perAccount: any[] = [];
 
   for (const acct of accounts) {
+    // Log presence of accessToken for observability (never log raw token)
+    try {
+      const tokenHash = acct.accessToken ? crypto.createHash("sha256").update(acct.accessToken).digest("hex").slice(0,12) : "";
+      const tokenPresent = !!acct.accessToken;
+      console.log(`[every-5min] token-check user=${userId} account=${acct.accountId} tokenPresent=${tokenPresent} tokenHash=${tokenHash}`);
+      // Persist minimal observation to ExecutionLogs for easier debugging in prod
+      try { await putLog({ userId, type: 'token-check', accountId: acct.accountId, status: tokenPresent ? 'ok' : 'missing', message: tokenPresent ? 'accessToken present' : 'accessToken missing', detail: { accessTokenHash: tokenHash } }); } catch (e) { console.warn('[warn] putLog(token-check) failed:', String(e)); }
+    } catch (e) {
+      console.warn('[warn] token-check failed for', userId, acct.accountId, String(e));
+    }
+
     const a = await runAutoPostForAccount(acct, userId, settings);
     const r = await runRepliesForAccount(acct, userId, settings);
     const t = await runSecondStageForAccount(acct, userId, settings, true);
