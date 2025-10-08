@@ -7,8 +7,8 @@ import { useEffect, useState } from "react";
 type Settings = {
   discordWebhook: string;
   errorDiscordWebhook: string;
-  openaiApiKey: string;
-  selectedModel: string;
+  // openaiApiKey: string;  // removed from UI
+  // selectedModel: string; // removed from UI
   masterPrompt: string;
   replyPrompt: string;
   // [MOD] autoPost: boolean（既定 false）
@@ -29,8 +29,8 @@ type Settings = {
 const DEFAULTS: Settings = {
   discordWebhook: "",
   errorDiscordWebhook: "",
-  openaiApiKey: "",
-  selectedModel: "gpt-5-mini",
+  // openaiApiKey: "",
+  // selectedModel: "gpt-5-mini",
   masterPrompt: "",
   replyPrompt: "",
   autoPost: false,
@@ -129,31 +129,7 @@ export default function SettingsForm() {
           />
         </div>
 
-        <div>
-          <label className="block text-sm text-gray-600">OpenAI APIキー</label>
-          <input
-            className="mt-1 w-full border rounded-md px-3 py-2 dark:bg-gray-800 dark:text-gray-100"
-            type="password"
-            value={values.openaiApiKey}
-            onChange={(e) => setValues({ ...values, openaiApiKey: e.target.value })}
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm text-gray-600">既定モデル</label>
-          <select
-            className="mt-1 w-full border rounded-md px-3 py-2"
-            value={values.selectedModel}
-            onChange={(e) => setValues({ ...values, selectedModel: e.target.value })}
-          >
-            <option value="gpt-5-mini">gpt-5-mini</option>
-            <option value="gpt-5-nano">gpt-5-nano</option>
-            <option value="gpt-4o-mini">gpt-4o-mini</option>
-            <option value="o4-mini">o4-mini</option>
-            <option value="gpt-4.1">gpt-4.1</option>
-            <option value="gpt-4.1-mini">gpt-4.1-mini</option>
-          </select>
-        </div>
+        {/* OpenAI API key and default model removed from UI per request */}
 
         <div>
           <label className="block text-sm text-gray-600">マスタープロンプト（投稿生成）</label>

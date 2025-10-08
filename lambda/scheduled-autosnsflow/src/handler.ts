@@ -3134,8 +3134,15 @@ async function processDeletionQueueForUser(userId: any) {
           const newRetry = currentRetryCount + 1;
           if (newRetry >= maxRetries) {
             // set account status to deletion_error
-            await ddb.send(new UpdateItemCommand({ TableName: TBL_THREADS_ACCOUNTS, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } }, UpdateExpression: 'SET #st = :s', ExpressionAttributeNames: { '#st': 'status' }, ExpressionAttributeValues: { ':s': { S: 'deletion_error' } } }));
-            await putLog({ userId, type: 'deletion', accountId, status: 'error', message: 'deletion_max_retries_exceeded', detail: { retries: newRetry } });
+            // Guard: only update existing ThreadsAccounts items to avoid creating phantom records
+            try {
+              await ddb.send(new UpdateItemCommand({ TableName: TBL_THREADS_ACCOUNTS, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } }, UpdateExpression: 'SET #st = :s', ConditionExpression: 'attribute_exists(PK)', ExpressionAttributeNames: { '#st': 'status' }, ExpressionAttributeValues: { ':s': { S: 'deletion_error' } } }));
+              await putLog({ userId, type: 'deletion', accountId, status: 'error', message: 'deletion_max_retries_exceeded', detail: { retries: newRetry } });
+            } catch (ee) {
+              // If conditional update fails (item not exists), log a warn but do not create a new ThreadsAccounts item
+              try { console.warn('[warn] conditional update skipped creating ThreadsAccounts (deletion_error):', { userId, accountId, error: String(ee) }); } catch(_){}
+              await putLog({ userId, type: 'deletion', accountId, status: 'warn', message: 'deletion_max_retries_exceeded_no_account', detail: { retries: newRetry, error: String(ee) } });
+            }
           }
         } catch (_) {}
         await putLog({ userId, type: 'deletion', accountId, status: 'error', message: 'deletion_batch_failed', detail: { error: String(e) } });

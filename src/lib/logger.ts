@@ -1,5 +1,6 @@
 import { createDynamoClient } from '@/lib/ddb';
 import { PutItemCommand } from '@aws-sdk/client-dynamodb';
+import crypto from 'crypto';
 
 const ddb = createDynamoClient();
 // Prefer explicit execution logs table used by scheduled tasks, fallback to LOG_TBL or ExecutionLogs
@@ -34,7 +35,7 @@ export async function putLog(entry: ExecutionLogEntry) {
     const now = new Date();
     const userId = entry.userId;
     const pk = userId ? `USER#${userId}` : `LOG#${ymd(now)}`;
-    const sk = `${now.toISOString()}#${entry.action}`;
+    const sk = `LOG#${Date.now()}#${crypto.randomUUID()}`;
 
     const item: Record<string, any> = {
       PK: { S: pk },

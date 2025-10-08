@@ -184,6 +184,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           try {
             if (l.accountId && typeof l.accountId === 'object' && 'S' in l.accountId) acctIdField = String((l.accountId as any).S || '');
             else if (typeof l.accountId === 'string') acctIdField = l.accountId;
+            // If top-level accountId not present, try to parse detail JSON and extract accountId or account
+            if (!acctIdField) {
+              try {
+                const d = JSON.parse(l.detail?.S || '{}');
+                if (d && typeof d === 'object') {
+                  if (d.accountId) acctIdField = String(d.accountId || '');
+                  else if (d.account) acctIdField = String(d.account || '');
+                  else if (d.accountIdFromState) acctIdField = String(d.accountIdFromState || '');
+                }
+              } catch (_) {}
+            }
           } catch (_) { acctIdField = '' }
           const idForEntry = targetId || (l.SK?.S || '');
           recentErrors.push({ type: mappedType, id: idForEntry, at: createdAt, message: message || '(ログ)', accountId: acctIdField || undefined });
