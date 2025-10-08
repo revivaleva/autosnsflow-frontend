@@ -60,8 +60,6 @@ export default function SettingsForm() {
           setValues({
             discordWebhook: s.discordWebhook ?? "",
             errorDiscordWebhook: s.errorDiscordWebhook ?? "",
-            openaiApiKey: s.openaiApiKey ?? "",
-            selectedModel: s.selectedModel ?? "gpt-5-mini",
             masterPrompt: s.masterPrompt ?? "",
             replyPrompt: s.replyPrompt ?? "",
             autoPost: !!s.autoPost,
