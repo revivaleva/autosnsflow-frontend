@@ -72,6 +72,8 @@ packages/**/package-lock.json
 !.cursor/rules/
 !.cursor/rules/pjrule.mdc
 !.cursor/rules/pjrulestodo.mdc
+!.cursor/rules/pjtodo.mdc
+!.cursor/rules/pjspec.mdc
 
 # Ignore common Python/virtualenv artifacts and editor/runtime files
 __pycache__/
