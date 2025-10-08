@@ -15,6 +15,34 @@ description:
 - 原則：1 ステップ = 1 コマンド。ワンライナー連結（`&&`）禁止。
 - 実行方法、守護ランナー、ログ保存等の運用手順をここに記載する。
 
+### WSL 経由での Git 操作（重要）
+
+- 方針: リポジトリが WSL 環境（Ubuntu 等）にある場合、Git 操作は **必ず WSL 側のシェルで1コマンドずつ** 実行してください。Windows 側の PowerShell / CMD で WSL パスを直接扱ったり、長いワンライナーを投げることは禁止します。
+- 理由: PowerShell と WSL ではパス解釈・メタデータ・改行扱いが異なるため、誤動作や意図しないファイル追加（例: Zone.Identifier のような ADS）が発生しやすくなります。
+- 実行ルール（厳守）:
+  1. 1回の呼び出しで 1 つの Git 操作のみ行う（例: `git status`、`git add <file>`、`git commit -m "..."`、`git push` をそれぞれ別コマンドで実行）。
+  2. WSL 経由で実行する場合の推奨コマンド例（1行で WSL を呼ぶが、実際に行う操作は単一の git サブコマンドに限定）:
+     - cd して状態確認:
+       ```bash
+       wsl -d Ubuntu -u revival bash -lc 'cd /home/revival/projects/AutoSNSFlow/frontend; git status --porcelain=2 --branch'
+       ```
+     - ファイルをステージ:
+       ```bash
+       wsl -d Ubuntu -u revival bash -lc 'cd /home/revival/projects/AutoSNSFlow/frontend; git add path/to/file'
+       ```
+     - コミット:
+       ```bash
+       wsl -d Ubuntu -u revival bash -lc 'cd /home/revival/projects/AutoSNSFlow/frontend; git commit -m "message"'
+       ```
+     - push:
+       ```bash
+       wsl -d Ubuntu -u revival bash -lc 'cd /home/revival/projects/AutoSNSFlow/frontend; git push origin staging'
+       ```
+  3. 1 つの `bash -lc` 内で複数の Git サブコマンドを `;` で連結して実行することは避けてください。`bash -lc` はあくまで単一操作を WSL 上で呼び出すためのラッパーと考えてください。
+  4. 長いファイル名/パスの問題が発生した場合は `git config --system core.longpaths true` を Windows 側で設定するか、該当ファイルを `.gitignore` に追加して index から外してください。
+
+これらのルールを守ることで、PowerShell と WSL 間の差異による失敗を防ぎ、pjrule の「1 ステップ = 1 コマンド」方針と整合します。
+
 ## デバッグ出力ポリシー
 
 - 本番での恒常的な外部Webhook直打ちや大量のconsole出力は禁止。調査時は `ALLOW_DEBUG_EXEC_LOGS` で制御する。
