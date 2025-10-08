@@ -217,8 +217,20 @@ export async function postToThreads({
   const creationId = await create();
   // debug output removed
   
-  const postId = await publish(creationId);
-  
+  let postId = await publish(creationId);
+
+  // Try to prefer the permalink code (string) for display: if the published post has a permalink
+  // we extract its code and use that as the canonical postId returned to callers. This ensures
+  // UI displays the string code rather than a numeric ID when available.
+  try {
+    const perm = await getThreadsPermalink({ accessToken: primaryToken, postId });
+    if (perm && perm.code) {
+      postId = perm.code;
+    }
+  } catch (e) {
+    // ignore and keep existing postId
+  }
+
   // inReplyTo がある場合はリプライとして作成されたかを検証。通常投稿なら削除してエラーを投げる。
   if (inReplyTo) {
     try {
