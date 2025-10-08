@@ -584,12 +584,7 @@ export default function SNSAccountModal({
           placeholder="@account_id"
         />
 
-        <label className="block">アクセストークン</label>
-        <input
-          className="mb-2 border rounded px-2 py-1 w-full"
-          value={accessToken}
-          onChange={(e) => setAccessToken(e.target.value)}
-        />
+        {/* アクセストークンは UI から削除（内部で管理するため） */}
 
         {/* 認可ボタン（編集時のみ表示） */}
         {mode === "edit" && accountId && (

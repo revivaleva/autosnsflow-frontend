@@ -8,6 +8,8 @@
 - `Fix existing-account copy behavior in SNSAccountModal` — pending
 - `Run local build and fix compile errors` — completed
 - `Stage smoke tests and lambda deploy` — completed
+- `Prevent creating ThreadsAccounts items when marking deletion_error; add conditional update (attribute_exists(PK))` — completed
+- `Investigate root cause of deletion_error records: correlate DeletionQueue, ExecutionLogs, ThreadsAccounts entries` — cancelled
 
 （詳細は `.cursor/rules/pjspec.mdc` とソースの TODO コメントを参照）
 
