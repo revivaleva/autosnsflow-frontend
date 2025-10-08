@@ -245,7 +245,7 @@ export async function postToThreads({
     if (detailRes.ok) {
       const detailJson = await detailRes.json();
       numericId = detailJson?.id;
-      console.info(`[INFO] 投稿完了: ${postId} (numeric: ${numericId})`);
+      // debug logging removed
     }
   } catch (e) {
     console.warn(`[WARN] 数字ID取得失敗: ${String(e).substring(0, 100)}`);

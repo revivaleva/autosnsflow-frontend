@@ -29,7 +29,7 @@ export async function deleteThreadsPostWithToken({ postId, token }: { postId: st
   const text = await resp.text().catch(() => '');
   let json: any = {};
   try { json = text ? JSON.parse(text) : {}; } catch { json = { raw: text }; }
-  try { console.info('[threads-delete] delete request', { postId, url: urlForLog, status: resp.status, bodyPreview: String(text).slice(0, 1000) }); } catch(_) {}
+  // debug logging removed
   if (!resp.ok) {
     // include parsed body for richer error messages
     const errMsg = `threads_delete_failed: ${resp.status} ${JSON.stringify(json)}`;
