@@ -907,7 +907,7 @@ const MASTER_DISCORD_WEBHOOK = process.env.MASTER_DISCORD_WEBHOOK || "";
 /// ========== ハンドラ（5分＆毎時の分岐 + テストモード） ==========
 export const handler = async (event: any = {}) => {
   const job = event?.job || "every-5min";
-  try { console.info('[info] handler_invoked', { job, event }); } catch(_) {}
+  // handler invoked (lean logging for production)
 
   // (Removed) Temporary maintenance action: clear pendingForAutoPostAccount for already-posted items
 
@@ -3064,7 +3064,7 @@ async function deletePostedForUser(userId: any) {
 // Delete up to `limit` posted items for a given user/account. Returns { deletedCount, remaining }
 async function deleteUpTo100PostsForAccount(userId: any, accountId: any, limit = 100) {
   try {
-    console.info('[info] deleteUpTo100PostsForAccount delegating to deletePostsForAccount', { userId, accountId, limit });
+    // delegating to deletePostsForAccount (minimal log)
     const mod = await import('@/lib/delete-posts-for-account');
     const res = await mod.deletePostsForAccount({ userId, accountId, limit });
     try { console.info('[info] deleteUpTo100PostsForAccount result', { userId, accountId, res }); } catch(_) {}

@@ -57,6 +57,7 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
         const acct = await ddb.send(new GetItemCommand({ TableName: process.env.TBL_THREADS_ACCOUNTS || 'ThreadsAccounts', Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } }, ProjectionExpression: 'providerUserId' }));
         providerUserId = acct?.Item?.providerUserId?.S || undefined;
       } catch (_) {}
+      // debug providerUserId (removed for production)
       const replies = await fetchUserReplies({ userId, accountId, limit: limit as number, providerUserId });
       if (Array.isArray(replies) && replies.length > 0) {
         const existing = new Set((threads || []).map((x: any) => String(x.id)));

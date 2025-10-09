@@ -30,15 +30,15 @@ export async function fetchUserReplies({ userId, accountId, limit = 100, provide
   for (const u of tryUrls) {
     try {
       const probeUrl = u + `&access_token=${encodeURIComponent(token)}`;
-      try { console.info('[info] fetchUserReplies probe', { userId, accountId, url: u }); } catch(_) {}
+      // probe log (removed for production)
       const resp = await fetch(probeUrl);
       const text = await resp.text().catch(() => '');
       let data: any = {};
       try { data = text ? JSON.parse(text) : {}; } catch { data = { rawText: text }; }
-      try { console.info('[info] fetchUserReplies probe result', { userId, accountId, url: u, status: resp.status, ok: resp.ok, dataSummary: Array.isArray(data?.data) ? { count: data.data.length } : { keys: Object.keys(data || {}) } }); } catch(_) {}
+      // probe result log (removed for production)
       if (!resp.ok) {
         // Emit full error body (truncated) to CloudWatch for debugging
-        try { console.warn('[warn] fetchUserReplies probe failed', { userId, accountId, url: u, status: resp.status, errorBody: JSON.stringify(data).slice(0, 2000) }); } catch(_) {}
+        // probe failure logged to ExecutionLogs; avoid console noise in production
       }
       if (resp.ok && Array.isArray(data?.data)) {
         results = results.concat(data.data);
@@ -56,7 +56,7 @@ export async function fetchUserReplies({ userId, accountId, limit = 100, provide
     seen.add(id);
     out.push({ id, text: it.text || '', timestamp: it.timestamp, replyTo: it.reply_to || null, raw: it });
   }
-  try { console.info('[info] fetchUserReplies summary', { userId, accountId, count: out.length }); } catch(_) {}
+  // summary log removed for production
   return out;
 }
 
