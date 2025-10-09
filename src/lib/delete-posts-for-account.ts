@@ -178,9 +178,9 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
           const skToDel = it?.SK?.S;
           if (!skToDel) continue;
           try {
-            await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: `USER#${userId}` }, SK: { S: skToDel } } }));
+            const resp = await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: `USER#${userId}` }, SK: { S: skToDel } } }));
             totalDeletedRecords++;
-            try { console.info('[info] final_cleanup_deleted_item', { userId, accountId, sk: skToDel }); } catch(_) {}
+            try { console.info('[info] final_cleanup_deleted_item', { userId, accountId, sk: skToDel, resp }); } catch(_) {}
           } catch (e) {
             totalFailedDeletes++;
             try { console.warn('[delete-posts-for-account] final cleanup delete failed', { userId, accountId, sk: skToDel, error: String(e) }); } catch(_) {}
