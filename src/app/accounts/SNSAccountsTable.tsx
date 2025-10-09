@@ -94,6 +94,24 @@ export default function SNSAccountsTable() {
     }
   };
 
+  // When deletion is initiated (immediate or background), disable auto toggles and set them to false
+  async function beginDeletion(accountId: string, mode: 'background' | 'immediate') {
+    // Optimistically update UI
+    setAccounts(prev => prev.map(a => a.accountId === accountId ? { ...a, autoPost: false, autoGenerate: false, autoReply: false, status: 'deleting' } : a));
+    try {
+      const body: any = { mode };
+      const r = await fetch(`/api/accounts/${encodeURIComponent(accountId)}/delete-all`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (!r.ok) {
+        const txt = await r.text().catch(() => '');
+        throw new Error(txt || 'delete request failed');
+      }
+      await loadAccounts();
+    } catch (e) {
+      alert('削除開始に失敗しました: ' + String(e));
+      await loadAccounts();
+    }
+  }
+
   // 初回マウント時のみAPI取得
   useEffect(() => {
     loadAccounts();
