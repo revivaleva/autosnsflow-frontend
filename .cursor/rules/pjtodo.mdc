@@ -25,6 +25,7 @@
 - 現状、`/api/threads-accounts` の実装では各アカウントについて DynamoDB の `GetItem` / `Query` を個別に実行して `status` を取得するフォールバック処理を採用しています。小規模環境では問題ありませんが、アカウント数やトラフィックが増加するとレイテンシとコストの問題が発生します。
 - 将来的には以下のような一括取得・索引を検討して下さい:
   - `DeletionQueue` や `ThreadsAccounts` をまたいだ一括 `Query` を行うための GSI の導入（例: `userId` / `status` をキーとした GSI）。
+  - ScheduledPosts 側で `sourcePostId` に対する検索を効率化するための GSI（例: `userId` + `sourcePostId`）の追加を検討する。引用ワーカーの重複チェックを Query ベースで実行できるようになるため、将来的にはGSI導入を推奨します。
   - `ThreadsAccounts` 側で `status` をまとめて返却するバックエンド側の集約処理（backend-core 側の拡張）。
   - `DeletionQueue` の存在チェックを一度のバッチ Query で取得し、フロント向けレスポンスにマージして返す設計。
 - 上記の最適化はパフォーマンス向上とコスト削減に寄与します。スケールや運用コストの指標が閾値を超えたら優先的に対応してください。

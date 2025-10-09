@@ -28,12 +28,14 @@ const UPDATABLE_FIELDS = new Set([
   "autoPost",
   "autoGenerate",
   "autoReply",
+  "autoQuote",
   "statusMessage",
   "personaMode",
   "personaSimple",
   "personaDetail",
   "autoPostGroupId",
   "secondStageContent",
+  "monitoredAccountId",
   "accessToken",
   "clientId",
   "clientSecret",
@@ -69,6 +71,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         autoPost: it.autoPost,
         autoGenerate: it.autoGenerate,
         autoReply: it.autoReply,
+        autoQuote: (it as any).autoQuote || false,
 
         statusMessage: it.statusMessage,
         // アカウントの状態 (deleting / deletion_error / active 等)。backend-core に無ければ 'active' をデフォルト
@@ -80,6 +83,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
         autoPostGroupId: it.autoPostGroupId,
         secondStageContent: it.secondStageContent,
+        monitoredAccountId: (it as any).monitoredAccountId || (it as any).monitored_account_id || "",
         // clientId/clientSecret may be present under various names depending on origin
         clientId: (it as any).clientId || (it as any).client_id || ((it as any).client && (it as any).client.id) || "",
         // Do not expose clientSecret plaintext. Instead expose a boolean flag indicating presence.
@@ -94,7 +98,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           const out = await ddb.send(new GetItemCommand({
             TableName: TBL,
             Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${acc.accountId}` } },
-            ProjectionExpression: 'clientId, clientSecret, #st',
+            ProjectionExpression: 'clientId, clientSecret, #st, monitoredAccountId',
             ExpressionAttributeNames: { '#st': 'status' },
           }));
           const it: any = (out as any).Item || {};
@@ -102,6 +106,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           if (!acc.hasClientSecret && it.clientSecret && it.clientSecret.S) acc.hasClientSecret = true;
           // DynamoDB 側に status が保存されている場合は反映（backend-core の値を上書きしない）
           if (it.status && it.status.S) acc.status = it.status.S;
+          // monitoredAccountId が DynamoDB にあれば反映
+          if (it.monitoredAccountId && it.monitoredAccountId.S) acc.monitoredAccountId = it.monitoredAccountId.S;
           // 追加: DeletionQueue にアイテムが存在するか確認し、存在すれば強制的に deleting を返す
           try {
             const dq = await ddb.send(new QueryCommand({
@@ -127,7 +133,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
 
     if (req.method === "POST") {
-      const { accountId, username, displayName, accessToken = "", clientId, clientSecret } = safeBody(req.body);
+      const { accountId, username, displayName, accessToken = "", clientId, clientSecret, monitoredAccountId } = safeBody(req.body);
       if (!accountId) return res.status(400).json({ error: "accountId required" });
       // Prevent creating the same SK for different users: check if any existing item with SK ACCOUNT#<accountId> exists for a different PK
       try {
@@ -223,6 +229,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           // debug output removed
         }
       }
+      if (monitoredAccountId) {
+        item.monitoredAccountId = { S: String(monitoredAccountId) };
+      }
 
       // Ensure we are not creating duplicate account items with mismatched PKs.
       // Use conditional Put: only create when the exact PK/SK doesn't exist.
@@ -280,6 +289,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if ("autoPost" in body) setStr("autoPost", !!body.autoPost);
       if ("autoGenerate" in body) setStr("autoGenerate", !!body.autoGenerate);
       if ("autoReply" in body) setStr("autoReply", !!body.autoReply);
+      if ("autoQuote" in body) setStr("autoQuote", !!body.autoQuote);
       if ("statusMessage" in body) setStr("statusMessage", body.statusMessage);
 
       // ペルソナ
@@ -290,6 +300,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       // グループ・2段階
       if ("autoPostGroupId" in body) setStr("autoPostGroupId", body.autoPostGroupId);
       if ("secondStageContent" in body) setStr("secondStageContent", body.secondStageContent);
+      if ("monitoredAccountId" in body) setStr("monitoredAccountId", body.monitoredAccountId);
 
       if (sets.length === 1) return res.status(400).json({ error: "no fields" });
 

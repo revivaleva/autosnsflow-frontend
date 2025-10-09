@@ -14,6 +14,7 @@ export type ThreadsAccount = {
   autoPost: boolean;
   autoGenerate: boolean;
   autoReply: boolean;
+  autoQuote?: boolean;
   statusMessage: string;
   // アカウントの状態（例: 'active', 'deleting', 'deletion_error' 等）
   status?: string;
@@ -189,7 +190,7 @@ export default function SNSAccountsTable() {
   // 楽観的UIトグル（対象はブール値のみ）
   const handleToggle = async (
     acc: ThreadsAccount,
-    field: "autoPost" | "autoGenerate" | "autoReply" // ←型を限定
+  field: "autoPost" | "autoGenerate" | "autoReply" | "autoQuote" // ←型を限定
   ) => {
     if (updatingId) return; // [ADD] 同時更新ガード
     const newVal = !acc[field];
@@ -305,6 +306,7 @@ export default function SNSAccountsTable() {
             <th className="py-2 px-3 w-28">自動投稿</th>
             <th className="py-2 px-3 w-28">本文生成</th>
             <th className="py-2 px-3 w-28">リプ返信</th>
+            <th className="py-2 px-3 w-28">引用投稿</th>
             <th className="py-2 px-3 w-36">状態</th>
             {/* ▼追加カラム：2段階投稿の有無／冒頭プレビュー */}
             <th className="py-2 px-3 w-52 text-left">2段階投稿</th>
@@ -350,7 +352,7 @@ export default function SNSAccountsTable() {
                 />
               </td>
               <td className="py-2 px-3">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 justify-center">
                   <ToggleSwitch
                     checked={!!acc.autoReply}
                     onChange={() => handleToggle(acc, "autoReply")}
@@ -359,6 +361,15 @@ export default function SNSAccountsTable() {
                   {!acc.autoReply && (
                     <span className="text-xs text-red-600" title="リプライ自動返信がオフです">⚠️</span>
                   )}
+                </div>
+              </td>
+              <td className="py-2 px-3">
+                <div className="flex items-center gap-2 justify-center">
+                  <ToggleSwitch
+                    checked={!!acc.autoQuote}
+                    onChange={() => handleToggle(acc, "autoQuote")}
+                    disabled={updatingId === acc.accountId || acc.status === 'deleting' || acc.status === 'reauth_required'}
+                  />
                 </div>
               </td>
               <td className="py-2 px-3">

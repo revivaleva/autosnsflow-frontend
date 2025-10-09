@@ -41,6 +41,8 @@ type AccountType = {
   createdAt?: number;
   /** ▼追加: 2段階投稿用のThreads投稿本文 */
   secondStageContent?: string; // ← 追加（既存コメントは変更しない）
+  /** 監視対象となる外部アカウントID（引用投稿の取得に使用） */
+  monitoredAccountId?: string;
 };
 type AutoPostGroupType = {
   groupKey: string;
@@ -106,6 +108,7 @@ export default function SNSAccountModal({
   const [personaSimple, setPersonaSimple] = useState("");
   /** ▼追加: 2段階投稿テキスト */
   const [secondStageContent, setSecondStageContent] = useState(""); // ← 追加
+  const [monitoredAccountId, setMonitoredAccountId] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [copyModalOpen, setCopyModalOpen] = useState(false);
@@ -158,6 +161,7 @@ export default function SNSAccountModal({
       setPersonaMode(account.personaMode === "simple" ? "simple" : "detail");
       setPersonaSimple(account.personaSimple || "");
       setSecondStageContent(account.secondStageContent || ""); // ← 追加
+      setMonitoredAccountId(account.monitoredAccountId || "");
     } else if (mode === "create") {
       setDisplayName("");
       setAccountId("");
@@ -171,6 +175,7 @@ export default function SNSAccountModal({
       setPersona({ ...emptyPersona });
       setCharacterImage("");
       setSecondStageContent(""); // ← 追加
+      setMonitoredAccountId("");
     }
     setError("");
   }, [account, mode]);
@@ -485,7 +490,7 @@ export default function SNSAccountModal({
         method,
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({
+          body: JSON.stringify({
           accountId,
           displayName,
           accessToken: accessToken,
@@ -502,6 +507,7 @@ export default function SNSAccountModal({
           characterImage: characterImage || "",
           /** ▼追加送信: 2段階投稿テキスト */
           secondStageContent: secondStageContent || "", // ← 追加
+          monitoredAccountId: monitoredAccountId || "",
         }),
       });
       // [FIX] 成否判定を res.ok / data.ok で行う（APIは {ok:true} を返す）
@@ -853,6 +859,15 @@ export default function SNSAccountModal({
           placeholder="例: 1回目投稿の◯分後にThreadsへ投稿する文章"
           value={secondStageContent}
           onChange={(e) => setSecondStageContent(e.target.value)}
+        />
+
+        {/* ▼追加UI: 監視対象アカウントID */}
+        <label className="block font-semibold mt-2">監視対象アカウントID（引用元）</label>
+        <input
+          className="border rounded px-2 py-1 w-full mb-4"
+          placeholder="例）target_account_id"
+          value={monitoredAccountId}
+          onChange={(e) => setMonitoredAccountId(e.target.value)}
         />
 
           <div className="mt-6 flex items-center justify-between">
