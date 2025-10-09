@@ -1,5 +1,5 @@
 import { createDynamoClient } from '@/lib/ddb';
-import { QueryCommand, DeleteItemCommand } from '@aws-sdk/client-dynamodb';
+import { QueryCommand, DeleteItemCommand, GetItemCommand } from '@aws-sdk/client-dynamodb';
 import { fetchThreadsPosts } from '@/lib/fetch-threads-posts';
 import { getTokenForAccount, deleteThreadsPostWithToken } from '@/lib/threads-delete';
 import { putLog } from '@/lib/logger';
@@ -178,9 +178,18 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
           const skToDel = it?.SK?.S;
           if (!skToDel) continue;
           try {
-            const resp = await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: `USER#${userId}` }, SK: { S: skToDel } } }));
+            const key = { PK: { S: `USER#${userId}` }, SK: { S: skToDel } };
+            const resp = await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: key }));
             totalDeletedRecords++;
             try { console.info('[info] final_cleanup_deleted_item', { userId, accountId, sk: skToDel, resp }); } catch(_) {}
+            // Verify deletion via GetItem on same key
+            try {
+              const get = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: key }));
+              const exists = Boolean(get && get.Item);
+              try { console.info('[info] final_cleanup_verify_get', { userId, accountId, sk: skToDel, exists }); } catch(_) {}
+            } catch (ge) {
+              try { console.warn('[warn] final_cleanup_verify_get failed', { userId, accountId, sk: skToDel, error: String(ge) }); } catch(_) {}
+            }
           } catch (e) {
             totalFailedDeletes++;
             try { console.warn('[delete-posts-for-account] final cleanup delete failed', { userId, accountId, sk: skToDel, error: String(e) }); } catch(_) {}
