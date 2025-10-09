@@ -907,6 +907,7 @@ const MASTER_DISCORD_WEBHOOK = process.env.MASTER_DISCORD_WEBHOOK || "";
 /// ========== ハンドラ（5分＆毎時の分岐 + テストモード） ==========
 export const handler = async (event: any = {}) => {
   const job = event?.job || "every-5min";
+  try { console.info('[info] handler_invoked', { job, event }); } catch(_) {}
 
   // (Removed) Temporary maintenance action: clear pendingForAutoPostAccount for already-posted items
 
