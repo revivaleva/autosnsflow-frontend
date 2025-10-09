@@ -243,12 +243,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (monitoredAccountId) {
         item.monitoredAccountId = { S: String(monitoredAccountId) };
       }
-      if (quoteTimeStart) {
-        item.quoteTimeStart = { S: String(quoteTimeStart) };
-      }
-      if (quoteTimeEnd) {
-        item.quoteTimeEnd = { S: String(quoteTimeEnd) };
-      }
+      // Ensure defaults for quote time when not provided: full day
+      item.quoteTimeStart = { S: String(typeof quoteTimeStart !== 'undefined' && quoteTimeStart !== '' ? quoteTimeStart : '00:00') };
+      item.quoteTimeEnd = { S: String(typeof quoteTimeEnd !== 'undefined' && quoteTimeEnd !== '' ? quoteTimeEnd : '23:59') };
 
       // Ensure we are not creating duplicate account items with mismatched PKs.
       // Use conditional Put: only create when the exact PK/SK doesn't exist.
@@ -320,6 +317,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if ("monitoredAccountId" in body) setStr("monitoredAccountId", body.monitoredAccountId);
       if ("quoteTimeStart" in body) setStr("quoteTimeStart", body.quoteTimeStart);
       if ("quoteTimeEnd" in body) setStr("quoteTimeEnd", body.quoteTimeEnd);
+      if ("quoteTimeStart" in body) {
+        const v = (body.quoteTimeStart === undefined || body.quoteTimeStart === '') ? '00:00' : String(body.quoteTimeStart);
+        setStr("quoteTimeStart", v);
+      }
+      if ("quoteTimeEnd" in body) {
+        const v = (body.quoteTimeEnd === undefined || body.quoteTimeEnd === '') ? '23:59' : String(body.quoteTimeEnd);
+        setStr("quoteTimeEnd", v);
+      }
 
       if (sets.length === 1) return res.status(400).json({ error: "no fields" });
 
