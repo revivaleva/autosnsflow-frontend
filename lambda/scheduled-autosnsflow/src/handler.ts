@@ -3121,6 +3121,10 @@ async function processDeletionQueueForUser(userId: any) {
         try { console.info('[info] attempting to claim queue item', { accountId, sk, ownerUserId }); } catch(_) {}
         await ddb.send(new UpdateItemCommand({ TableName: dqTable, Key: { PK: { S: `ACCOUNT#${accountId}` }, SK: { S: sk } }, UpdateExpression: 'SET processing = :t', ConditionExpression: 'attribute_not_exists(processing) OR processing = :f', ExpressionAttributeValues: { ':t': { BOOL: true }, ':f': { BOOL: false } } }));
         try { console.info('[info] claimed queue item', { accountId, sk, ownerUserId }); } catch(_) {}
+        // Mark account status as deleting to prevent concurrent auto-generation while we process deletion
+        try {
+          try { await ddb.send(new UpdateItemCommand({ TableName: TBL_THREADS_ACCOUNTS, Key: { PK: { S: `USER#${ownerUserId}` }, SK: { S: `ACCOUNT#${accountId}` } }, UpdateExpression: 'SET #st = :s', ExpressionAttributeNames: { '#st': 'status' }, ExpressionAttributeValues: { ':s': { S: 'deleting' } } })); } catch (ee) { try { console.warn('[warn] failed to set account deleting status', { ownerUserId, accountId, error: String(ee) }); } catch(_) {} }
+        } catch(_) {}
       } catch (e) {
         try { console.warn('[warn] failed to claim queue item, skipping', { accountId, sk, ownerUserId, error: String(e) }); } catch(_) {}
         // someone else claimed or claim failed
