@@ -64,11 +64,13 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
   // token reuse per account (accountId fixed here)
   let token: string | null = null;
   try {
+    try { await putLog({ userId, accountId, action: 'deletion', status: 'info', message: 'attempt_get_token' }); } catch (_) {}
     token = await getTokenForAccount({ userId, accountId });
     if (!token) {
       await putLog({ userId, accountId, action: 'deletion', status: 'error', message: 'missing_access_token' });
       throw new Error('missing_access_token');
     }
+    try { await putLog({ userId, accountId, action: 'deletion', status: 'info', message: 'got_token', detail: { tokenPreview: token ? `len=${String(token.length)}` : null } }); } catch (_) {}
   } catch (e) {
     const msg = stringifyError(e);
     await putLog({ userId, accountId, action: 'deletion', status: 'error', message: 'failed_read_account_token', detail: { error: msg } });
@@ -79,8 +81,10 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
     const postId = String(t.id || t.postId || t.numericPostId || '');
     if (!postId) continue;
     try {
-      try {
+    try {
+        try { await putLog({ userId, accountId, action: 'deletion', status: 'info', message: 'deleting_post', detail: { postId } }); } catch (_) {}
         await deleteThreadsPostWithToken({ postId, token });
+        try { await putLog({ userId, accountId, action: 'deletion', status: 'info', message: 'deleted_post', detail: { postId } }); } catch (_) {}
       } catch (err) {
         const msg = stringifyError(err);
         // treat missing post as success
