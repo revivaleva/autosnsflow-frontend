@@ -185,7 +185,7 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
         }
         lastKey = (qAll as any).LastEvaluatedKey;
       } while (lastKey);
-      try { await putLog({ userId, accountId, action: 'deletion', status: totalFailedDeletes > 0 ? 'error' : 'info', message: 'final_cleanup_done', detail: { deletedCount, cleanedRecords: totalDeletedRecords, failedDeletes: totalFailedDeletes } }); } catch(_) {}
+      try { await putLog({ userId, accountId, action: 'deletion', status: totalFailedDeletes > 0 ? 'error' : 'warn', message: 'final_cleanup_done', detail: { deletedCount, cleanedRecords: totalDeletedRecords, failedDeletes: totalFailedDeletes } }); } catch(_) {}
     } catch (e) {
       try { console.warn('[delete-posts-for-account] final cleanup failed', { userId, accountId, error: String(e) }); } catch(_) {}
     }
