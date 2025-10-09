@@ -240,13 +240,13 @@ export default function ScheduledPostsTable() {
 
     const post = posts.find(p => p.scheduledPostId === id);
     if (!post) {
-      console.error('[UI][delete] post not found', { scheduledPostId: id });
+      // console.error('[UI][delete] post not found', { scheduledPostId: id });
       return alert("投稿が見つかりませんでした");
     }
     const numeric = (post as any).numericPostId;
     // debug output removed
     if (!numeric) {
-      console.warn('[UI][delete] numericPostId missing', { scheduledPostId: id });
+      // console.warn('[UI][delete] numericPostId missing', { scheduledPostId: id });
       return alert("numericPostId が存在しないため削除できません");
     }
 
@@ -263,22 +263,22 @@ export default function ScheduledPostsTable() {
       });
       const j = await resp.json().catch(() => ({}));
       if (!resp.ok || !j?.ok) {
-        console.error('[UI][delete] api reported error', { status: resp.status, body: j });
+        // console.error('[UI][delete] api reported error', { status: resp.status, body: j });
         throw new Error(j?.error || '削除に失敗しました');
       }
 
       // physical delete: remove from UI if server deleted
       if (j.deletedCount && j.deletedCount > 0) {
-        console.info('[UI][delete] deleted scheduled post', { scheduledPostId: id, deletedCount: j.deletedCount });
+        // console.info('[UI][delete] deleted scheduled post', { scheduledPostId: id, deletedCount: j.deletedCount });
         setPosts(prev => prev.filter(p => p.scheduledPostId !== id));
       } else {
-        console.info('[UI][delete] marked isDeleted', { scheduledPostId: id });
+        // console.info('[UI][delete] marked isDeleted', { scheduledPostId: id });
         setPosts(prev => prev.map(p => p.scheduledPostId === id ? { ...p, isDeleted: true } : p));
       }
 
       alert(`削除完了: 削除数=${j.deletedCount || 0} 残=${j.remaining || 0}`);
     } catch (e: any) {
-      console.error('[UI][delete] failed', e);
+      // console.error('[UI][delete] failed', e);
       alert(`削除に失敗しました: ${e.message || String(e)}`);
     } finally {
       setBulkDeleting(false);
@@ -330,7 +330,7 @@ export default function ScheduledPostsTable() {
       alert(`✅ 二段階投稿が完了しました！\n投稿ID: ${data.secondStagePostId}`);
       
     } catch (e: any) {
-      console.error("Second stage posting error:", e);
+      // console.error("Second stage posting error:", e);
       alert(`❌ 二段階投稿に失敗しました: ${e.message}`);
     } finally {
       setSecondStagePostingId("");
@@ -357,7 +357,7 @@ export default function ScheduledPostsTable() {
       setDebugModalOpen(true);
       
     } catch (e: any) {
-      console.error("Debug details error:", e);
+      // console.error("Debug details error:", e);
       alert(`デバッグ情報の取得に失敗しました: ${e.message}`);
     }
   };

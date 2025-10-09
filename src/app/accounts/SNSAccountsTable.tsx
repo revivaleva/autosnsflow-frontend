@@ -100,6 +100,24 @@ export default function SNSAccountsTable() {
     }
   };
 
+  // When deletion is initiated (immediate or background), disable auto toggles and set them to false
+  async function beginDeletion(accountId: string, mode: 'background' | 'immediate') {
+    // Optimistically update UI
+    setAccounts(prev => prev.map(a => a.accountId === accountId ? { ...a, autoPost: false, autoGenerate: false, autoReply: false, status: 'deleting' } : a));
+    try {
+      const body: any = { mode };
+      const r = await fetch(`/api/accounts/${encodeURIComponent(accountId)}/delete-all`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (!r.ok) {
+        const txt = await r.text().catch(() => '');
+        throw new Error(txt || 'delete request failed');
+      }
+      await loadAccounts();
+    } catch (e) {
+      alert('削除開始に失敗しました: ' + String(e));
+      await loadAccounts();
+    }
+  }
+
   // 初回マウント時のみAPI取得
   useEffect(() => {
     loadAccounts();
@@ -321,14 +339,14 @@ export default function SNSAccountsTable() {
                 <ToggleSwitch
                   checked={!!acc.autoPost}
                   onChange={() => handleToggle(acc, "autoPost")}
-                  disabled={updatingId === acc.accountId || acc.status === 'deleting'}
+                  disabled={updatingId === acc.accountId || acc.status === 'deleting' || acc.status === 'reauth_required'}
                 />
               </td>
               <td className="py-2 px-3">
                 <ToggleSwitch
                   checked={!!acc.autoGenerate}
                   onChange={() => handleToggle(acc, "autoGenerate")}
-                  disabled={updatingId === acc.accountId}
+                  disabled={updatingId === acc.accountId || acc.status === 'deleting' || acc.status === 'reauth_required'}
                 />
               </td>
               <td className="py-2 px-3">
@@ -336,7 +354,7 @@ export default function SNSAccountsTable() {
                   <ToggleSwitch
                     checked={!!acc.autoReply}
                     onChange={() => handleToggle(acc, "autoReply")}
-                    disabled={updatingId === acc.accountId}
+                    disabled={updatingId === acc.accountId || acc.status === 'deleting' || acc.status === 'reauth_required'}
                   />
                   {!acc.autoReply && (
                     <span className="text-xs text-red-600" title="リプライ自動返信がオフです">⚠️</span>
@@ -366,6 +384,21 @@ export default function SNSAccountsTable() {
                         }
                       }}
                     >削除中</button>
+                    <span className="text-sm text-gray-700">{acc.statusMessage || ''}</span>
+                  </div>
+                ) : acc.status === 'reauth_required' ? (
+                  <div className="flex items-center gap-2">
+                    <span className="inline-block bg-yellow-500 text-white text-xs px-2 py-0.5 rounded">要再認証</span>
+                    <button
+                      type="button"
+                      className="inline-block bg-indigo-600 text-white text-xs px-2 py-0.5 rounded hover:opacity-90"
+                      onClick={() => {
+                        try {
+                          const url = `/api/auth/threads/start?accountId=${encodeURIComponent(acc.accountId)}`;
+                          window.open(url, '_blank');
+                        } catch (e) { console.error(e); }
+                      }}
+                    >再連携</button>
                     <span className="text-sm text-gray-700">{acc.statusMessage || ''}</span>
                   </div>
                 ) : (

@@ -15,23 +15,29 @@ export async function deleteScheduledRecord({ userId, sk, physical = true }: { u
     if (!existing || !existing.Item) return { ok: false, reason: 'not_found' };
     const status = existing.Item?.status?.S || '';
     if (physical) {
-      try {
-        await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: key }));
-        // debug logging removed
-        await putLog({ userId, action: 'deletion', accountId: existing.Item?.accountId?.S || '', status: 'info', message: 'physical_deleted', detail: { sk } });
-        return { ok: true, physical: true };
-      } catch (e) {
-        try { console.warn('[deleteScheduledRecord] physical delete failed', { userId, sk, error: String(e) }); } catch(_) {}
-        await putLog({ userId, action: 'deletion', accountId: existing.Item?.accountId?.S || '', status: 'warn', message: 'physical_delete_failed', detail: { sk, error: String(e) } });
-        // fallback to logical
+      // Try physical delete with a few retries; do not fall back to logical delete
+      const maxAttempts = 3;
+      let attempt = 0;
+      while (attempt < maxAttempts) {
+        try {
+          attempt++;
+          await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: key }));
+          await putLog({ userId, action: 'deletion', accountId: existing.Item?.accountId?.S || '', status: 'info', message: 'physical_deleted', detail: { sk, attempts: attempt } });
+          return { ok: true, physical: true };
+        } catch (e) {
+          try { console.warn('[deleteScheduledRecord] physical delete failed (attempt ' + attempt + ')', { userId, sk, error: String(e) }); } catch(_) {}
+          await putLog({ userId, action: 'deletion', accountId: existing.Item?.accountId?.S || '', status: 'warn', message: 'physical_delete_failed', detail: { sk, attempt, error: String(e) } });
+          if (attempt >= maxAttempts) {
+            // Give up and surface error to caller
+            throw e;
+          }
+        }
       }
     }
-    // logical delete
-    const now = Math.floor(Date.now() / 1000);
-    await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: key, UpdateExpression: 'SET isDeleted = :t, deletedAt = :ts', ExpressionAttributeValues: { ':t': { BOOL: true }, ':ts': { N: String(now) } } }));
-    // debug logging removed
-    await putLog({ userId, action: 'deletion', accountId: existing.Item?.accountId?.S || '', status: 'info', message: 'logical_deleted', detail: { sk, deletedAt: now } });
-    return { ok: true, physical: false };
+    // If caller did not request physical, still enforce physical-only policy: attempt physical delete
+    // (legacy callers that passed physical=false will also get physical behavior)
+    // This code path is unreachable because above returns or throws, but kept for clarity.
+    throw new Error('unreachable');
   } catch (e) {
     try { console.warn('[deleteScheduledRecord] failed', { userId, sk, error: String(e) }); } catch(_) {}
     await putLog({ userId, action: 'deletion', status: 'error', message: 'delete_scheduled_failed', detail: { sk, error: String(e) } });

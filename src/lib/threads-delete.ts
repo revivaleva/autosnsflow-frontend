@@ -5,16 +5,14 @@ const ddb = createDynamoClient();
 const TBL = process.env.TBL_THREADS_ACCOUNTS || 'ThreadsAccounts';
 
 // Fetch token for given user/account from ThreadsAccounts table
+// NOTE: accessToken is deprecated and intentionally not referenced here.
 export async function getTokenForAccount({ userId, accountId }: { userId: string; accountId: string }) {
   if (!userId) throw new Error('userId required');
   if (!accountId) throw new Error('accountId required');
-  const get = await ddb.send(new GetItemCommand({ TableName: TBL, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } }, ProjectionExpression: 'accessToken, oauthAccessToken' }));
-  const accessToken = get.Item?.accessToken?.S ?? '';
+  const get = await ddb.send(new GetItemCommand({ TableName: TBL, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } }, ProjectionExpression: 'oauthAccessToken, oauthAccessTokenExpiresAt' }));
   const oauthAccessToken = (get.Item?.oauthAccessToken?.S || '').trim();
-  // Prefer oauthAccessToken when non-empty, else fallback to accessToken when present
-  if (oauthAccessToken) return oauthAccessToken;
-  if (accessToken && String(accessToken).trim()) return String(accessToken);
-  return null;
+  // Optionally, caller can examine oauthAccessTokenExpiresAt to decide refresh
+  return oauthAccessToken || null;
 }
 
 // Delete a threads post using an externally-provided token. Caller may obtain token once and reuse.
