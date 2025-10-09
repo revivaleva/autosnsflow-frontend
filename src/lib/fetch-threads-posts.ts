@@ -26,7 +26,31 @@ export async function fetchThreadsPosts({ userId, accountId, limit = 100 }: { us
     if (!resp.ok) {
       throw new Error(`threads_fetch_failed: ${resp.status} ${JSON.stringify(data)}`);
     }
-    const arr: any[] = Array.isArray(data?.data) ? data.data : [];
+    let arr: any[] = Array.isArray(data?.data) ? data.data : [];
+    // Try additional endpoints that may expose replies authored by the user.
+    // Some API versions expose /me/replies or allow include_replies flag. Probe these and merge results.
+    try {
+      const tryUrls = [
+        `${BASE}/me/replies?limit=${encodeURIComponent(String(limit))}&fields=${encodeURIComponent(fields.join(','))}`,
+        `${BASE}/me/threads?include_replies=true&limit=${encodeURIComponent(String(limit))}&fields=${encodeURIComponent(fields.join(','))}`
+      ];
+      for (const tryUrl of tryUrls) {
+        try {
+          const r = await fetch(tryUrl + `&access_token=${encodeURIComponent(token)}`);
+          const txt = await r.text().catch(() => '');
+          let d: any = {};
+          try { d = txt ? JSON.parse(txt) : {}; } catch { d = { rawText: txt }; }
+          if (r.ok && Array.isArray(d?.data) && d.data.length > 0) {
+            // merge unique by id
+            const incoming: any[] = d.data;
+            const existingIds = new Set(arr.map(x => String(x.id)));
+            for (const it of incoming) {
+              if (!existingIds.has(String(it.id))) arr.push(it);
+            }
+          }
+        } catch (_) { /* ignore individual probe errors */ }
+      }
+    } catch (_) {}
     // Normalize items: include available reply/quote metadata
     return arr.map((it: any) => ({
       id: it.id,

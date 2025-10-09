@@ -1,5 +1,5 @@
 import { createDynamoClient } from '@/lib/ddb';
-import { QueryCommand, DeleteItemCommand, GetItemCommand } from '@aws-sdk/client-dynamodb';
+import { QueryCommand, DeleteItemCommand, GetItemCommand, UpdateItemCommand } from '@aws-sdk/client-dynamodb';
 import { fetchThreadsPosts } from '@/lib/fetch-threads-posts';
 import fetchUserReplies from '@/lib/fetch-user-replies';
 import { getTokenForAccount, deleteThreadsPostWithToken } from '@/lib/threads-delete';
