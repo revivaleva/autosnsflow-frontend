@@ -52,3 +52,28 @@
 - `last_processed_at` の扱いを明確化（即時=now / background=0）
 - `dryrun` オプションは恒常化せずテストコードとして扱うことを推奨
 
+### OAuth トークン方針（oauthAccessToken のみを使用）
+
+- 方針: 今後は `oauthAccessToken` を正式トークンとし、`accessToken` は参照・フォールバックしない。
+- 未設定または期限切れのトークンは自動処理（定期実行・手動バッチ含む）から除外し、アカウント状態を `reauth_required` に設定して UI 上で再認証を促す。
+
+### トークン自動更新（auto-refresh）設計（概要）
+
+- 目的: トークンの有効期限が近い場合に自動で更新（長期化）し、手動での再認証負荷を軽減する。
+- 実装案（高レベル）:
+  1. ThreadsAccounts に `oauthAccessToken`, `oauthAccessTokenExpiresAt`（Epoch 秒）を保持する。
+  2. 定期ワーカー（例: `token-refresh` ジョブ）を導入し、`oauthAccessTokenExpiresAt - now <= REFRESH_THRESHOLD_SEC` のアカウントを検出して更新を試みる。
+  3. 更新フロー: OAuth の long-lived 交換エンドポイント（`/access_token?grant_type=th_exchange_token` 等）を呼び、成功したら新しい `oauthAccessToken` と `expiresAt` を保存する。失敗（権限不足・拒否など）の場合は `status = 'reauth_required'` を設定し、ExecutionLogs に `oauth_refresh_failed` を記録する。
+  4. セキュリティ: client_secret は Secrets Manager を用い、ログ出力ではトークン本体を決して出力しない（長さやマスクのみ可）。
+
+- 運用パラメータ（環境変数）:
+  - `TOKEN_REFRESH_THRESHOLD_SEC`（デフォルト: 60 * 60 * 24 = 1日）
+  - `TOKEN_REFRESH_BATCH_SIZE`（1回あたりの更新対象件数）
+
+- フォールバック: 自動更新に失敗した場合でも自動で `accessToken` を利用する等のフォールバックは行わない。再認証はユーザー操作で行う。
+
+### アカウントステータスと UI 表示
+
+- `ThreadsAccounts.status` に新しい値 `reauth_required` を追加。UI はこのステータスを検出して、アカウント一覧の状態欄に「要再認証」バッジと再認証ボタンを表示すること。
+- ステータス変更はバッチ処理中に発生する可能性があるため、UI 側はリアルタイム更新を考慮する（ポーリングまたは WebSocket）。
+

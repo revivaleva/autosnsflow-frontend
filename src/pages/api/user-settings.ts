@@ -22,6 +22,7 @@ const DEFAULTS = {
   doublePostDeleteDelay: "60",
   parentDelete: false,
   enableAppColumn: true,
+  maxThreadsAccounts: 0,
 };
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -72,6 +73,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         doublePostDeleteDelay: it.doublePostDeleteDelay?.N ? String(it.doublePostDeleteDelay.N) : "60",
         parentDelete: it.parentDelete?.BOOL === true,
         enableAppColumn: it.enableAppColumn?.BOOL === true,
+        maxThreadsAccounts: it.maxThreadsAccounts?.N ? Number(it.maxThreadsAccounts.N) : 0,
     // ▼追加: default Threads app credentials for fallback
     defaultThreadsClientId: it.defaultThreadsClientId?.S || "",
     defaultThreadsClientSecret: it.defaultThreadsClientSecret?.S || "",

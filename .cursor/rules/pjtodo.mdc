@@ -12,6 +12,9 @@
 - `Investigate root cause of deletion_error records: correlate DeletionQueue, ExecutionLogs, ThreadsAccounts entries` — cancelled
 
 - `Deprecate accessToken usage: remove all checks/fallbacks and prefer oauthAccessToken` — pending
+ - `Deprecate accessToken usage: remove all checks/fallbacks and prefer oauthAccessToken` — in_progress
+ - `Design and implement token auto-refresh worker` — pending
+ - `Mark accounts with missing/expired oauthAccessToken as reauth_required and show UI badge` — pending
 
 （詳細は `.cursor/rules/pjspec.mdc` とソースの TODO コメントを参照）
 

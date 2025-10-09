@@ -40,6 +40,11 @@ export default function SNSAccountsTable() {
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   // 表示制御: 設定でアプリ列を非表示にできる
   const [showAppColumn, setShowAppColumn] = useState<boolean>(true);
+  // 新規作成を許可するかどうかのフラグ（UserSettings.maxThreadsAccounts を考慮）
+  const [canCreateAccount, setCanCreateAccount] = useState<boolean>(true);
+  // max allowed and current count for display
+  const [maxThreadsAllowed, setMaxThreadsAllowed] = useState<number | null>(null);
+  const [currentAccountsCount, setCurrentAccountsCount] = useState<number>(0);
 
   // /src/app/accounts/SNSAccountsTable.tsx
   // [FIX] GET応答が {accounts} / {items} 両方来ても動くように
@@ -84,6 +89,7 @@ export default function SNSAccountsTable() {
       });
       // Parsed accounts prepared
       setAccounts(accounts);
+      setCurrentAccountsCount(accounts.length);
     } catch (error) {
         // debug error removed
       const message = error instanceof Error ? error.message : String(error);
@@ -93,6 +99,24 @@ export default function SNSAccountsTable() {
       setLoading(false);
     }
   };
+
+  // When deletion is initiated (immediate or background), disable auto toggles and set them to false
+  async function beginDeletion(accountId: string, mode: 'background' | 'immediate') {
+    // Optimistically update UI
+    setAccounts(prev => prev.map(a => a.accountId === accountId ? { ...a, autoPost: false, autoGenerate: false, autoReply: false, status: 'deleting' } : a));
+    try {
+      const body: any = { mode };
+      const r = await fetch(`/api/accounts/${encodeURIComponent(accountId)}/delete-all`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (!r.ok) {
+        const txt = await r.text().catch(() => '');
+        throw new Error(txt || 'delete request failed');
+      }
+      await loadAccounts();
+    } catch (e) {
+      alert('削除開始に失敗しました: ' + String(e));
+      await loadAccounts();
+    }
+  }
 
   // 初回マウント時のみAPI取得
   useEffect(() => {
@@ -104,10 +128,36 @@ export default function SNSAccountsTable() {
     (async () => {
       try {
         const r = await fetch('/api/user-settings', { credentials: 'include', cache: 'no-store' });
-        if (r.ok) {
+          if (r.ok) {
           const j = await r.json();
           const s = j?.settings || j || {};
           setShowAppColumn(!!s.enableAppColumn);
+          // store maxThreadsAllowed for display
+          const max = typeof s.maxThreadsAccounts === 'number' ? s.maxThreadsAccounts : Number(s.maxThreadsAccounts || 0);
+          setMaxThreadsAllowed(isNaN(max) ? null : max);
+          // 新規作成制御: maxThreadsAccounts が存在する場合は利用状況をチェック
+          try {
+            const max = typeof s.maxThreadsAccounts === 'number' ? s.maxThreadsAccounts : Number(s.maxThreadsAccounts || 0);
+            if (typeof max === 'number') {
+              if (max === 0) {
+                setCanCreateAccount(false);
+              } else {
+                // count current accounts
+                try {
+                  const qc = await fetch('/api/threads-accounts', { credentials: 'include' });
+                    if (qc.ok) {
+                    const data = await qc.json();
+                    const items = data.items || data.accounts || [];
+                    const count = Array.isArray(items) ? items.length : 0;
+                    setCurrentAccountsCount(count);
+                    setCanCreateAccount(count < max);
+                  }
+                } catch (e) {
+                  // ignore - keep default true
+                }
+              }
+            }
+          } catch (e) {}
         }
       } catch (_) {}
     })();
@@ -221,9 +271,12 @@ export default function SNSAccountsTable() {
   return (
     <div className="max-w-5xl mx-auto mt-10">
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold">
-          アカウント一覧
-        </h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-bold">アカウント一覧</h1>
+          {typeof maxThreadsAllowed === 'number' && (
+            <span className="text-sm text-gray-500">(アカウント追加可能数：{Math.max(0, (maxThreadsAllowed || 0) - currentAccountsCount)})</span>
+          )}
+        </div>
         <div className="flex gap-2">
           <button
             className="bg-blue-500 text-white rounded px-4 py-2 hover:bg-blue-600"
@@ -233,8 +286,10 @@ export default function SNSAccountsTable() {
             {loading ? "読み込み中..." : "再読み込み"}
           </button>
           <button
-            className="bg-green-500 text-white rounded px-4 py-2 hover:bg-green-600"
+            className={`bg-green-500 text-white rounded px-4 py-2 hover:bg-green-600 ${!canCreateAccount ? 'opacity-50 cursor-not-allowed' : ''}`}
             onClick={handleAddClick}
+            disabled={!canCreateAccount}
+            title={!canCreateAccount ? 'アカウント作成の上限に達しているため追加できません' : undefined}
           >
             ＋新規追加
           </button>
@@ -284,14 +339,14 @@ export default function SNSAccountsTable() {
                 <ToggleSwitch
                   checked={!!acc.autoPost}
                   onChange={() => handleToggle(acc, "autoPost")}
-                  disabled={updatingId === acc.accountId || acc.status === 'deleting'}
+                  disabled={updatingId === acc.accountId || acc.status === 'deleting' || acc.status === 'reauth_required'}
                 />
               </td>
               <td className="py-2 px-3">
                 <ToggleSwitch
                   checked={!!acc.autoGenerate}
                   onChange={() => handleToggle(acc, "autoGenerate")}
-                  disabled={updatingId === acc.accountId}
+                  disabled={updatingId === acc.accountId || acc.status === 'deleting' || acc.status === 'reauth_required'}
                 />
               </td>
               <td className="py-2 px-3">
@@ -299,7 +354,7 @@ export default function SNSAccountsTable() {
                   <ToggleSwitch
                     checked={!!acc.autoReply}
                     onChange={() => handleToggle(acc, "autoReply")}
-                    disabled={updatingId === acc.accountId}
+                    disabled={updatingId === acc.accountId || acc.status === 'deleting' || acc.status === 'reauth_required'}
                   />
                   {!acc.autoReply && (
                     <span className="text-xs text-red-600" title="リプライ自動返信がオフです">⚠️</span>
@@ -329,6 +384,21 @@ export default function SNSAccountsTable() {
                         }
                       }}
                     >削除中</button>
+                    <span className="text-sm text-gray-700">{acc.statusMessage || ''}</span>
+                  </div>
+                ) : acc.status === 'reauth_required' ? (
+                  <div className="flex items-center gap-2">
+                    <span className="inline-block bg-yellow-500 text-white text-xs px-2 py-0.5 rounded">要再認証</span>
+                    <button
+                      type="button"
+                      className="inline-block bg-indigo-600 text-white text-xs px-2 py-0.5 rounded hover:opacity-90"
+                      onClick={() => {
+                        try {
+                          const url = `/api/auth/threads/start?accountId=${encodeURIComponent(acc.accountId)}`;
+                          window.open(url, '_blank');
+                        } catch (e) { console.error(e); }
+                      }}
+                    >再連携</button>
                     <span className="text-sm text-gray-700">{acc.statusMessage || ''}</span>
                   </div>
                 ) : (
