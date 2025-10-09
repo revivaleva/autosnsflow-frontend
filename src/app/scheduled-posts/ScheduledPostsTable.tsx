@@ -739,6 +739,12 @@ export default function ScheduledPostsTable() {
                     )}
                   </td>
                   
+                  <td className="border p-1" title={String(post.content || '')}>
+                    <div className="text-sm" style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'normal', maxHeight: '4.5rem' }}>
+                      {post.content || ""}
+                    </div>
+                  </td>
+
                   <td className="border p-1">
                     {post.status === "posted" ? (
                       post.postedAt
