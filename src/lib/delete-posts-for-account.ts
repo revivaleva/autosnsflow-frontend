@@ -158,6 +158,8 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
     try {
       // Final cleanup: delete all scheduled posts for this account (PK + accountId)
       try { await putLog({ userId, accountId, action: 'deletion', status: 'info', message: 'final_cleanup_start' }); } catch(_) {}
+      // Also emit CloudWatch-visible console log for immediate debugging
+      try { console.info('[info] final_cleanup_start', { userId, accountId }); } catch(_) {}
       let lastKey: any = undefined;
       let totalDeletedRecords = 0;
       let totalFailedDeletes = 0;
@@ -186,6 +188,8 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
         lastKey = (qAll as any).LastEvaluatedKey;
       } while (lastKey);
       try { await putLog({ userId, accountId, action: 'deletion', status: totalFailedDeletes > 0 ? 'error' : 'warn', message: 'final_cleanup_done', detail: { deletedCount, cleanedRecords: totalDeletedRecords, failedDeletes: totalFailedDeletes } }); } catch(_) {}
+      // Also emit CloudWatch-visible final summary
+      try { console.info('[info] final_cleanup_done', { userId, accountId, deletedCount, cleanedRecords: totalDeletedRecords, failedDeletes: totalFailedDeletes }); } catch(_) {}
     } catch (e) {
       try { console.warn('[delete-posts-for-account] final cleanup failed', { userId, accountId, error: String(e) }); } catch(_) {}
     }
