@@ -180,6 +180,7 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
           try {
             await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: `USER#${userId}` }, SK: { S: skToDel } } }));
             totalDeletedRecords++;
+            try { console.info('[info] final_cleanup_deleted_item', { userId, accountId, sk: skToDel }); } catch(_) {}
           } catch (e) {
             totalFailedDeletes++;
             try { console.warn('[delete-posts-for-account] final cleanup delete failed', { userId, accountId, sk: skToDel, error: String(e) }); } catch(_) {}
