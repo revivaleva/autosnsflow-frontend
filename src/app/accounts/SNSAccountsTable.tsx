@@ -284,14 +284,14 @@ export default function SNSAccountsTable() {
                 <ToggleSwitch
                   checked={!!acc.autoPost}
                   onChange={() => handleToggle(acc, "autoPost")}
-                  disabled={updatingId === acc.accountId || acc.status === 'deleting'}
+                  disabled={updatingId === acc.accountId || acc.status === 'deleting' || acc.status === 'reauth_required'}
                 />
               </td>
               <td className="py-2 px-3">
                 <ToggleSwitch
                   checked={!!acc.autoGenerate}
                   onChange={() => handleToggle(acc, "autoGenerate")}
-                  disabled={updatingId === acc.accountId}
+                  disabled={updatingId === acc.accountId || acc.status === 'reauth_required'}
                 />
               </td>
               <td className="py-2 px-3">
@@ -299,7 +299,7 @@ export default function SNSAccountsTable() {
                   <ToggleSwitch
                     checked={!!acc.autoReply}
                     onChange={() => handleToggle(acc, "autoReply")}
-                    disabled={updatingId === acc.accountId}
+                    disabled={updatingId === acc.accountId || acc.status === 'reauth_required'}
                   />
                   {!acc.autoReply && (
                     <span className="text-xs text-red-600" title="リプライ自動返信がオフです">⚠️</span>
@@ -329,6 +329,21 @@ export default function SNSAccountsTable() {
                         }
                       }}
                     >削除中</button>
+                    <span className="text-sm text-gray-700">{acc.statusMessage || ''}</span>
+                  </div>
+                ) : acc.status === 'reauth_required' ? (
+                  <div className="flex items-center gap-2">
+                    <span className="inline-block bg-yellow-500 text-white text-xs px-2 py-0.5 rounded">要再認証</span>
+                    <button
+                      type="button"
+                      className="inline-block bg-indigo-600 text-white text-xs px-2 py-0.5 rounded hover:opacity-90"
+                      onClick={() => {
+                        try {
+                          const url = `/api/auth/threads/start?accountId=${encodeURIComponent(acc.accountId)}`;
+                          window.open(url, '_blank');
+                        } catch (e) { console.error(e); }
+                      }}
+                    >再連携</button>
                     <span className="text-sm text-gray-700">{acc.statusMessage || ''}</span>
                   </div>
                 ) : (
