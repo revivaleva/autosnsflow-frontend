@@ -1,6 +1,7 @@
 import { createDynamoClient } from '@/lib/ddb';
 import { QueryCommand, DeleteItemCommand, GetItemCommand } from '@aws-sdk/client-dynamodb';
 import { fetchThreadsPosts } from '@/lib/fetch-threads-posts';
+import fetchUserReplies from '@/lib/fetch-user-replies';
 import { getTokenForAccount, deleteThreadsPostWithToken } from '@/lib/threads-delete';
 import { putLog } from '@/lib/logger';
 import { deleteScheduledRecord } from '@/lib/scheduled-posts-delete';
@@ -48,6 +49,19 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
   let threads: any[] = [];
   try {
     threads = await fetchThreadsPosts({ userId, accountId, limit: limit as number });
+    // Also fetch replies authored by this user (independent of parent post)
+    try {
+      const replies = await fetchUserReplies({ userId, accountId, limit: limit as number });
+      if (Array.isArray(replies) && replies.length > 0) {
+        const existing = new Set((threads || []).map((x: any) => String(x.id)));
+        for (const r of replies) {
+          if (!existing.has(String(r.id))) threads.push(r);
+        }
+      }
+    } catch (e) {
+      // log but continue with threads
+      try { console.warn('[warn] fetchUserReplies failed', { userId, accountId, error: String(e) }); } catch(_) {}
+    }
     if (!Array.isArray(threads)) threads = [];
   } catch (e) {
     const msg = stringifyError(e);
