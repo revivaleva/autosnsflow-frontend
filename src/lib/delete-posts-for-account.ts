@@ -51,7 +51,13 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
     threads = await fetchThreadsPosts({ userId, accountId, limit: limit as number });
     // Also fetch replies authored by this user (independent of parent post)
     try {
-      const replies = await fetchUserReplies({ userId, accountId, limit: limit as number });
+      // attempt to pass providerUserId if available from ThreadsAccounts
+      let providerUserId: string | undefined = undefined;
+      try {
+        const acct = await ddb.send(new GetItemCommand({ TableName: process.env.TBL_THREADS_ACCOUNTS || 'ThreadsAccounts', Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } }, ProjectionExpression: 'providerUserId' }));
+        providerUserId = acct?.Item?.providerUserId?.S || undefined;
+      } catch (_) {}
+      const replies = await fetchUserReplies({ userId, accountId, limit: limit as number, providerUserId });
       if (Array.isArray(replies) && replies.length > 0) {
         const existing = new Set((threads || []).map((x: any) => String(x.id)));
         for (const r of replies) {

@@ -16,11 +16,15 @@ export async function fetchUserReplies({ userId, accountId, limit = 100, provide
   if (!token) throw new Error('missing_oauth_access_token');
 
   const fields = ['id','text','timestamp','reply_to','user_id','username','permalink'];
-  const tryUrls = [
-    `${BASE}/me/replies?limit=${encodeURIComponent(String(limit))}&fields=${encodeURIComponent(fields.join(','))}`,
-    `${BASE}/me/comments?limit=${encodeURIComponent(String(limit))}&fields=${encodeURIComponent(fields.join(','))}`,
-    `${BASE}/me/threads?include_replies=true&limit=${encodeURIComponent(String(limit))}&fields=${encodeURIComponent(fields.join(','))}`
-  ];
+  const tryUrls: string[] = [];
+  // Prefer providerUserId endpoint if available: /{threads-user-id}/replies
+  if (providerUserId) {
+    tryUrls.push(`${BASE}/${encodeURIComponent(providerUserId)}/replies?limit=${encodeURIComponent(String(limit))}&fields=${encodeURIComponent(fields.join(','))}`);
+  }
+  // Fallbacks
+  tryUrls.push(`${BASE}/me/replies?limit=${encodeURIComponent(String(limit))}&fields=${encodeURIComponent(fields.join(','))}`);
+  tryUrls.push(`${BASE}/me/comments?limit=${encodeURIComponent(String(limit))}&fields=${encodeURIComponent(fields.join(','))}`);
+  tryUrls.push(`${BASE}/me/threads?include_replies=true&limit=${encodeURIComponent(String(limit))}&fields=${encodeURIComponent(fields.join(','))}`);
 
   let results: any[] = [];
   for (const u of tryUrls) {
