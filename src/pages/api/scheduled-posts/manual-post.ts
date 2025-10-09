@@ -107,6 +107,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (permalink?.url) {
       sets.push("postUrl = :purl");
       values[":purl"] = { S: permalink.url };
+    } else {
+      // Mark as attempted-and-failed so we don't retry fetching permalink repeatedly
+      sets.push("postUrl = :purl");
+      values[":purl"] = { S: '-' };
     }
     
     // 二段階投稿の初期化: アカウント設定に二段階投稿内容があっても、

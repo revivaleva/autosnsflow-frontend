@@ -10,6 +10,7 @@ type Settings = {
   // openaiApiKey: string;  // removed from UI
   // selectedModel: string; // removed from UI
   masterPrompt: string;
+  quotePrompt: string;
   replyPrompt: string;
   // [MOD] autoPost: boolean（既定 false）
   autoPost: boolean;
@@ -32,6 +33,7 @@ const DEFAULTS: Settings = {
   // openaiApiKey: "",
   // selectedModel: "gpt-5-mini",
   masterPrompt: "",
+  quotePrompt: "",
   replyPrompt: "",
   autoPost: false,
   doublePostDelay: "5",
@@ -44,7 +46,7 @@ const DEFAULTS: Settings = {
 };
 
 export default function SettingsForm() {
-  const [values, setValues] = useState<Settings>(DEFAULTS);
+  const [values, setValues] = useState<Settings & { quotePrompt?: string }>(DEFAULTS as any);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -57,11 +59,30 @@ export default function SettingsForm() {
         if (r.ok) {
           const j = await r.json();
           const s = j?.settings || j || {};
+          // If settings missing, try to get AppConfig defaults via API
+          let masterDefault = s.masterPrompt ?? "";
+          let quoteDefault = s.quotePrompt ?? "";
+          let replyDefault = s.replyPrompt ?? "";
+          if (!masterDefault || !quoteDefault || !replyDefault) {
+            try {
+              const r2 = await fetch('/api/app-config', { method: 'GET', credentials: 'include' });
+              if (r2.ok) {
+                const j2 = await r2.json();
+                masterDefault = masterDefault || j2?.MASTER_PROMPT || masterDefault;
+                quoteDefault = quoteDefault || j2?.QUOTE_PROMPT || quoteDefault;
+                replyDefault = replyDefault || j2?.REPLY_PROMPT || replyDefault;
+              }
+            } catch (e) {
+              // ignore
+            }
+          }
+
           setValues({
             discordWebhook: s.discordWebhook ?? "",
             errorDiscordWebhook: s.errorDiscordWebhook ?? "",
-            masterPrompt: s.masterPrompt ?? "",
-            replyPrompt: s.replyPrompt ?? "",
+            masterPrompt: masterDefault,
+            quotePrompt: quoteDefault,
+            replyPrompt: replyDefault,
             autoPost: !!s.autoPost,
             doublePostDelay: String(s.doublePostDelay ?? "5"),
             doublePostDelete: !!s.doublePostDelete,
@@ -135,6 +156,15 @@ export default function SettingsForm() {
             className="mt-1 w-full min-h-[140px] border rounded-md px-3 py-2"
             value={values.masterPrompt}
             onChange={(e) => setValues({ ...values, masterPrompt: e.target.value })}
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm text-gray-600">引用生成プロンプト（引用文生成）</label>
+          <textarea
+            className="mt-1 w-full min-h-[120px] border rounded-md px-3 py-2"
+            value={(values as any).quotePrompt}
+            onChange={(e) => setValues({ ...values, quotePrompt: e.target.value })}
           />
         </div>
 

@@ -66,7 +66,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         PK: { S: `USER#${userId}` }, 
         SK: { S: `ACCOUNT#${accountId}` }
       },
-      ProjectionExpression: "accessToken, providerUserId, secondStageContent",
+      ProjectionExpression: "accessToken, oauthAccessToken, providerUserId, secondStageContent",
     }));
 
     if (!accountItem.Item) {
@@ -74,6 +74,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     const accessToken = accountItem.Item.accessToken?.S;
+    const oauthAccessToken = accountItem.Item.oauthAccessToken?.S;
     const providerUserId = accountItem.Item.providerUserId?.S;
     const secondStageContent = accountItem.Item.secondStageContent?.S;
 
@@ -89,8 +90,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // debug output removed
 
     // Threadsに二段階投稿（元の投稿にリプライ）- 修正済みのpostToThreads使用
+    // oauthAccessToken を優先して使用する
     const { postId: secondStagePostId } = await postToThreads({
       accessToken,
+      oauthAccessToken: oauthAccessToken || undefined,
       text: secondStageContent,
       userIdOnPlatform: providerUserId,
       inReplyTo: postId, // 元の投稿IDにリプライ

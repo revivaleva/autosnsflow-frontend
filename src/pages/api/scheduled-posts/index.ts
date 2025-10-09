@@ -130,6 +130,11 @@ function mapItem(it: any) {
     scheduledPostId,
     accountName: getS("accountName"),
     accountId: getS("accountId"),
+    // 引用投稿用のメタフィールド
+    sourcePostId: getS("sourcePostId"),
+    sourcePostShortcode: getS("sourcePostShortcode"),
+    // type: 'quote'など
+    type: getS("type"),
     scheduledAt: getN("scheduledAt"),
     content: getS("content"),
     theme: getS("theme"),

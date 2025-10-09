@@ -10,6 +10,34 @@ const TBL_SETTINGS = process.env.TBL_SETTINGS || "UserSettings";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const accountId = typeof req.query.accountId === "string" ? req.query.accountId : undefined;
+  // Ensure user settings exist for the requesting user
+  try {
+    const user = await verifyUserFromRequest(req as any);
+    const userId = user.sub;
+    // Use backend-core helper if available
+    try {
+      const repo = await import('@autosnsflow/backend-core/dist/repositories/userSettings');
+      const anyRepo: any = repo;
+      const fn = anyRepo.ensureUserSettingsExist || anyRepo.default?.ensureUserSettingsExist;
+      if (fn && typeof fn === 'function') {
+        await fn(userId);
+      }
+    } catch (e) {
+      // fallback: create minimal record directly
+      const Key = { PK: { S: `USER#${userId}` }, SK: { S: "SETTINGS" } };
+      await ddb
+        .send(
+          new (require('@aws-sdk/client-dynamodb').PutItemCommand)({
+            TableName: TBL_SETTINGS,
+            Item: { ...Key, createdAt: { N: String(Math.floor(Date.now() / 1000)) }, updatedAt: { N: String(Math.floor(Date.now() / 1000)) }, maxThreadsAccounts: { N: "0" } },
+            ConditionExpression: "attribute_not_exists(PK) AND attribute_not_exists(SK)",
+          })
+        )
+        .catch(() => {});
+    }
+  } catch (e) {
+    // ignore if not authenticated here; downstream flow may handle auth
+  }
   // Helper to treat literal 'undefined' or empty strings as not set
   const getEnv = (name: string) => {
     const v = process.env[name as keyof NodeJS.ProcessEnv];

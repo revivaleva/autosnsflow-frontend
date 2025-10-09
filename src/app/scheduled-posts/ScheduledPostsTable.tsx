@@ -20,12 +20,19 @@ const statusOptions = [
   { value: "deleted", label: "削除済" },
 ];
 
+const typeOptions = [
+  { value: "", label: "すべて" },
+  { value: "quote", label: "引用投稿" },
+  { value: "normal", label: "通常投稿" },
+];
+
 export default function ScheduledPostsTable() {
   const [posts, setPosts] = useState<ScheduledPostType[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [sortKey, setSortKey] = useState<"scheduledAt" | "status">("scheduledAt");
   const [sortAsc, setSortAsc] = useState<boolean>(true);
   const [filterStatus, setFilterStatus] = useState<ScheduledPostStatus>("");
+  const [filterType, setFilterType] = useState<string>("");
   const [accountFilter, setAccountFilter] = useState<string>("");
   const [accountIds, setAccountIds] = useState<string[]>([]);
   // アカウントが削除中であることを示すマップ
@@ -397,6 +404,9 @@ export default function ScheduledPostsTable() {
       // 削除済フィルタが選択された場合は isDeleted=true のみ表示
       if (filterStatus === "deleted") return !!post.isDeleted;
       // それ以外のステータスフィルタは isDeleted=false のものを対象にする
+      // type フィルタが指定されている場合は type も評価
+      if (filterType === 'quote' && (post as any).type !== 'quote') return false;
+      if (filterType === 'normal' && (post as any).type === 'quote') return false;
       return (post.status || "scheduled") === filterStatus && !post.isDeleted;
     })
     .sort((a, b) => {
@@ -587,6 +597,15 @@ export default function ScheduledPostsTable() {
         </select>
         <select
           className="border rounded p-1"
+          value={filterType}
+          onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setFilterType(e.target.value)}
+        >
+          {typeOptions.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+        <select
+          className="border rounded p-1"
           value={accountFilter}
           onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setAccountFilter(e.target.value)}
         >
@@ -624,6 +643,7 @@ export default function ScheduledPostsTable() {
               <th className="border p-1" style={{ width: 160 }}>予約投稿日時</th>
               <th className="border p-1" style={{ width: 140 }}>自動投稿</th>
               <th className="border p-1" style={{ width: 200 }}>生成テーマ</th>
+              <th className="border p-1" style={{ width: 140 }}>引用元投稿ID</th>
               <th className="border p-1" style={{ width: 360 }}>本文テキスト</th>
               <th className="border p-1" style={{ width: 160 }}>投稿日時</th>
               <th className="border p-1" style={{ width: 140 }}>投稿ID</th>
@@ -702,8 +722,23 @@ export default function ScheduledPostsTable() {
                     <div className="text-sm" style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'normal', maxHeight: '3rem' }} title={post.theme}>{post.theme}</div>
                   </td>
                   <td className="border p-1">
-                    <div className="text-sm text-[13px] leading-tight" style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'normal', maxHeight: '4.2rem' }} title={post.content}>{post.content}</div>
+                    {/* 引用元投稿ID列: sourcePostId があれば表示、クリックで該当投稿へ（投稿が存在する場合は外部URLへ） */}
+                    {((post as any).sourcePostId || (post as any).sourcePostShortcode) ? (
+                      (() => {
+                        const src = (post as any).sourcePostShortcode || (post as any).sourcePostId;
+                        // Only create URL if src looks like a non-empty string (shortcode). Otherwise show '-'
+                        const isStringId = typeof src === 'string' && src.trim().length > 0;
+                        if (!isStringId) return <span className="text-sm">-</span>;
+                        const srcUrl = `https://www.threads.net/post/${src}`;
+                        return (
+                          <a href={srcUrl} target="_blank" rel="noreferrer" className="text-blue-600 underline">{String(src)}</a>
+                        );
+                      })()
+                    ) : (
+                      "-"
+                    )}
                   </td>
+                  
                   <td className="border p-1">
                     {post.status === "posted" ? (
                       post.postedAt
@@ -723,41 +758,15 @@ export default function ScheduledPostsTable() {
                     )}
                   </td>
                   <td className="border p-1">
-                    {/* [ADD] postUrl が無い場合はpostIdから生成したURLを使用、それもなければプロフィールURLへフォールバック */}
+                    {/* 投稿ID列: postUrl があればアンカー、無ければ postId 表示、どちらも無ければ 空 */}
                     {post.status === "posted" ? (
-                      pUrl ? (
-                        <a
-                          href={pUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-blue-600 underline"
-                          title="Threadsで開く"
-                        >
-                          {pUrl.split("/post/").pop() /* ショートコードだけ表示 */}
-                        </a>
-                      ) : generatedUrl ? (
-                        <a
-                          href={generatedUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-blue-600 underline"
-                          title="Threadsで開く"
-                        >
-                          {postId /* postID表示 */}
-                        </a>
+                      (pUrl || generatedUrl) ? (
+                        <a href={pUrl || generatedUrl} target="_blank" rel="noreferrer" className="text-blue-600 underline">{String(post.postId || (post as any).numericPostId || '').slice(0, 30)}</a>
                       ) : (
-                        <a
-                          href={`https://www.threads.com/@${encodeURIComponent(post.accountId || "")}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-blue-600 underline"
-                          title="プロフィールで確認"
-                        >
-                          プロフィール
-                        </a>
+                        <span className="text-sm">{post.postId || (post as any).numericPostId || ""}</span>
                       )
                     ) : (
-                      "" /* 未投稿 */
+                      ""
                     )}
                   </td>
                   <td className="border p-1">

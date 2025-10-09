@@ -16,7 +16,7 @@ const TBL_LOGS = process.env.TBL_EXECUTION_LOGS || "ExecutionLogs";
 const nowSec = () => Math.floor(Date.now() / 1000);
 
 // Lambda関数の upsertReplyItem を移植（AI生成機能付き）
-async function upsertReplyItem(userId: string, acct: any, { externalReplyId, postId, text, createdAt, originalPost }: any) {
+export async function upsertReplyItem(userId: string, acct: any, { externalReplyId, postId, text, createdAt, originalPost }: any) {
   const sk = `REPLY#${externalReplyId}`;
 
   // 既存チェック
@@ -123,7 +123,7 @@ async function putLog({
 }
 
 // Lambda関数の fetchThreadsRepliesAndSave を移植
-async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 }: any) {
+export async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 }: any) {
   // debug output removed
   
   if (!acct?.accessToken) throw new Error("Threads のトークン不足");
