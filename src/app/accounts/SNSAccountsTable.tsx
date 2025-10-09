@@ -309,7 +309,7 @@ export default function SNSAccountsTable() {
                 <ToggleSwitch
                   checked={!!acc.autoGenerate}
                   onChange={() => handleToggle(acc, "autoGenerate")}
-                  disabled={updatingId === acc.accountId || acc.status === 'reauth_required'}
+                  disabled={updatingId === acc.accountId || acc.status === 'deleting' || acc.status === 'reauth_required'}
                 />
               </td>
               <td className="py-2 px-3">
@@ -317,7 +317,7 @@ export default function SNSAccountsTable() {
                   <ToggleSwitch
                     checked={!!acc.autoReply}
                     onChange={() => handleToggle(acc, "autoReply")}
-                    disabled={updatingId === acc.accountId || acc.status === 'reauth_required'}
+                    disabled={updatingId === acc.accountId || acc.status === 'deleting' || acc.status === 'reauth_required'}
                   />
                   {!acc.autoReply && (
                     <span className="text-xs text-red-600" title="リプライ自動返信がオフです">⚠️</span>
