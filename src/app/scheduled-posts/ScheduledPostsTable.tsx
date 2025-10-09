@@ -399,14 +399,14 @@ export default function ScheduledPostsTable() {
     .filter((post) => {
       // アカウントフィルタ
       if (accountFilter && post.accountId !== accountFilter) return false;
+      // type フィルタが指定されている場合は type も評価（status フィルタに関わらず適用）
+      if (filterType === 'quote' && (post as any).type !== 'quote') return false;
+      if (filterType === 'normal' && (post as any).type === 'quote') return false;
       // デフォルト（filterStatusが空）は論理削除されたものを除外
       if (!filterStatus) return !post.isDeleted;
       // 削除済フィルタが選択された場合は isDeleted=true のみ表示
       if (filterStatus === "deleted") return !!post.isDeleted;
       // それ以外のステータスフィルタは isDeleted=false のものを対象にする
-      // type フィルタが指定されている場合は type も評価
-      if (filterType === 'quote' && (post as any).type !== 'quote') return false;
-      if (filterType === 'normal' && (post as any).type === 'quote') return false;
       return (post.status || "scheduled") === filterStatus && !post.isDeleted;
     })
     .sort((a, b) => {
