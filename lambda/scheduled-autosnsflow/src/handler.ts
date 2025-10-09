@@ -3117,11 +3117,11 @@ async function processDeletionQueueForUser(userId: any) {
 
       // try to claim
       try {
-        try { console.info('[info] attempting to claim queue item', { accountId, sk }); } catch(_) {}
+        try { console.info('[info] attempting to claim queue item', { accountId, sk, ownerUserId }); } catch(_) {}
         await ddb.send(new UpdateItemCommand({ TableName: dqTable, Key: { PK: { S: `ACCOUNT#${accountId}` }, SK: { S: sk } }, UpdateExpression: 'SET processing = :t', ConditionExpression: 'attribute_not_exists(processing) OR processing = :f', ExpressionAttributeValues: { ':t': { BOOL: true }, ':f': { BOOL: false } } }));
-        try { console.info('[info] claimed queue item', { accountId, sk }); } catch(_) {}
+        try { console.info('[info] claimed queue item', { accountId, sk, ownerUserId }); } catch(_) {}
       } catch (e) {
-        try { console.warn('[warn] failed to claim queue item, skipping', { accountId, sk, error: String(e) }); } catch(_) {}
+        try { console.warn('[warn] failed to claim queue item, skipping', { accountId, sk, ownerUserId, error: String(e) }); } catch(_) {}
         // someone else claimed or claim failed
         continue;
       }
@@ -3131,28 +3131,28 @@ async function processDeletionQueueForUser(userId: any) {
         await config.loadConfig();
         const batchSizeVal = config.getConfigValue('DELETION_BATCH_SIZE');
         const batchSize = Number(batchSizeVal || '100') || 100;
-        try { console.info('[info] invoking deleteUpTo100PostsForAccount', { userId, accountId, batchSize }); } catch(_) {}
-        const res = await deleteUpTo100PostsForAccount(userId, accountId, batchSize);
-        try { console.info('[info] deleteUpTo100PostsForAccount result', { userId, accountId, res }); } catch(_) {}
+        try { console.info('[info] invoking deleteUpTo100PostsForAccount', { ownerUserId, accountId, batchSize }); } catch(_) {}
+        const res = await deleteUpTo100PostsForAccount(ownerUserId, accountId, batchSize);
+        try { console.info('[info] deleteUpTo100PostsForAccount result', { ownerUserId, accountId, res }); } catch(_) {}
         totalDeleted += Number(res?.deletedCount || 0);
         if (!res.remaining) {
           // deletion complete -> remove queue and set account status active
           await ddb.send(new DeleteItemCommand({ TableName: dqTable, Key: { PK: { S: `ACCOUNT#${accountId}` }, SK: { S: sk } } }));
-          await ddb.send(new UpdateItemCommand({ TableName: TBL_THREADS_ACCOUNTS, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } }, UpdateExpression: 'SET #st = :s', ExpressionAttributeNames: { '#st': 'status' }, ExpressionAttributeValues: { ':s': { S: 'active' } } }));
-          await putLog({ userId, type: 'deletion', accountId, status: 'info', message: 'deletion_completed', detail: { deleted: res.deletedCount } });
+          await ddb.send(new UpdateItemCommand({ TableName: TBL_THREADS_ACCOUNTS, Key: { PK: { S: `USER#${ownerUserId}` }, SK: { S: `ACCOUNT#${accountId}` } }, UpdateExpression: 'SET #st = :s', ExpressionAttributeNames: { '#st': 'status' }, ExpressionAttributeValues: { ':s': { S: 'active' } } }));
+          await putLog({ userId: ownerUserId, type: 'deletion', accountId, status: 'info', message: 'deletion_completed', detail: { deleted: res.deletedCount } });
           // notify discord about completion
-          try { await postDiscordLog({ userId, content: `**[DELETION completed]** account=${accountId} deleted=${res.deletedCount}` }); } catch (_) {}
+          try { await postDiscordLog({ userId: ownerUserId, content: `**[DELETION completed]** account=${accountId} deleted=${res.deletedCount}` }); } catch (_) {}
         } else {
           // update last_processed_at and release
           await ddb.send(new UpdateItemCommand({ TableName: dqTable, Key: { PK: { S: `ACCOUNT#${accountId}` }, SK: { S: sk } }, UpdateExpression: 'SET processing = :f, last_processed_at = :ts', ExpressionAttributeValues: { ':f': { BOOL: false }, ':ts': { N: String(now) } } }));
-          await putLog({ userId, type: 'deletion', accountId, status: 'info', message: 'deletion_progress', detail: { deleted: res.deletedCount } });
+          await putLog({ userId: ownerUserId, type: 'deletion', accountId, status: 'info', message: 'deletion_progress', detail: { deleted: res.deletedCount } });
           // notify discord about progress
-          try { await postDiscordLog({ userId, content: `**[DELETION progress]** account=${accountId} deleted=${res.deletedCount} remaining=true` }); } catch (_) {}
+          try { await postDiscordLog({ userId: ownerUserId, content: `**[DELETION progress]** account=${accountId} deleted=${res.deletedCount} remaining=true` }); } catch (_) {}
         }
       } catch (e) {
         // mark as error and release processing flag
         try { await ddb.send(new UpdateItemCommand({ TableName: dqTable, Key: { PK: { S: `ACCOUNT#${accountId}` }, SK: { S: sk } }, UpdateExpression: 'SET processing = :f, last_processed_at = :ts, retry_count = if_not_exists(retry_count, :z) + :inc, last_error = :err', ExpressionAttributeValues: { ':f': { BOOL: false }, ':ts': { N: String(now) }, ':z': { N: '0' }, ':inc': { N: '1' }, ':err': { S: String((e as any)?.message || e) } } })); } catch (_) {}
-        try { console.warn('[warn] deletion batch error', { userId, accountId, sk, error: String(e) }); } catch (_) {}
+        try { console.warn('[warn] deletion batch error', { ownerUserId, accountId, sk, error: String(e) }); } catch (_) {}
         // if retry count exceeded, mark account status deletion_error
         try {
           const newRetry = currentRetryCount + 1;
@@ -3160,16 +3160,16 @@ async function processDeletionQueueForUser(userId: any) {
             // set account status to deletion_error
             // Guard: only update existing ThreadsAccounts items to avoid creating phantom records
             try {
-              await ddb.send(new UpdateItemCommand({ TableName: TBL_THREADS_ACCOUNTS, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } }, UpdateExpression: 'SET #st = :s', ConditionExpression: 'attribute_exists(PK)', ExpressionAttributeNames: { '#st': 'status' }, ExpressionAttributeValues: { ':s': { S: 'deletion_error' } } }));
-              await putLog({ userId, type: 'deletion', accountId, status: 'error', message: 'deletion_max_retries_exceeded', detail: { retries: newRetry } });
+              await ddb.send(new UpdateItemCommand({ TableName: TBL_THREADS_ACCOUNTS, Key: { PK: { S: `USER#${ownerUserId}` }, SK: { S: `ACCOUNT#${accountId}` } }, UpdateExpression: 'SET #st = :s', ConditionExpression: 'attribute_exists(PK)', ExpressionAttributeNames: { '#st': 'status' }, ExpressionAttributeValues: { ':s': { S: 'deletion_error' } } }));
+              await putLog({ userId: ownerUserId, type: 'deletion', accountId, status: 'error', message: 'deletion_max_retries_exceeded', detail: { retries: newRetry } });
             } catch (ee) {
               // If conditional update fails (item not exists), log a warn but do not create a new ThreadsAccounts item
-              try { console.warn('[warn] conditional update skipped creating ThreadsAccounts (deletion_error):', { userId, accountId, error: String(ee) }); } catch(_){}
-              await putLog({ userId, type: 'deletion', accountId, status: 'warn', message: 'deletion_max_retries_exceeded_no_account', detail: { retries: newRetry, error: String(ee) } });
+              try { console.warn('[warn] conditional update skipped creating ThreadsAccounts (deletion_error):', { ownerUserId, accountId, error: String(ee) }); } catch(_){ }
+              await putLog({ userId: ownerUserId, type: 'deletion', accountId, status: 'warn', message: 'deletion_max_retries_exceeded_no_account', detail: { retries: newRetry, error: String(ee) } });
             }
           }
         } catch (_) {}
-        await putLog({ userId, type: 'deletion', accountId, status: 'error', message: 'deletion_batch_failed', detail: { error: String(e) } });
+        await putLog({ userId: ownerUserId, type: 'deletion', accountId, status: 'error', message: 'deletion_batch_failed', detail: { error: String(e) } });
       }
     }
   } catch (e) {
