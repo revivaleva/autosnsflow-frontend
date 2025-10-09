@@ -156,8 +156,11 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
   // if finished, perform final cleanup: delete all scheduled posts for this account (PK + accountId)
   if (!remaining) {
     try {
+      // Final cleanup: delete all scheduled posts for this account (PK + accountId)
+      try { await putLog({ userId, accountId, action: 'deletion', status: 'info', message: 'final_cleanup_start' }); } catch(_) {}
       let lastKey: any = undefined;
       let totalDeletedRecords = 0;
+      let totalFailedDeletes = 0;
       do {
         const qAll = await ddb.send(new QueryCommand({
           TableName: TBL_SCHEDULED,
@@ -176,13 +179,13 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
             await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: `USER#${userId}` }, SK: { S: skToDel } } }));
             totalDeletedRecords++;
           } catch (e) {
-            // log and continue
+            totalFailedDeletes++;
             try { console.warn('[delete-posts-for-account] final cleanup delete failed', { userId, accountId, sk: skToDel, error: String(e) }); } catch(_) {}
           }
         }
         lastKey = (qAll as any).LastEvaluatedKey;
       } while (lastKey);
-      await putLog({ userId, accountId, action: 'deletion', status: 'info', message: 'deletion_completed', detail: { deletedCount, cleanedRecords: totalDeletedRecords } });
+      try { await putLog({ userId, accountId, action: 'deletion', status: totalFailedDeletes > 0 ? 'error' : 'info', message: 'final_cleanup_done', detail: { deletedCount, cleanedRecords: totalDeletedRecords, failedDeletes: totalFailedDeletes } }); } catch(_) {}
     } catch (e) {
       try { console.warn('[delete-posts-for-account] final cleanup failed', { userId, accountId, error: String(e) }); } catch(_) {}
     }
