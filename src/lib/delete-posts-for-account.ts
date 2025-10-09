@@ -158,8 +158,7 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
     try {
       // Final cleanup: delete all scheduled posts for this account (PK + accountId)
       try { await putLog({ userId, accountId, action: 'deletion', status: 'info', message: 'final_cleanup_start' }); } catch(_) {}
-      // Also emit CloudWatch-visible console log for immediate debugging
-      try { console.info('[info] final_cleanup_start', { userId, accountId }); } catch(_) {}
+      // final cleanup started (logged to ExecutionLogs)
       let lastKey: any = undefined;
       let totalDeletedRecords = 0;
       let totalFailedDeletes = 0;
@@ -181,12 +180,12 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
             const key = { PK: { S: `USER#${userId}` }, SK: { S: skToDel } };
             const resp = await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: key }));
             totalDeletedRecords++;
-            try { console.info('[info] final_cleanup_deleted_item', { userId, accountId, sk: skToDel, resp }); } catch(_) {}
+            // per-item deletion logged to ExecutionLogs; avoid extra console noise
             // Verify deletion via GetItem on same key
             try {
               const get = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: key }));
               const exists = Boolean(get && get.Item);
-              try { console.info('[info] final_cleanup_verify_get', { userId, accountId, sk: skToDel, exists }); } catch(_) {}
+              // verification get result logged to ExecutionLogs; avoid extra console noise
             } catch (ge) {
               try { console.warn('[warn] final_cleanup_verify_get failed', { userId, accountId, sk: skToDel, error: String(ge) }); } catch(_) {}
             }
@@ -198,8 +197,7 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
         lastKey = (qAll as any).LastEvaluatedKey;
       } while (lastKey);
       try { await putLog({ userId, accountId, action: 'deletion', status: totalFailedDeletes > 0 ? 'error' : 'warn', message: 'final_cleanup_done', detail: { deletedCount, cleanedRecords: totalDeletedRecords, failedDeletes: totalFailedDeletes } }); } catch(_) {}
-      // Also emit CloudWatch-visible final summary
-      try { console.info('[info] final_cleanup_done', { userId, accountId, deletedCount, cleanedRecords: totalDeletedRecords, failedDeletes: totalFailedDeletes }); } catch(_) {}
+      // final cleanup done (summary logged to ExecutionLogs)
     } catch (e) {
       try { console.warn('[delete-posts-for-account] final cleanup failed', { userId, accountId, error: String(e) }); } catch(_) {}
     }

@@ -12,7 +12,10 @@ export async function fetchThreadsPosts({ userId, accountId, limit = 100 }: { us
     throw new Error('missing_oauth_access_token');
   }
 
-  const url = `${BASE}/me/threads?limit=${encodeURIComponent(String(limit))}&fields=id,shortcode,timestamp`;
+  // Request additional fields to capture replies/quoted content and referenced posts
+  // We'll request a superset and then normalize the returned objects
+  const fields = ['id','shortcode','timestamp','text','reply_to','referenced_posts','reply_count','user_id','root_id'];
+  const url = `${BASE}/me/threads?limit=${encodeURIComponent(String(limit))}&fields=${encodeURIComponent(fields.join(','))}`;
   try {
     const resp = await fetch(url + `&access_token=${encodeURIComponent(token)}`);
     const text = await resp.text().catch(() => '');
@@ -24,8 +27,19 @@ export async function fetchThreadsPosts({ userId, accountId, limit = 100 }: { us
       throw new Error(`threads_fetch_failed: ${resp.status} ${JSON.stringify(data)}`);
     }
     const arr: any[] = Array.isArray(data?.data) ? data.data : [];
-    // map to minimal shape
-    return arr.map((it: any) => ({ id: it.id, shortcode: it.shortcode, timestamp: it.timestamp }));
+    // Normalize items: include available reply/quote metadata
+    return arr.map((it: any) => ({
+      id: it.id,
+      shortcode: it.shortcode,
+      timestamp: it.timestamp,
+      text: it.text || '',
+      replyTo: it.reply_to || null,
+      referencedPosts: it.referenced_posts || [],
+      replyCount: it.reply_count || 0,
+      userIdOnPlatform: it.user_id || it.owner_id || null,
+      rootId: it.root_id || null,
+      raw: it
+    }));
   } catch (e: any) {
     throw e;
   }
