@@ -86,6 +86,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         autoPostGroupId: it.autoPostGroupId,
         secondStageContent: it.secondStageContent,
         monitoredAccountId: (it as any).monitoredAccountId || (it as any).monitored_account_id || "",
+        quoteTimeStart: (it as any).quoteTimeStart || "",
+        quoteTimeEnd: (it as any).quoteTimeEnd || "",
         // clientId/clientSecret may be present under various names depending on origin
         clientId: (it as any).clientId || (it as any).client_id || ((it as any).client && (it as any).client.id) || "",
         // Do not expose clientSecret plaintext. Instead expose a boolean flag indicating presence.
