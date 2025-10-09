@@ -3100,6 +3100,8 @@ async function processDeletionQueueForUser(userId: any) {
     for (const it of items) {
       const accountId = getS(it.accountId) || '';
       const sk = getS(it.SK) || '';
+      // prefer owner userId stored on the queue item; fall back to the handler userId
+      const ownerUserId = getS(it.userId) || userId;
       const processing = it.processing?.BOOL === true;
       const last = it.last_processed_at?.N ? Number(it.last_processed_at.N) : 0;
       const currentRetryCount = it.retry_count?.N ? Number(it.retry_count.N) : 0;
@@ -3109,7 +3111,7 @@ async function processDeletionQueueForUser(userId: any) {
       const intervalSeconds = intervalHours * 3600;
       const maxRetriesVal = config.getConfigValue('DELETION_RETRY_MAX') || process.env.DELETION_RETRY_MAX || process.env.DELETION_API_RETRY_COUNT || '3';
       const maxRetries = Number(maxRetriesVal) || 3;
-      try { console.info('[info] queue item', { accountId, sk, processing, last, currentRetryCount, intervalHours, maxRetries }); } catch (_) {}
+      try { console.info('[info] queue item', { accountId, sk, ownerUserId, processing, last, currentRetryCount, intervalHours, maxRetries }); } catch (_) {}
       if (processing) continue;
       if (!(last === 0 || now - last >= intervalSeconds)) continue;
 
