@@ -67,8 +67,10 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
     try { await putLog({ userId, accountId, action: 'deletion', status: 'info', message: 'attempt_get_token' }); } catch (_) {}
     token = await getTokenForAccount({ userId, accountId });
     if (!token) {
-      await putLog({ userId, accountId, action: 'deletion', status: 'error', message: 'missing_access_token' });
-      throw new Error('missing_access_token');
+      await putLog({ userId, accountId, action: 'deletion', status: 'warn', message: 'missing_oauth_access_token' });
+      // mark account reauth_required
+      try { const tThreads = process.env.TBL_THREADS_ACCOUNTS || 'ThreadsAccounts'; await ddb.send(new UpdateItemCommand({ TableName: tThreads, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } }, UpdateExpression: 'SET #st = :s', ExpressionAttributeNames: { '#st': 'status' }, ExpressionAttributeValues: { ':s': { S: 'reauth_required' } } })); } catch(_) {}
+      throw new Error('missing_oauth_access_token');
     }
     try { await putLog({ userId, accountId, action: 'deletion', status: 'info', message: 'got_token', detail: { tokenPreview: token ? `len=${String(token.length)}` : null } }); } catch (_) {}
   } catch (e) {

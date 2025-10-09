@@ -3069,7 +3069,16 @@ async function deleteUpTo100PostsForAccount(userId: any, accountId: any, limit =
     try { console.info('[info] deleteUpTo100PostsForAccount result', { userId, accountId, res }); } catch(_) {}
     return { deletedCount: res.deletedCount, remaining: res.remaining };
   } catch (e) {
-    try { console.warn('[warn] deleteUpTo100PostsForAccount failed', { userId, accountId, error: String(e) }); } catch(_) {}
+    const msg = String((e as any)?.message || e || '');
+    try { console.warn('[warn] deleteUpTo100PostsForAccount failed', { userId, accountId, error: msg }); } catch(_) {}
+    // If error due to missing/invalid oauth token, mark account reauth_required and skip (leave queue)
+    try {
+      if (msg.includes('missing_oauth_access_token') || /threads_fetch_failed:\s*4(01|03)/.test(msg) || /threads_delete_failed:\s*4(01|03)/.test(msg) || msg.includes('oauth_refresh_failed') || msg.includes('oauth_refresh_error')) {
+        try { await ddb.send(new UpdateItemCommand({ TableName: TBL_THREADS_ACCOUNTS, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } }, UpdateExpression: 'SET #st = :s', ExpressionAttributeNames: { '#st': 'status' }, ExpressionAttributeValues: { ':s': { S: 'reauth_required' } } })); } catch (ee) { try { console.warn('[warn] mark reauth_required failed', { userId, accountId, error: String(ee) }); } catch(_) {} }
+        await putLog({ userId, accountId, action: 'deletion', status: 'warn', message: 'reauth_required_set_due_to_token', detail: { error: msg } });
+        return { deletedCount: 0, remaining: true };
+      }
+    } catch (_) {}
     throw e;
   }
 }

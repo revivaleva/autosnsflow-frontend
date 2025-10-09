@@ -7,7 +7,10 @@ export async function fetchThreadsPosts({ userId, accountId, limit = 100 }: { us
   if (!accountId) throw new Error('accountId required');
 
   const token = await getTokenForAccount({ userId, accountId });
-  if (!token) throw new Error('missing_access_token');
+  if (!token) {
+    // mark account as needing reauth and surface consistent error
+    throw new Error('missing_oauth_access_token');
+  }
 
   const url = `${BASE}/me/threads?limit=${encodeURIComponent(String(limit))}&fields=id,shortcode,timestamp`;
   try {
