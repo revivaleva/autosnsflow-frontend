@@ -42,6 +42,9 @@ export default function SNSAccountsTable() {
   const [showAppColumn, setShowAppColumn] = useState<boolean>(true);
   // 新規作成を許可するかどうかのフラグ（UserSettings.maxThreadsAccounts を考慮）
   const [canCreateAccount, setCanCreateAccount] = useState<boolean>(true);
+  // max allowed and current count for display
+  const [maxThreadsAllowed, setMaxThreadsAllowed] = useState<number | null>(null);
+  const [currentAccountsCount, setCurrentAccountsCount] = useState<number>(0);
 
   // /src/app/accounts/SNSAccountsTable.tsx
   // [FIX] GET応答が {accounts} / {items} 両方来ても動くように
@@ -86,6 +89,7 @@ export default function SNSAccountsTable() {
       });
       // Parsed accounts prepared
       setAccounts(accounts);
+      setCurrentAccountsCount(accounts.length);
     } catch (error) {
         // debug error removed
       const message = error instanceof Error ? error.message : String(error);
@@ -106,10 +110,13 @@ export default function SNSAccountsTable() {
     (async () => {
       try {
         const r = await fetch('/api/user-settings', { credentials: 'include', cache: 'no-store' });
-        if (r.ok) {
+          if (r.ok) {
           const j = await r.json();
           const s = j?.settings || j || {};
           setShowAppColumn(!!s.enableAppColumn);
+          // store maxThreadsAllowed for display
+          const max = typeof s.maxThreadsAccounts === 'number' ? s.maxThreadsAccounts : Number(s.maxThreadsAccounts || 0);
+          setMaxThreadsAllowed(isNaN(max) ? null : max);
           // 新規作成制御: maxThreadsAccounts が存在する場合は利用状況をチェック
           try {
             const max = typeof s.maxThreadsAccounts === 'number' ? s.maxThreadsAccounts : Number(s.maxThreadsAccounts || 0);
@@ -120,10 +127,11 @@ export default function SNSAccountsTable() {
                 // count current accounts
                 try {
                   const qc = await fetch('/api/threads-accounts', { credentials: 'include' });
-                  if (qc.ok) {
+                    if (qc.ok) {
                     const data = await qc.json();
                     const items = data.items || data.accounts || [];
                     const count = Array.isArray(items) ? items.length : 0;
+                    setCurrentAccountsCount(count);
                     setCanCreateAccount(count < max);
                   }
                 } catch (e) {
@@ -245,9 +253,12 @@ export default function SNSAccountsTable() {
   return (
     <div className="max-w-5xl mx-auto mt-10">
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold">
-          アカウント一覧
-        </h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-bold">アカウント一覧</h1>
+          {typeof maxThreadsAllowed === 'number' && (
+            <span className="text-sm text-gray-500">(アカウント追加可能数：{Math.max(0, (maxThreadsAllowed || 0) - currentAccountsCount)})</span>
+          )}
+        </div>
         <div className="flex gap-2">
           <button
             className="bg-blue-500 text-white rounded px-4 py-2 hover:bg-blue-600"
