@@ -2098,8 +2098,9 @@ async function runRepliesForAccount(acct: any, userId = USER_ID, settings: any =
       const parentId = externalReplyId || (getS(it.postId) || "");
 
       try {
-        const { postId: respId } = await postToThreads({
+        const { postId: respId } = await sharedPostToThreads({
           accessToken: acct.accessToken,
+          oauthAccessToken: acct.oauthAccessToken || undefined,
           text,
           userIdOnPlatform: acct.providerUserId,
           inReplyTo: parentId
@@ -2250,7 +2251,7 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
     const text2 = acct.secondStageContent;
     // note: second-stage posting attempt logged minimally
     try { console.info('[info] second-stage attempt', { account: acct.accountId, parent: firstPostId }); } catch (_) {}
-    const { postId: pid2 } = await postToThreads({ accessToken: acct.accessToken, text: text2, userIdOnPlatform: acct.providerUserId, inReplyTo: firstPostId });
+    const { postId: pid2 } = await sharedPostToThreads({ accessToken: acct.accessToken, oauthAccessToken: acct.oauthAccessToken || undefined, text: text2, userIdOnPlatform: acct.providerUserId, inReplyTo: firstPostId });
     await ddb.send(new UpdateItemCommand({
       TableName: TBL_SCHEDULED,
       Key: { PK: { S: pk }, SK: { S: sk } },
@@ -2626,11 +2627,17 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
 
         let deleteResult: any = null;
         if (deleteThreadPost) {
-          if (deleteParent && postId) {
-            deleteResult = await deleteThreadPost({ postId, accessToken: acct.accessToken });
-          }
-          if (!deleteParent && secondId) {
-            deleteResult = await deleteThreadPost({ postId: secondId, accessToken: acct.accessToken });
+          const tokenToUse = acct.oauthAccessToken || acct.accessToken || '';
+          if (!tokenToUse) {
+            // no token available, mark as error
+            deleteResult = { ok: false, status: 0, body: 'no_token_available' };
+          } else {
+            if (deleteParent && postId) {
+              deleteResult = await deleteThreadPost({ postId, accessToken: tokenToUse });
+            }
+            if (!deleteParent && secondId) {
+              deleteResult = await deleteThreadPost({ postId: secondId, accessToken: tokenToUse });
+            }
           }
         } else {
           // Could not load deleteThreadPost module; mark as skipped

@@ -190,12 +190,14 @@ export default function SNSAccountsTable() {
   // 楽観的UIトグル（対象はブール値のみ）
   const handleToggle = async (
     acc: ThreadsAccount,
-  field: "autoPost" | "autoGenerate" | "autoReply" | "autoQuote" // ←型を限定
+    field: "autoPost" | "autoGenerate" | "autoReply" | "autoQuote", // ←型を限定
+    newChecked?: boolean
   ) => {
-    if (updatingId) return; // [ADD] 同時更新ガード
-    const newVal = !acc[field];
-    const prevVal = acc[field]; // [ADD] ロールバック用に保持
-    setUpdatingId(acc.accountId); // [ADD]
+    if (updatingId) return; // 同時更新ガード
+    // ToggleSwitch may pass the new checked state; prefer that when available
+    const newVal = typeof newChecked === 'boolean' ? newChecked : !acc[field];
+    const prevVal = acc[field]; // ロールバック用
+    setUpdatingId(acc.accountId);
 
     // 楽観更新
     setAccounts((prev) =>
@@ -203,7 +205,7 @@ export default function SNSAccountsTable() {
     );
 
     try {
-      // [FIX] サーバー側の期待に合わせてトップレベルにブール値を渡す
+      // サーバー側の期待に合わせてトップレベルにブール値を渡す
       const payload: Record<string, unknown> = { accountId: acc.accountId, [field]: newVal };
       const resp = await fetch("/api/threads-accounts", {
         method: "PATCH",
@@ -215,7 +217,7 @@ export default function SNSAccountsTable() {
         throw new Error(await resp.text());
       }
       // 成功時はサーバー値で再同期（ズレ防止）
-      await loadAccounts(); // [ADD]
+      await loadAccounts();
     } catch (e) {
       console.error(e);
       // [ADD] 失敗時はロールバック
@@ -340,14 +342,14 @@ export default function SNSAccountsTable() {
                 <td className="py-2 px-3">
                 <ToggleSwitch
                   checked={!!acc.autoPost}
-                  onChange={() => handleToggle(acc, "autoPost")}
+                  onChange={(v: boolean) => handleToggle(acc, "autoPost", v)}
                   disabled={updatingId === acc.accountId || acc.status === 'deleting' || acc.status === 'reauth_required'}
                 />
               </td>
               <td className="py-2 px-3">
                 <ToggleSwitch
                   checked={!!acc.autoGenerate}
-                  onChange={() => handleToggle(acc, "autoGenerate")}
+                  onChange={(v: boolean) => handleToggle(acc, "autoGenerate", v)}
                   disabled={updatingId === acc.accountId || acc.status === 'deleting' || acc.status === 'reauth_required'}
                 />
               </td>
@@ -355,7 +357,7 @@ export default function SNSAccountsTable() {
                 <div className="flex items-center gap-2 justify-center">
                   <ToggleSwitch
                     checked={!!acc.autoReply}
-                    onChange={() => handleToggle(acc, "autoReply")}
+                    onChange={(v: boolean) => handleToggle(acc, "autoReply", v)}
                     disabled={updatingId === acc.accountId || acc.status === 'deleting' || acc.status === 'reauth_required'}
                   />
                   {!acc.autoReply && (
@@ -367,7 +369,7 @@ export default function SNSAccountsTable() {
                 <div className="flex items-center gap-2 justify-center">
                   <ToggleSwitch
                     checked={!!acc.autoQuote}
-                    onChange={() => handleToggle(acc, "autoQuote")}
+                    onChange={(v: boolean) => handleToggle(acc, "autoQuote", v)}
                     disabled={updatingId === acc.accountId || acc.status === 'deleting' || acc.status === 'reauth_required'}
                   />
                 </div>

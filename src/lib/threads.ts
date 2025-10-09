@@ -266,6 +266,102 @@ export async function postToThreads({
   return { postId, numericId };
 }
 
+export async function postQuoteToThreads({
+  accessToken,
+  oauthAccessToken,
+  text,
+  referencedPostId,
+  userIdOnPlatform,
+}: {
+  accessToken: string;
+  oauthAccessToken?: string;
+  text: string;
+  referencedPostId: string;
+  userIdOnPlatform?: string;
+}): Promise<{ postId: string; numericId?: string }> {
+  if (!referencedPostId) throw new Error('referencedPostId required');
+  // reuse create/publish flow but include referenced_posts in creation body
+  const base = process.env.THREADS_GRAPH_BASE || "https://graph.threads.net/v1.0";
+  const primaryToken = oauthAccessToken && String(oauthAccessToken).trim() ? oauthAccessToken : (accessToken || '');
+
+  const create = async () => {
+    const body: Record<string, any> = {
+      media_type: "TEXT",
+      text,
+      access_token: accessToken,
+      referenced_posts: JSON.stringify([{ id: referencedPostId, reference_type: 'QUOTE' }]),
+    };
+    if (process.env.THREADS_TEXT_APP_ID) body.text_post_app_id = process.env.THREADS_TEXT_APP_ID;
+
+    const endpoint = `${base}/me/threads`;
+    body.access_token = primaryToken;
+    let r = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    if (!r.ok) {
+      const alt = primaryToken === oauthAccessToken ? accessToken : oauthAccessToken;
+      if (alt && alt !== primaryToken) {
+        try {
+          body.access_token = alt;
+          const r2 = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+          r = r2;
+        } catch {}
+      }
+    }
+
+    if (!r.ok) {
+      const txt = await r.text().catch(() => '');
+      throw new Error(`threads_quote_create_failed: ${r.status} ${txt}`);
+    }
+    const tx = await r.text().catch(() => '');
+    let j: any = {};
+    try { j = JSON.parse(tx); } catch {}
+    const creationId = j?.id;
+    if (!creationId) throw new Error('threads_quote_create_failed: creation_id missing');
+    return creationId as string;
+  };
+
+  const publish = async (creationId: string) => {
+    const publishEndpoint = userIdOnPlatform
+      ? `${base}/${encodeURIComponent(userIdOnPlatform)}/threads_publish`
+      : `${base}/me/threads_publish`;
+    if (!creationId) throw new Error('creation_id missing');
+    const urlWithToken = `${publishEndpoint}?access_token=${encodeURIComponent(primaryToken)}`;
+    const resp = await fetch(urlWithToken, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ creation_id: creationId }) });
+    const txt = await resp.text().catch(() => '');
+    if (!resp.ok) throw new Error(`threads_quote_publish_failed: ${resp.status} ${txt}`);
+    let parsed: any = {};
+    try { parsed = JSON.parse(txt); } catch {}
+    const postId = parsed?.id || creationId;
+    return postId as string;
+  };
+
+  const creationId = await create();
+  let postId = await publish(creationId);
+
+  // try to get permalink like postToThreads
+  try {
+    const perm = await getThreadsPermalink({ accessToken: primaryToken, postId }).catch(() => null);
+    if (perm && perm.code) postId = perm.code;
+  } catch {}
+
+  // numeric id retrieval
+  let numericId: string | undefined;
+  try {
+    const detailUrl = `${base}/${encodeURIComponent(postId)}?fields=id&access_token=${encodeURIComponent(primaryToken)}`;
+    const detailRes = await fetch(detailUrl);
+    if (detailRes.ok) {
+      const detailJson = await detailRes.json();
+      numericId = detailJson?.id;
+    }
+  } catch {}
+
+  return { postId, numericId };
+}
+
 // [MOD] permalink のみを返す。取得できなければ null（DB保存もしない方針）
 export async function getThreadsPermalink({
   accessToken,

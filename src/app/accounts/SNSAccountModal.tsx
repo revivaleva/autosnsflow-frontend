@@ -109,6 +109,8 @@ export default function SNSAccountModal({
   /** ▼追加: 2段階投稿テキスト */
   const [secondStageContent, setSecondStageContent] = useState(""); // ← 追加
   const [monitoredAccountId, setMonitoredAccountId] = useState("");
+  const [quoteTimeStart, setQuoteTimeStart] = useState("");
+  const [quoteTimeEnd, setQuoteTimeEnd] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [copyModalOpen, setCopyModalOpen] = useState(false);
@@ -162,6 +164,8 @@ export default function SNSAccountModal({
       setPersonaSimple(account.personaSimple || "");
       setSecondStageContent(account.secondStageContent || ""); // ← 追加
       setMonitoredAccountId(account.monitoredAccountId || "");
+      setQuoteTimeStart(account.quoteTimeStart || "");
+      setQuoteTimeEnd(account.quoteTimeEnd || "");
     } else if (mode === "create") {
       setDisplayName("");
       setAccountId("");
@@ -176,6 +180,8 @@ export default function SNSAccountModal({
       setCharacterImage("");
       setSecondStageContent(""); // ← 追加
       setMonitoredAccountId("");
+      setQuoteTimeStart("");
+      setQuoteTimeEnd("");
     }
     setError("");
   }, [account, mode]);
@@ -508,6 +514,8 @@ export default function SNSAccountModal({
           /** ▼追加送信: 2段階投稿テキスト */
           secondStageContent: secondStageContent || "", // ← 追加
           monitoredAccountId: monitoredAccountId || "",
+          quoteTimeStart: quoteTimeStart || "",
+          quoteTimeEnd: quoteTimeEnd || "",
         }),
       });
       // [FIX] 成否判定を res.ok / data.ok で行う（APIは {ok:true} を返す）
@@ -869,6 +877,17 @@ export default function SNSAccountModal({
           value={monitoredAccountId}
           onChange={(e) => setMonitoredAccountId(e.target.value)}
         />
+
+        <div className="grid grid-cols-2 gap-4 mb-4">
+          <div>
+            <label className="block font-semibold">引用作成開始時刻（JST）</label>
+            <input type="time" className="mt-1 border rounded px-2 py-1 w-full" value={quoteTimeStart} onChange={(e) => setQuoteTimeStart(e.target.value)} />
+          </div>
+          <div>
+            <label className="block font-semibold">引用作成終了時刻（JST）</label>
+            <input type="time" className="mt-1 border rounded px-2 py-1 w-full" value={quoteTimeEnd} onChange={(e) => setQuoteTimeEnd(e.target.value)} />
+          </div>
+        </div>
 
           <div className="mt-6 flex items-center justify-between">
           <div>

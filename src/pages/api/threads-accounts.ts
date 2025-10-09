@@ -36,6 +36,8 @@ const UPDATABLE_FIELDS = new Set([
   "autoPostGroupId",
   "secondStageContent",
   "monitoredAccountId",
+  "quoteTimeStart",
+  "quoteTimeEnd",
   "accessToken",
   "clientId",
   "clientSecret",
@@ -98,7 +100,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           const out = await ddb.send(new GetItemCommand({
             TableName: TBL,
             Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${acc.accountId}` } },
-            ProjectionExpression: 'clientId, clientSecret, #st, monitoredAccountId',
+            // include autoQuote so fallback read returns the attribute when present
+            ProjectionExpression: 'clientId, clientSecret, #st, monitoredAccountId, autoQuote',
             ExpressionAttributeNames: { '#st': 'status' },
           }));
           const it: any = (out as any).Item || {};
@@ -108,6 +111,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           if (it.status && it.status.S) acc.status = it.status.S;
           // monitoredAccountId が DynamoDB にあれば反映
           if (it.monitoredAccountId && it.monitoredAccountId.S) acc.monitoredAccountId = it.monitoredAccountId.S;
+          // autoQuote が DynamoDB にあれば反映
+          if (typeof it.autoQuote !== 'undefined') {
+            // autoQuote may be stored as BOOL
+            if (typeof it.autoQuote.BOOL !== 'undefined') acc.autoQuote = !!it.autoQuote.BOOL;
+            else if (typeof it.autoQuote.S !== 'undefined') acc.autoQuote = String(it.autoQuote.S) === 'true';
+          }
           // 追加: DeletionQueue にアイテムが存在するか確認し、存在すれば強制的に deleting を返す
           try {
             const dq = await ddb.send(new QueryCommand({
