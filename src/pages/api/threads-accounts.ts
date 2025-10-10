@@ -39,6 +39,7 @@ const UPDATABLE_FIELDS = new Set([
   "quoteTimeStart",
   "quoteTimeEnd",
   "accessToken",
+  "oauthAccessToken",
   "clientId",
   "clientSecret",
 ]);
@@ -146,7 +147,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
 
     if (req.method === "POST") {
-      const { accountId, username, displayName, accessToken = "", clientId, clientSecret, monitoredAccountId, quoteTimeStart, quoteTimeEnd } = safeBody(req.body);
+      const { accountId, username, displayName, accessToken = "", oauthAccessToken = "", clientId, clientSecret, monitoredAccountId, quoteTimeStart, quoteTimeEnd } = safeBody(req.body);
       if (!accountId) return res.status(400).json({ error: "accountId required" });
       // Prevent creating the same SK for different users: check if any existing item with SK ACCOUNT#<accountId> exists for a different PK
       try {
@@ -215,6 +216,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         username: { S: username || "" },
         displayName: { S: displayName || "" },
         accessToken: { S: accessToken }, // [ADD]
+        oauthAccessToken: { S: oauthAccessToken },
         autoPost: { BOOL: false },
         autoGenerate: { BOOL: false },
         autoReply: { BOOL: false },

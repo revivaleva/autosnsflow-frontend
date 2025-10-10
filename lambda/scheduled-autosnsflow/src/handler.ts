@@ -529,6 +529,7 @@ async function getThreadsAccounts(userId = USER_ID) {
     platform: i.platform?.S || "threads",
     // Prefer oauthAccessToken when present, else fall back to accessToken
     accessToken: (i.oauthAccessToken?.S && String(i.oauthAccessToken.S).trim()) ? i.oauthAccessToken.S : (i.accessToken?.S || ""),
+    oauthAccessToken: i.oauthAccessToken?.S || "",
     providerUserId: i.providerUserId?.S || "",
     // quote feature fields
     monitoredAccountId: i.monitoredAccountId?.S || "",
@@ -1057,7 +1058,10 @@ export const handler = async (event: any = {}) => {
       } else {
         // debug removed
         const res = await runFiveMinJobForUser(userId);
-        return { statusCode: 200, body: JSON.stringify({ testInvocation: true, job: 'every-5min', userId, accountIds, result: res }) };
+        // attach any collected test-time output from threads lib so caller can inspect POST bodies
+        const testOut = (global as any).__TEST_OUTPUT__ || [];
+        try { (global as any).__TEST_OUTPUT__ = []; } catch(_) {}
+        return { statusCode: 200, body: JSON.stringify({ testInvocation: true, job: 'every-5min', userId, accountIds, result: res, testOutput: testOut }) };
       }
     } catch (e) {
       console.warn('[TEST] user-specific job failed:', String(e));
@@ -1334,7 +1338,7 @@ export const handler = async (event: any = {}) => {
 async function fetchProviderUserIdFromPlatform(acct: any) {
   const url = new URL("https://graph.threads.net/v1.0/me");
   url.searchParams.set("fields", "id,username");
-  url.searchParams.set("access_token", acct.accessToken);
+  url.searchParams.set("access_token", acct.oauthAccessToken || acct.accessToken || '');
   const resp = await fetch(url.toString());
   if (!resp.ok) throw new Error(`Threads get me error: ${resp.status} ${await resp.text()}`);
   const json = await resp.json();
@@ -1344,7 +1348,7 @@ async function fetchProviderUserIdFromPlatform(acct: any) {
 // DB更新つきの user-id 取得ラッパ
 async function ensureProviderUserId(userId: any, acct: any) {
   if (acct?.providerUserId) return acct.providerUserId;
-  if (!acct?.accessToken) return "";
+  if (!acct?.accessToken && !acct?.oauthAccessToken) return "";
 
   try {
     const pid = await fetchProviderUserIdFromPlatform(acct);
@@ -1576,16 +1580,17 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
     const alternativeId = hasAlt ? (post.numericPostId === replyApiId ? post.postId : post.numericPostId) : "";
 
     // 手動実行に合わせて、replies → conversation → 代替ID(replies) の順に試行
+    const tokenToUse = acct.oauthAccessToken || acct.accessToken || '';
     const buildRepliesUrl = (id: string) => {
       const u = new URL(`https://graph.threads.net/v1.0/${encodeURIComponent(id)}/replies`);
       u.searchParams.set("fields", "id,text,username,permalink,is_reply_owned_by_me,replied_to,root_post");
-      u.searchParams.set("access_token", acct.accessToken);
+      u.searchParams.set("access_token", tokenToUse);
       return u.toString();
     };
     const buildConversationUrl = (id: string) => {
       const u = new URL(`https://graph.threads.net/v1.0/${encodeURIComponent(id)}/conversation`);
       u.searchParams.set("fields", "id,text,username,permalink");
-      u.searchParams.set("access_token", acct.accessToken);
+      u.searchParams.set("access_token", tokenToUse);
       return u.toString();
     };
 
@@ -1610,7 +1615,7 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
         accountId: acct.accountId,
         status: "error",
         message: `Threads replies error: ${r.status} for ID ${replyApiId}`,
-        detail: { url: usedUrl.replace(acct.accessToken, "***TOKEN***"), error: errTxt.slice(0, 200) }
+        detail: { url: usedUrl.replace(tokenToUse, "***TOKEN***"), error: errTxt.slice(0, 200) }
       });
       continue;
     }
@@ -2093,7 +2098,7 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
       return { posted: 0 };
     }
   }
-  if (!acct.accessToken) {
+  if (!acct.accessToken && !acct.oauthAccessToken) {
     await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "Threadsのアクセストークン未設定" });
     return { posted: 0 };
   }
@@ -2112,7 +2117,7 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
       return { posted: 0 };
     }
       postResult = await sharedPostQuoteToThreads({
-        accessToken: acct.accessToken,
+        accessToken: acct.oauthAccessToken || acct.accessToken,
         oauthAccessToken: acct.oauthAccessToken || undefined,
         text,
         referencedPostId: String(referenced),
@@ -2120,7 +2125,7 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
       });
     } else {
       postResult = await postToThreads({
-        accessToken: acct.accessToken,
+        accessToken: acct.oauthAccessToken || acct.accessToken,
         text,
         userIdOnPlatform: acct.providerUserId,
       });
@@ -2242,7 +2247,7 @@ async function runRepliesForAccount(acct: any, userId = USER_ID, settings: any =
 
       try {
         const { postId: respId } = await sharedPostToThreads({
-          accessToken: acct.accessToken,
+          accessToken: acct.oauthAccessToken || acct.accessToken,
           oauthAccessToken: acct.oauthAccessToken || undefined,
           text,
           userIdOnPlatform: acct.providerUserId,
@@ -2394,7 +2399,7 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
     const text2 = acct.secondStageContent;
     // note: second-stage posting attempt logged minimally
     try { console.info('[info] second-stage attempt', { account: acct.accountId, parent: firstPostId }); } catch (_) {}
-    const { postId: pid2 } = await sharedPostToThreads({ accessToken: acct.accessToken, oauthAccessToken: acct.oauthAccessToken || undefined, text: text2, userIdOnPlatform: acct.providerUserId, inReplyTo: firstPostId });
+    const { postId: pid2 } = await sharedPostToThreads({ accessToken: acct.oauthAccessToken || acct.accessToken, oauthAccessToken: acct.oauthAccessToken || undefined, text: text2, userIdOnPlatform: acct.providerUserId, inReplyTo: firstPostId });
     await ddb.send(new UpdateItemCommand({
       TableName: TBL_SCHEDULED,
       Key: { PK: { S: pk }, SK: { S: sk } },
@@ -2637,8 +2642,8 @@ async function runFiveMinJobForUser(userId: any) {
   for (const acct of accounts) {
     // Log presence of accessToken for observability (never log raw token)
     try {
-      const tokenHash = acct.accessToken ? crypto.createHash("sha256").update(acct.accessToken).digest("hex").slice(0,12) : "";
-      const tokenPresent = !!acct.accessToken;
+      const tokenHash = acct.oauthAccessToken ? crypto.createHash("sha256").update(acct.oauthAccessToken).digest("hex").slice(0,12) : (acct.accessToken ? crypto.createHash("sha256").update(acct.accessToken).digest("hex").slice(0,12) : "");
+      const tokenPresent = !!(acct.oauthAccessToken || acct.accessToken);
       console.log(`[every-5min] token-check user=${userId} account=${acct.accountId} tokenPresent=${tokenPresent} tokenHash=${tokenHash}`);
       // Persist minimal observation to ExecutionLogs for easier debugging in prod
       try { await putLog({ userId, type: 'token-check', accountId: acct.accountId, status: tokenPresent ? 'ok' : 'missing', message: tokenPresent ? 'accessToken present' : 'accessToken missing', detail: { accessTokenHash: tokenHash } }); } catch (e) { console.warn('[warn] putLog(token-check) failed:', String(e)); }
@@ -2775,8 +2780,8 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
         }
 
         // トークンハッシュを作成（ログにそのままトークンを出さない）
-        const tokenHash = acct.accessToken ? crypto.createHash("sha256").update(acct.accessToken).digest("hex").slice(0, 12) : "";
-
+        const tokenHash = acct.oauthAccessToken ? crypto.createHash("sha256").update(acct.oauthAccessToken).digest("hex").slice(0, 12) : (acct.accessToken ? crypto.createHash("sha256").update(acct.accessToken).digest("hex").slice(0, 12) : "");
+        
         let deleteResult: any = null;
         if (deleteThreadPost) {
           const tokenToUse = acct.oauthAccessToken || acct.accessToken || '';

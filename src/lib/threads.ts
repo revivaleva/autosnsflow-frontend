@@ -174,6 +174,11 @@ export async function postQuoteToThreads({
       const sanitized = JSON.parse(JSON.stringify(body));
       if (sanitized.access_token) delete sanitized.access_token;
       console.info('[THREADS QUOTE CREATE REQ]', { endpoint: url.replace(primaryToken, '***'), body: sanitized });
+      try {
+        // collect test-time output when running in test invocation mode
+        (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+        (global as any).__TEST_OUTPUT__.push({ tag: 'THREADS_QUOTE_CREATE_REQ', endpoint: String(endpoint).replace(primaryToken, '***'), body: sanitized });
+      } catch (_) {}
     } catch (_) {}
     const r = await fetch(url, {
       method: "POST",
@@ -183,6 +188,10 @@ export async function postQuoteToThreads({
     const tx = await r.text().catch(() => '');
     // Log response
     try { console.info('[THREADS QUOTE CREATE RESP]', { status: r.status, raw: tx.slice(0,2000) }); } catch (_) {}
+    try {
+      (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+      (global as any).__TEST_OUTPUT__.push({ tag: 'THREADS_QUOTE_CREATE_RESP', status: r.status, raw: String(tx).slice(0,2000) });
+    } catch (_) {}
     if (!r.ok) throw new Error(`threads_quote_create_failed: ${r.status} ${tx}`);
     let j: any = {};
     try { j = JSON.parse(tx); } catch {}
@@ -201,9 +210,17 @@ export async function postQuoteToThreads({
     const urlWithToken = `${publishEndpoint}?access_token=${encodeURIComponent(primaryToken)}`;
     // Log publish request
     try { console.info('[THREADS QUOTE PUBLISH REQ]', { endpoint: urlWithToken.replace(primaryToken, '***'), body: { creation_id: creationId } }); } catch (_) {}
+    try {
+      (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+      (global as any).__TEST_OUTPUT__.push({ tag: 'THREADS_QUOTE_PUBLISH_REQ', endpoint: String(publishEndpoint).replace(primaryToken, '***'), body: { creation_id: creationId } });
+    } catch (_) {}
     const resp = await fetch(urlWithToken, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ creation_id: creationId }) });
     const txt = await resp.text().catch(() => '');
     try { console.info('[THREADS QUOTE PUBLISH RESP]', { status: resp.status, raw: txt.slice(0,2000) }); } catch (_) {}
+    try {
+      (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+      (global as any).__TEST_OUTPUT__.push({ tag: 'THREADS_QUOTE_PUBLISH_RESP', status: resp.status, raw: String(txt).slice(0,2000) });
+    } catch (_) {}
     if (!resp.ok) throw new Error(`threads_quote_publish_failed: ${resp.status} ${txt}`);
     let parsed: any = {};
     try { parsed = JSON.parse(txt); } catch {}
