@@ -289,7 +289,8 @@ export async function postQuoteToThreads({
       media_type: "TEXT",
       text,
       access_token: accessToken,
-      referenced_posts: JSON.stringify([{ id: referencedPostId, reference_type: 'QUOTE' }]),
+      // referenced_posts must be sent as an array/object, not a JSON string
+      referenced_posts: [{ id: referencedPostId, reference_type: 'QUOTE' }],
     };
     if (process.env.THREADS_TEXT_APP_ID) body.text_post_app_id = process.env.THREADS_TEXT_APP_ID;
 
