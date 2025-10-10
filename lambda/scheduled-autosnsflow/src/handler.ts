@@ -1043,7 +1043,8 @@ export const handler = async (event: any = {}) => {
       const accounts = await getThreadsAccounts(userId);
       const accountIds = (accounts || []).map((a: any) => a.accountId).filter(Boolean);
       if (job === 'hourly') {
-        // debug removed
+        // enable hourly quote flows for test invocation only
+        try { (global as any).__TEST_ALLOW_HOURLY_QUOTES__ = !!event?.testInvocation; } catch(_) {}
         const res = await runHourlyJobForUser(userId);
         // For test mode, also process deletion queue for this user so tests exercise deletion flow
         let dqRes: any = { deletedCount: 0 };
@@ -2372,12 +2373,15 @@ async function runHourlyJobForUser(userId: any) {
   for (const acct of accounts) {
     // First: try creating quote reservations for accounts that opted-in
     try {
-      /* QUOTE RESERVATION CREATION DISABLED FOR ISOLATED TESTING
-      const qres = await createQuoteReservationForAccount(userId, acct);
-      if (qres && qres.created) createdCount += qres.created;
-      if (qres && qres.skipped) skippedAccounts++;
-      */
-      try { console.info('[test] createQuoteReservationForAccount is commented out for isolated quote testing', { userId, account: acct.accountId }); } catch(_) {}
+      // For isolated testing, allow quote reservation creation only when test flag enabled
+      const allowHourlyQuotes = (global as any).__TEST_ALLOW_HOURLY_QUOTES__ === true;
+      if (allowHourlyQuotes) {
+        const qres = await createQuoteReservationForAccount(userId, acct);
+        if (qres && qres.created) createdCount += qres.created;
+        if (qres && qres.skipped) skippedAccounts++;
+      } else {
+        try { console.info('[test] createQuoteReservationForAccount skipped (test flag not set)', { userId, account: acct.accountId }); } catch(_) {}
+      }
     } catch (e) {
       console.warn('[warn] createQuoteReservationForAccount failed:', String(e));
     }
@@ -2400,11 +2404,14 @@ async function runHourlyJobForUser(userId: any) {
 
     // 短期対応: アカウントごとに少数ずつ本文生成を行う（ロック付き・limit=1）
     try {
-      /* QUOTE CONTENT GENERATION DISABLED FOR ISOLATED TESTING
-      const genRes = await processPendingGenerationsForAccount(userId, acct, 1);
-      if (genRes && genRes.generated) createdCount += genRes.generated;
-      */
-      try { console.info('[test] processPendingGenerationsForAccount is commented out for isolated quote testing', { userId, account: acct.accountId }); } catch(_) {}
+      // Allow quote content generation in hourly test mode only
+      const allowHourlyQuotes = (global as any).__TEST_ALLOW_HOURLY_QUOTES__ === true;
+      if (allowHourlyQuotes) {
+        const genRes = await processPendingGenerationsForAccount(userId, acct, 1);
+        if (genRes && genRes.generated) createdCount += genRes.generated;
+      } else {
+        try { console.info('[test] processPendingGenerationsForAccount skipped (test flag not set)', { userId, account: acct.accountId }); } catch(_) {}
+      }
     } catch (e) {
       console.warn('[warn] processPendingGenerationsForAccount failed:', e);
     }
