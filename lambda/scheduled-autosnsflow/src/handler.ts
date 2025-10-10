@@ -944,8 +944,10 @@ ${themeStr}
           TableName: TBL_SCHEDULED,
           Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${scheduledPostId}` } },
           // 保存時に本文が入ったため needsContentAccount を削除し、pendingForAutoPostAccount をセット
-          UpdateExpression: "SET content = :c, pendingForAutoPostAccount = :acc REMOVE needsContentAccount",
-          ExpressionAttributeValues: { ":c": { S: cleanText }, ":acc": { S: acct.accountId } },
+          // さらに status を 'scheduled' に更新して自動投稿ワーカーが対象にできるようにする
+          UpdateExpression: "SET content = :c, pendingForAutoPostAccount = :acc, #st = :scheduled REMOVE needsContentAccount",
+          ExpressionAttributeNames: { "#st": "status" },
+          ExpressionAttributeValues: { ":c": { S: cleanText }, ":acc": { S: acct.accountId }, ":scheduled": { S: "scheduled" } },
         }));
         try { /* debug removed */ } catch(_) {}
         await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "ok", message: "本文生成を完了" });
