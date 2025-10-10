@@ -841,7 +841,12 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
     // 編集モーダルと共通化したプロンプト構築
     let prompt: string;
     // Prefer user settings quotePrompt, else AppConfig QUOTE_PROMPT, else masterPrompt
-    let policyPrompt = (settings.quotePrompt && String(settings.quotePrompt).trim()) || "";
+    let policyPrompt = "";
+    try {
+      if (settings && String(settings.quotePrompt || "").trim()) {
+        policyPrompt = String(settings.quotePrompt).trim();
+      }
+    } catch (_) { policyPrompt = ""; }
     try {
       if (!policyPrompt) {
         await config.loadConfig();
@@ -849,8 +854,8 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
       }
     } catch (_) {}
     if (!policyPrompt) policyPrompt = String(settings.masterPrompt || "").trim();
-      
-      // ペルソナ情報を取得（簡易版）
+
+    // ペルソナ情報を取得（簡易版）
       let personaText = "";
       if (acct.accountId) {
         try {
@@ -886,18 +891,27 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
       
       // If this scheduled post is a quote, include the source post text and use quotePrompt if present
       let quoteIntro = "";
+      let isQuoteType = false;
+      let sourceTextForPrompt = String(themeStr || "");
       try {
         const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${scheduledPostId}` } }, ProjectionExpression: 'sourcePostText, type' }));
         const st = full.Item?.sourcePostText?.S || '';
         const t = full.Item?.type?.S || '';
-        if (t === 'quote' && st) {
-          quoteIntro = `【引用元投稿】\n${st}\n\n`;
+        if (t === 'quote') {
+          isQuoteType = true;
+          if (st) {
+            quoteIntro = `【引用元投稿】\n${st}\n\n`;
+            // use source post text as the theme for quote generation
+            sourceTextForPrompt = st;
+          }
         }
       } catch (e) { /* ignore */ }
 
       const quoteInstruction = `【指示】\n上記の引用元投稿に自然に反応する形式で、共感や肯定、専門性を含んだ引用投稿文を作成してください。200〜400文字以内。ハッシュタグ禁止。改行は最大1回。`;
 
-      prompt = `\n${policyPrompt ? `【運用方針】\n${policyPrompt}\n` : ""}\n${personaText ? `【アカウントのペルソナ】\n${personaText}\n` : "【アカウントのペルソナ】\n(未設定)\n"}\n【投稿テーマ】\n${themeStr}\n\n${quoteIntro}${quoteInstruction}`.trim();
+      // Build prompt: include policy, persona, and theme (for quotes theme is the source post text)
+      prompt = `\n${policyPrompt ? `【運用方針】\n${policyPrompt}\n` : ""}\n${personaText ? `【アカウントのペルソナ】\n${personaText}\n` : "【アカウントのペルソナ】\n(未設定)\n"}\n【投稿テーマ】\n${String(sourceTextForPrompt)}\n\n${quoteIntro}${quoteInstruction}`.trim();
+      try { await putLog({ userId, type: 'auto-post', accountId: acct.accountId, targetId: scheduledPostId, status: 'info', message: 'prompt_constructed', detail: { isQuoteType, policyPromptUsed: Boolean(policyPrompt), themeSample: String(sourceTextForPrompt).slice(0,200) } }); } catch(_) {}
 
     // OpenAI 呼び出しは共通ヘルパーを使い、内部でリトライ／フォールバックする
     let text: any = undefined;
