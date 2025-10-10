@@ -799,7 +799,9 @@ async function createQuoteReservationForAccount(userId: any, acct: any) {
       isDeleted: { BOOL: false },
       createdAt: { N: String(nowSecVal) },
       pendingForAutoPostAccount: { S: acct.accountId },
-      sourcePostId: { S: sourcePostId },
+      // store numeric ID for API use and shortcode for UI
+      numericPostId: { S: String(p.id || '') },
+      sourcePostId: { S: String(p.shortcode || p.id || '') },
       sourcePostShortcode: { S: sourceShort },
       type: { S: 'quote' },
     };
