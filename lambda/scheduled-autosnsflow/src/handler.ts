@@ -718,6 +718,102 @@ async function createScheduledPost(userId: any, { acct, group, type, whenJst, ov
   return { id, groupTypeStr, themeStr };
 }
 
+// Create a quote reservation for an account if opted-in and monitored account has a new post
+async function createQuoteReservationForAccount(userId: any, acct: any) {
+  try {
+    if (!acct || !acct.autoQuote) return { created: 0, skipped: true };
+    const monitored = acct.monitoredAccountId || "";
+    if (!monitored) return { created: 0, skipped: true };
+
+    // time window check (JST)
+    try {
+      const qs = acct.quoteTimeStart || "";
+      const qe = acct.quoteTimeEnd || "";
+      if (qs || qe) {
+        const now = new Date();
+        const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+        const hhmm = (d: Date) => `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+        const nowHM = hhmm(jst);
+        const s = qs || '00:00';
+        const e = qe || '24:00';
+        const inRange = s <= e ? (nowHM >= s && nowHM <= e) : (nowHM >= s || nowHM <= e);
+        if (!inRange) return { created: 0, skipped: true };
+      }
+    } catch (e) {
+      // ignore time parse errors
+    }
+
+    // fetch monitored account tokens
+    const mon = await ddb.send(new GetItemCommand({ TableName: TBL_THREADS, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${monitored}` } }, ProjectionExpression: 'oauthAccessToken, accessToken' }));
+    const token = mon.Item?.oauthAccessToken?.S || mon.Item?.accessToken?.S || '';
+    if (!token) {
+      await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'skip', message: '監視対象のトークンがないためスキップ' });
+      return { created: 0, skipped: true };
+    }
+
+    // fetch latest post from monitored account
+    const url = new URL('https://graph.threads.net/v1.0/me/threads');
+    url.searchParams.set('limit', '1');
+    url.searchParams.set('fields', 'id,shortcode,timestamp,text');
+    url.searchParams.set('access_token', token);
+    const r = await fetch(url.toString());
+    if (!r.ok) {
+      await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'error', message: '監視対象投稿取得失敗', detail: { status: r.status } });
+      return { created: 0, skipped: true };
+    }
+    const j = await r.json().catch(() => ({}));
+    const posts = Array.isArray(j?.data) ? j.data : [];
+    if (!posts.length) return { created: 0, skipped: true };
+    const p = posts[0];
+    const sourcePostId = String(p.id || p.shortcode || '');
+    const sourceShort = String(p.shortcode || '');
+    if (!sourcePostId) return { created: 0, skipped: true };
+
+    // duplicate check
+    const existsQ = await ddb.send(new QueryCommand({
+      TableName: TBL_SCHEDULED,
+      KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
+      FilterExpression: 'sourcePostId = :sp',
+      ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'SCHEDULEDPOST#' }, ':sp': { S: sourcePostId } },
+      Limit: 1,
+    }));
+    if ((existsQ as any).Items && (existsQ as any).Items.length > 0) return { created: 0, skipped: true };
+
+    // create reservation
+    const id = `${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+    const nowSecVal = Math.floor(Date.now() / 1000);
+    const item: any = {
+      PK: { S: `USER#${userId}` },
+      SK: { S: `SCHEDULEDPOST#${id}` },
+      scheduledPostId: { S: id },
+      accountId: { S: acct.accountId },
+      accountName: { S: acct.displayName || '' },
+      content: { S: '' },
+      theme: { S: '引用投稿' },
+      scheduledAt: { N: String(nowSecVal) },
+      postedAt: { N: '0' },
+      status: { S: 'pending_quote' },
+      needsContentAccount: { S: acct.accountId },
+      nextGenerateAt: { N: String(nowSecVal) },
+      generateAttempts: { N: '0' },
+      isDeleted: { BOOL: false },
+      createdAt: { N: String(nowSecVal) },
+      pendingForAutoPostAccount: { S: acct.accountId },
+      sourcePostId: { S: sourcePostId },
+      sourcePostShortcode: { S: sourceShort },
+      type: { S: 'quote' },
+    };
+
+    await ddb.send(new PutItemCommand({ TableName: TBL_SCHEDULED, Item: item }));
+    await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'ok', message: '引用予約を作成', detail: { scheduledPostId: id, sourcePostId } });
+    return { created: 1, skipped: false };
+  } catch (e) {
+    console.warn('[warn] createQuoteReservationForAccount failed', String(e));
+    try { await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'error', message: '引用予約作成中に例外', detail: { error: String(e) } }); } catch (_) {}
+    return { created: 0, skipped: true };
+  }
+}
+
 async function generateAndAttachContent(userId: any, acct: any, scheduledPostId: any, themeStr: any, settings: any) {
   try {
     // Use AppConfig as the authoritative source for OpenAI API key per request.
@@ -2327,6 +2423,15 @@ async function runHourlyJobForUser(userId: any) {
   let skippedAccounts = 0;
 
   for (const acct of accounts) {
+    // First: try creating quote reservations for accounts that opted-in
+    try {
+      const qres = await createQuoteReservationForAccount(userId, acct);
+      if (qres && qres.created) createdCount += qres.created;
+      if (qres && qres.skipped) skippedAccounts++;
+    } catch (e) {
+      console.warn('[warn] createQuoteReservationForAccount failed:', String(e));
+    }
+
     const c = await ensureNextDayAutoPosts(userId, acct);
     createdCount += c.created || 0;
     if (c.skipped) skippedAccounts++;
