@@ -889,10 +889,10 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
         console.warn("[warn] accountIdが未設定のためペルソナ取得をスキップ");
       }
       
-      // If this scheduled post is a quote, include the source post text and use quotePrompt if present
+      // If this scheduled post is a quote, require DB-stored sourcePostText and use it as the single source
       let quoteIntro = "";
       let isQuoteType = false;
-      let sourceTextForPrompt = String(themeStr || "");
+      let sourceTextForPrompt = "";
       try {
         const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${scheduledPostId}` } }, ProjectionExpression: 'sourcePostText, type' }));
         const st = full.Item?.sourcePostText?.S || '';
@@ -903,13 +903,18 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
         } catch (_) {}
         if (t === 'quote') {
           isQuoteType = true;
-          if (st) {
-            quoteIntro = `【引用元投稿】\n${st}\n\n`;
-            // use source post text as the theme for quote generation
-            sourceTextForPrompt = st;
+          // enforce presence of sourcePostText
+          if (!st || !String(st).trim()) {
+            try { await putLog({ userId, type: 'auto-post', accountId: acct.accountId, targetId: scheduledPostId, status: 'error', message: '引用元投稿テキストが存在しないため生成を中止' }); } catch (_) {}
+            return; // stop generation
           }
+          quoteIntro = `【引用元投稿】\n${st}\n\n`;
+          sourceTextForPrompt = st;
         }
-      } catch (e) { /* ignore */ }
+      } catch (e) {
+        try { await putLog({ userId, type: 'auto-post', accountId: acct.accountId, targetId: scheduledPostId, status: 'error', message: '引用元投稿取得エラー', detail: { error: String(e) } }); } catch (_) {}
+        return;
+      }
 
       // quoteInstruction: always use a concise instruction block here.
       // The detailed policyPrompt (user/AppConfig/master) is already included above and
