@@ -920,6 +920,24 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
       // OpenAI call start (minimal logging)
       try { /* debug removed */ } catch (_) {}
 
+      // Prepare OpenAI request payload (mask API key when logging)
+      const openAiRequestPayload: any = {
+        apiKey: settings.openaiApiKey,
+        model: settings.model || DEFAULT_OPENAI_MODEL,
+        temperature: settings.openAiTemperature ?? DEFAULT_OPENAI_TEMP,
+        max_tokens: settings.openAiMaxTokens ?? DEFAULT_OPENAI_MAXTOKENS,
+        prompt,
+      };
+      try {
+        // Log sanitized request for debugging and attach to test output when running tests
+        const sanitized = Object.assign({}, openAiRequestPayload, { apiKey: openAiRequestPayload.apiKey ? '***REDACTED***' : '' });
+        try { console.info('[QUOTE OPENAI REQ]', { model: sanitized.model, temperature: sanitized.temperature, max_tokens: sanitized.max_tokens, promptSnippet: String(sanitized.prompt).slice(0,1200) }); } catch (_) {}
+        try {
+          (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+          (global as any).__TEST_OUTPUT__.push({ tag: 'QUOTE_OPENAI_REQ', payload: { model: sanitized.model, temperature: sanitized.temperature, max_tokens: sanitized.max_tokens, prompt: String(sanitized.prompt).slice(0,2000) } });
+        } catch (_) {}
+      } catch (_) {}
+
       const openAiRes = await callOpenAIText({
         apiKey: settings.openaiApiKey,
         model: settings.model || DEFAULT_OPENAI_MODEL,
