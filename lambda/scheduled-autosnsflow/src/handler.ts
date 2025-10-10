@@ -1322,7 +1322,8 @@ export const handler = async (event: any = {}) => {
 async function fetchProviderUserIdFromPlatform(acct: any) {
   const url = new URL("https://graph.threads.net/v1.0/me");
   url.searchParams.set("fields", "id,username");
-  url.searchParams.set("access_token", acct.oauthAccessToken || acct.accessToken || '');
+  // Use oauthAccessToken exclusively when calling platform endpoints
+  url.searchParams.set("access_token", acct.oauthAccessToken || '');
   const resp = await fetch(url.toString());
   if (!resp.ok) throw new Error(`Threads get me error: ${resp.status} ${await resp.text()}`);
   const json = await resp.json();
@@ -1335,7 +1336,8 @@ async function fetchProviderUserIdFromPlatform(acct: any) {
 // DB更新つきの user-id 取得ラッパ
 async function ensureProviderUserId(userId: any, acct: any) {
   if (acct?.providerUserId) return acct.providerUserId;
-  if (!acct?.accessToken && !acct?.oauthAccessToken) return "";
+  // Require oauthAccessToken only (do not accept legacy accessToken fallback)
+  if (!acct?.oauthAccessToken) return "";
 
   try {
     const pid = await fetchProviderUserIdFromPlatform(acct);
@@ -2085,8 +2087,9 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
       return { posted: 0 };
     }
   }
-  if (!acct.accessToken && !acct.oauthAccessToken) {
-    await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "Threadsのアクセストークン未設定" });
+  // Require oauthAccessToken; do not fallback to legacy accessToken
+  if (!acct.oauthAccessToken) {
+    await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "ThreadsのoauthAccessToken未設定（accessTokenは使用不可）" });
     return { posted: 0 };
   }
 
@@ -2110,14 +2113,14 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
       }
       // Always attempt quote posting for quote-type items (no test gating)
       postResult = await sharedPostQuoteToThreads({
-        accessToken: acct.oauthAccessToken || acct.accessToken,
-        oauthAccessToken: acct.oauthAccessToken || undefined,
+        accessToken: acct.oauthAccessToken,
+        oauthAccessToken: acct.oauthAccessToken,
         text,
         referencedPostId: String(referenced),
         userIdOnPlatform: acct.providerUserId,
       });
     } else {
-      postResult = await postToThreads({ accessToken: acct.oauthAccessToken || acct.accessToken, text, userIdOnPlatform: acct.providerUserId });
+      postResult = await postToThreads({ accessToken: acct.oauthAccessToken, oauthAccessToken: acct.oauthAccessToken, text, userIdOnPlatform: acct.providerUserId });
     }
 
     let updateExpr = "SET #st = :posted, postedAt = :ts, postId = :pid";
