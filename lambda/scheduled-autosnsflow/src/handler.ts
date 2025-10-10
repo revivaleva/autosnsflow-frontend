@@ -2096,7 +2096,8 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
     const isQuote = (cand as any).type === 'quote';
     if (isQuote) {
       // choose referenced id (numeric preferred then shortcode)
-      const referenced = (cand as any).sourcePostId || (cand as any).sourcePostShortcode || (cand as any).numericPostId || "";
+    // Prefer numericPostId for API reference; fallback to sourcePostId/sourcePostShortcode
+    const referenced = (cand as any).numericPostId || (cand as any).sourcePostId || (cand as any).sourcePostShortcode || "";
       if (!referenced) {
         await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "引用元が見つからないため引用投稿をスキップ" });
         return { posted: 0 };

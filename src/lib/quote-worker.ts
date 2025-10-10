@@ -57,15 +57,16 @@ export async function runHourlyQuoteCreation(userId: string) {
       const posts = await fetchThreadsPosts({ userId, accountId: monitored, limit: 1 });
       if (!Array.isArray(posts) || posts.length === 0) continue;
       const p = posts[0];
-      const sourcePostId = String(p.id || p.shortcode || '');
-      if (!sourcePostId) continue;
+      const numericId = p.id ? String(p.id) : '';
+      const shortcode = p.shortcode ? String(p.shortcode) : '';
+      if (!numericId && !shortcode) continue;
 
-      // Check if a scheduled post already references this sourcePostId
+      // Check if a scheduled post already references this source (by numeric id or shortcode)
       const existsQ = await ddb.send(new QueryCommand({
         TableName: TBL_SCHEDULED,
         KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
-        FilterExpression: 'sourcePostId = :sp',
-        ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'SCHEDULEDPOST#' }, ':sp': { S: sourcePostId } },
+        FilterExpression: 'sourcePostId = :sp OR sourcePostShortcode = :ss OR numericPostId = :np',
+        ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'SCHEDULEDPOST#' }, ':sp': { S: shortcode || numericId }, ':ss': { S: shortcode }, ':np': { S: numericId } },
         Limit: 1,
       }));
       const existItems = (existsQ as any).Items || [];
@@ -95,7 +96,9 @@ export async function runHourlyQuoteCreation(userId: string) {
         // marker for GSI (if needed)
         pendingForAutoPostAccount: { S: accountId },
         // quote metadata
-        sourcePostId: { S: sourcePostId },
+        // store both numeric id (preferred for API) and shortcode (for UI)
+        numericPostId: { S: String(p.id || '') },
+        sourcePostId: { S: String(p.shortcode || p.id || '') },
         sourcePostShortcode: { S: String(p.shortcode || '') },
         type: { S: 'quote' },
       };
