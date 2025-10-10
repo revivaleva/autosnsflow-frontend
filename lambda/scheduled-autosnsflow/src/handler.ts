@@ -897,6 +897,10 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
         const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${scheduledPostId}` } }, ProjectionExpression: 'sourcePostText, type' }));
         const st = full.Item?.sourcePostText?.S || '';
         const t = full.Item?.type?.S || '';
+        try {
+          (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+          (global as any).__TEST_OUTPUT__.push({ tag: 'QUOTE_PROMPT_DEBUG', payload: { scheduledPostId, stPresent: Boolean(st), stSample: String(st).slice(0,600), type: t, themeSample: String(themeStr).slice(0,200) } });
+        } catch (_) {}
         if (t === 'quote') {
           isQuoteType = true;
           if (st) {
