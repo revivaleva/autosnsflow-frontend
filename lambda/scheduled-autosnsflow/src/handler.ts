@@ -1077,49 +1077,14 @@ export const handler = async (event: any = {}) => {
   let userSucceeded = 0;
 
   if (job === "hourly") {
-    const userIds = await getActiveUserIds();
-    const totals = { createdCount: 0, fetchedReplies: 0, replyDrafts: 0, skippedAccounts: 0, deletedCount: 0 };
-
-    for (const uid of userIds) {
-      try {
-        const r = await runHourlyJobForUser(uid);
-        // 合算: runHourlyJobForUser が返す集計を totals に反映
-        totals.createdCount += Number(r?.createdCount || 0);
-        totals.fetchedReplies += Number(r?.fetchedReplies || 0);
-        totals.replyDrafts += Number(r?.replyDrafts || 0);
-        totals.skippedAccounts += Number(r?.skippedAccounts || 0);
-        userSucceeded++;
-      } catch (e) {
-        console.warn("hourly error for", uid, e);
-        await putLog({ userId: uid, type: "job", status: "error", message: "hourly job failed", detail: { error: String(e) } });
-        await postDiscordLog({
-          userId: uid,
-          isError: true,
-          content: `**[ERROR hourly] user=${uid}**\n${String(e).slice(0, 800)}`
-        });
-      }
-      // After processing hourly tasks for the user, also run deletion queue processing for this user
-      try {
-        const dqRes = await processDeletionQueueForUser(uid);
-        totals.deletedCount += Number(dqRes?.deletedCount || 0);
-      } catch (e) {
-        console.warn('[warn] processDeletionQueueForUser (hourly) failed for', uid, String(e));
-      }
-    }
-
-    const finishedAt = Date.now();
-    await postDiscordMaster(
-      formatMasterMessage({
-        job: "hourly",
-        startedAt,
-        finishedAt,
-        userTotal: userIds.length,
-        userSucceeded,
-        totals
-      })
-    );
-
-    return { statusCode: 200, body: JSON.stringify({ processedUsers: userIds.length, userSucceeded, totals }) };
+    /*
+    Hourly global processing is temporarily disabled for isolated quote testing.
+    When running in scheduled environment, this block would iterate all users and run
+    runHourlyJobForUser for each. For testing we skip that to avoid interference; tests
+    should invoke the handler with event.userId to run only the specified user's flow.
+    */
+    try { console.info('[info] hourly global processing is commented out for isolated testing'); } catch(_) {}
+    return { statusCode: 200, body: JSON.stringify({ processedUsers: 0, userSucceeded: 0, totals: { createdCount: 0, fetchedReplies: 0, replyDrafts: 0, skippedAccounts: 0, deletedCount: 0 } }) };
   }
 
   // daily prune: delete scheduled posts older than 7 days
@@ -1293,42 +1258,10 @@ export const handler = async (event: any = {}) => {
   }
 
   // every-5min（デフォルト）
-  const userIds = await getActiveUserIds();
-  const totals = { totalAuto: 0, totalReply: 0, totalTwo: 0, rateSkipped: 0 };
-
-  for (const uid of userIds) {
-    try {
-      const r = await runFiveMinJobForUser(uid);
-      // 合算: runFiveMinJobForUser の結果を totals に反映
-      totals.totalAuto += Number(r?.totalAuto || 0);
-      totals.totalReply += Number(r?.totalReply || 0);
-      totals.totalTwo += Number(r?.totalTwo || 0);
-      totals.rateSkipped += Number(r?.rateSkipped || 0);
-      userSucceeded++;
-    } catch (e) {
-      console.warn("5min error for", uid, e);
-      await putLog({ userId: uid, type: "job", status: "error", message: "every-5min job failed", detail: { error: String(e) } });
-      await postDiscordLog({
-        userId: uid,
-        isError: true,
-        content: `**[ERROR every-5min] user=${uid}**\n${String(e).slice(0, 800)}`
-      });
-    }
-  }
-
-  const finishedAt = Date.now();
-  await postDiscordMaster(
-    formatMasterMessage({
-      job: "every-5min",
-      startedAt,
-      finishedAt,
-      userTotal: userIds.length,
-      userSucceeded,
-      totals
-    })
-  );
-
-  return { statusCode: 200, body: JSON.stringify({ processedUsers: userIds.length, userSucceeded, totals }) };
+  // Global every-5min scheduled processing is temporarily disabled for isolated quote testing.
+  // Scheduled runs should not execute quote flows while we run targeted test events.
+  try { console.info('[info] every-5min global processing is commented out for isolated testing'); } catch(_) {}
+  return { statusCode: 200, body: JSON.stringify({ processedUsers: 0, userSucceeded: 0, totals: { totalAuto: 0, totalReply: 0, totalTwo: 0, rateSkipped: 0 } }) };
 };
 
 // (Removed) test-only helpers `getAccountById` and `createOneOffForTest`.
