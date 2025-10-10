@@ -21,7 +21,7 @@ import {
   DeleteItemCommand,
 } from "@aws-sdk/client-dynamodb";
 import config from '@/lib/config';
-import { postToThreads as sharedPostToThreads } from '@/lib/threads';
+import { postToThreads as sharedPostToThreads, postQuoteToThreads as sharedPostQuoteToThreads } from '@/lib/threads';
 import crypto from "crypto";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
 
@@ -503,8 +503,9 @@ async function getThreadsAccounts(userId = USER_ID) {
           ":pfx": { S: "ACCOUNT#" },
         },
         // Include oauthAccessToken in projection and prefer it when mapping below.
+        // Also include quote-related fields so hourly job can create quote reservations
         ProjectionExpression:
-          "SK, displayName, autoPost, autoReply, secondStageContent, rateLimitUntil, autoGenerate, autoPostGroupId, #st, platform, accessToken, oauthAccessToken, providerUserId",
+          "SK, displayName, autoPost, autoReply, secondStageContent, rateLimitUntil, autoGenerate, autoPostGroupId, #st, platform, accessToken, oauthAccessToken, providerUserId, monitoredAccountId, autoQuote, quoteTimeStart, quoteTimeEnd",
         ExpressionAttributeNames: { "#st": "status" },
         ExclusiveStartKey: lastKey,
       })
@@ -527,6 +528,11 @@ async function getThreadsAccounts(userId = USER_ID) {
     // Prefer oauthAccessToken when present, else fall back to accessToken
     accessToken: (i.oauthAccessToken?.S && String(i.oauthAccessToken.S).trim()) ? i.oauthAccessToken.S : (i.accessToken?.S || ""),
     providerUserId: i.providerUserId?.S || "",
+    // quote feature fields
+    monitoredAccountId: i.monitoredAccountId?.S || "",
+    autoQuote: i.autoQuote?.BOOL === true,
+    quoteTimeStart: i.quoteTimeStart?.S || "",
+    quoteTimeEnd: i.quoteTimeEnd?.S || "",
   }));
 }
 
@@ -714,8 +720,18 @@ async function createScheduledPost(userId: any, { acct, group, type, whenJst, ov
 
 async function generateAndAttachContent(userId: any, acct: any, scheduledPostId: any, themeStr: any, settings: any) {
   try {
+    // Use AppConfig as the authoritative source for OpenAI API key per request.
+    try {
+      await config.loadConfig();
+      const cfgKey = config.getConfigValue('OPENAI_API_KEY');
+      if (cfgKey) settings.openaiApiKey = cfgKey;
+    } catch (e) {
+      // If AppConfig cannot be loaded, record error and skip generation
+      await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "error", message: "AppConfigの読み込み失敗", detail: { error: String(e) } });
+      return;
+    }
     if (!settings?.openaiApiKey) {
-      await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "skip", message: "OpenAIキー未設定のため本文生成をスキップ" });
+      await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "skip", message: "AppConfig に OPENAI_API_KEY が設定されていないため本文生成をスキップ" });
       return;
     }
     
@@ -1977,11 +1993,30 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
 
   // 実投稿 → 成功時のみ posted に更新（冪等）
   try {
-    const postResult = await postToThreads({
-      accessToken: acct.accessToken,
-      text,
-      userIdOnPlatform: acct.providerUserId,
-    });
+    // If this scheduled item is a quote (type === 'quote'), use the quote post flow
+    let postResult: { postId: string; numericId?: string };
+    const isQuote = (cand as any).type === 'quote';
+    if (isQuote) {
+      // choose referenced id (numeric preferred then shortcode)
+      const referenced = (cand as any).sourcePostId || (cand as any).sourcePostShortcode || (cand as any).numericPostId || "";
+      if (!referenced) {
+        await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "引用元が見つからないため引用投稿をスキップ" });
+        return { posted: 0 };
+      }
+      postResult = await sharedPostQuoteToThreads({
+        accessToken: acct.accessToken,
+        oauthAccessToken: acct.oauthAccessToken || undefined,
+        text,
+        referencedPostId: String(referenced),
+        userIdOnPlatform: acct.providerUserId,
+      });
+    } else {
+      postResult = await postToThreads({
+        accessToken: acct.accessToken,
+        text,
+        userIdOnPlatform: acct.providerUserId,
+      });
+    }
 
     let updateExpr = "SET #st = :posted, postedAt = :ts, postId = :pid";
     const updateValues: any = {
@@ -2014,7 +2049,7 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
 
     await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "ok", message: "自動投稿を完了", detail: { platform: "threads" } });
     return { posted: 1 };
-  } catch (e) {
+    } catch (e) {
     await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "投稿失敗", detail: { error: String(e) } });
     await postDiscordLog({ userId, isError: true, content: `**[ERROR auto-post] ${acct.displayName || acct.accountId}**\n${String(e).slice(0, 800)}` });
     return { posted: 0 };
@@ -2678,13 +2713,14 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
         } catch (_) {}
         try { await postDiscordLog({ userId, isError: true, content: `**[FALLBACK] GSI candidates skipped for user=${userId} account=${acct.accountId}; running PK fallback**` }); } catch (_) {}
 
-        const fb = await ddb.send(new QueryCommand({
+    const fb = await ddb.send(new QueryCommand({
           TableName: TBL_SCHEDULED,
           KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
           ExpressionAttributeValues: {
             ":pk": { S: `USER#${userId}` },
             ":pfx": { S: "SCHEDULEDPOST#" },
             ":acc": { S: acct.accountId },
+        ":scheduled": { S: "scheduled" },
             ":now": { N: String(now) },
             ":f": { BOOL: false }
           },

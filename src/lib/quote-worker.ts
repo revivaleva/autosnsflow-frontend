@@ -52,8 +52,9 @@ export async function runHourlyQuoteCreation(userId: string) {
       }
       if (!autoQuote) continue; // skip if account not opted-in
 
-      // fetch latest post for this account (limit 1)
-      const posts = await fetchThreadsPosts({ userId, accountId, limit: 1 });
+      // fetch latest post for the monitored account (limit 1)
+      // NOTE: use the monitored account's token to fetch its posts, not the quoting account's token
+      const posts = await fetchThreadsPosts({ userId, accountId: monitored, limit: 1 });
       if (!Array.isArray(posts) || posts.length === 0) continue;
       const p = posts[0];
       const sourcePostId = String(p.id || p.shortcode || '');
