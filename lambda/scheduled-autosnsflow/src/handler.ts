@@ -1040,6 +1040,9 @@ export const handler = async (event: any = {}) => {
   if (event?.userId && (job === 'hourly' || job === 'every-5min')) {
     const userId = event.userId;
     try {
+      // When running a test invocation, allow hourly/every-5min quote flows to run by
+      // setting a global test flag that downstream functions check.
+      try { (global as any).__TEST_ALLOW_HOURLY_QUOTES__ = !!event?.testInvocation; } catch(_) {}
       const accounts = await getThreadsAccounts(userId);
       const accountIds = (accounts || []).map((a: any) => a.accountId).filter(Boolean);
       if (job === 'hourly') {
@@ -2045,21 +2048,28 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
     // If this scheduled item is a quote (type === 'quote'), use the quote post flow
     let postResult: { postId: string; numericId?: string };
     const isQuote = (cand as any).type === 'quote';
-    /* QUOTE POSTING DISABLED FOR ISOLATED TESTING: comment out the quote branch so only normal posts are executed */
+    // For testing, allow quote posting when the test flag is set. Otherwise fall back to normal posts.
     if (isQuote) {
-      try { console.info('[test] quote posting branch is commented out for isolated testing', { userId, account: acct.accountId, scheduled: sk }); } catch(_) {}
-      // fall through to normal post to avoid attempting referenced_posts
-      postResult = await postToThreads({
-        accessToken: acct.oauthAccessToken || acct.accessToken,
-        text,
-        userIdOnPlatform: acct.providerUserId,
-      });
+      const referenced = (cand as any).numericPostId || "";
+      if (!referenced) {
+        await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "引用元の数値IDが存在しないため引用投稿をスキップ（失敗）" });
+        return { posted: 0 };
+      }
+      const allowQuotePosting = (global as any).__TEST_ALLOW_HOURLY_QUOTES__ === true;
+      if (allowQuotePosting) {
+        postResult = await sharedPostQuoteToThreads({
+          accessToken: acct.oauthAccessToken || acct.accessToken,
+          oauthAccessToken: acct.oauthAccessToken || undefined,
+          text,
+          referencedPostId: String(referenced),
+          userIdOnPlatform: acct.providerUserId,
+        });
+      } else {
+        // fallback to normal post when quote posting not enabled for this run
+        postResult = await postToThreads({ accessToken: acct.oauthAccessToken || acct.accessToken, text, userIdOnPlatform: acct.providerUserId });
+      }
     } else {
-      postResult = await postToThreads({
-        accessToken: acct.oauthAccessToken || acct.accessToken,
-        text,
-        userIdOnPlatform: acct.providerUserId,
-      });
+      postResult = await postToThreads({ accessToken: acct.oauthAccessToken || acct.accessToken, text, userIdOnPlatform: acct.providerUserId });
     }
 
     let updateExpr = "SET #st = :posted, postedAt = :ts, postId = :pid";
