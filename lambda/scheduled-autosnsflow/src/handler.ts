@@ -384,7 +384,7 @@ async function getUserSettings(userId = USER_ID) {
       TableName: TBL_SETTINGS,
       Key: { PK: { S: `USER#${userId}` }, SK: { S: "SETTINGS" } },
       ProjectionExpression:
-        "doublePostDelay, autoPost, dailyOpenAiLimit, defaultOpenAiCost, openaiApiKey, selectedModel, masterPrompt, openAiTemperature, openAiMaxTokens, autoPostAdminStop, doublePostDelete, doublePostDeleteDelay, parentDelete",
+        "doublePostDelay, autoPost, dailyOpenAiLimit, defaultOpenAiCost, openaiApiKey, selectedModel, masterPrompt, quotePrompt, openAiTemperature, openAiMaxTokens, autoPostAdminStop, doublePostDelete, doublePostDeleteDelay, parentDelete",
     })
   );
   const delay = Number(out.Item?.doublePostDelay?.N || "0");
@@ -405,6 +405,7 @@ async function getUserSettings(userId = USER_ID) {
   const rawModel = out.Item?.selectedModel?.S || DEFAULT_OPENAI_MODEL;
   const model = sanitizeModelName(rawModel);
   const masterPrompt = out.Item?.masterPrompt?.S || "";
+  const quotePrompt = out.Item?.quotePrompt?.S || "";
   const openAiTemperature = Number(out.Item?.openAiTemperature?.N || DEFAULT_OPENAI_TEMP);
   const openAiMaxTokens = Number(out.Item?.openAiMaxTokens?.N || DEFAULT_OPENAI_MAXTOKENS);
 
@@ -416,6 +417,7 @@ async function getUserSettings(userId = USER_ID) {
     openaiApiKey,
     model,
     masterPrompt,
+    quotePrompt,
     openAiTemperature,
     openAiMaxTokens,
     doublePostDelete: out.Item?.doublePostDelete?.BOOL === true,
@@ -837,9 +839,15 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
     
     // 編集モーダルと共通化したプロンプト構築
     let prompt: string;
-    if (settings.masterPrompt?.trim() || (acct && acct.quotePrompt)) {
-      // ユーザー設定のマスタープロンプトがある場合
-      const policy = `【運用方針（masterPrompt）】\n${settings.masterPrompt}\n`;
+    // Prefer user settings quotePrompt, else AppConfig QUOTE_PROMPT, else masterPrompt
+    let policyPrompt = (settings.quotePrompt && String(settings.quotePrompt).trim()) || "";
+    try {
+      if (!policyPrompt) {
+        await config.loadConfig();
+        policyPrompt = String(config.getConfigValue('QUOTE_PROMPT') || "").trim();
+      }
+    } catch (_) {}
+    if (!policyPrompt) policyPrompt = String(settings.masterPrompt || "").trim();
       
       // ペルソナ情報を取得（簡易版）
       let personaText = "";
@@ -888,7 +896,7 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
 
       const quoteInstruction = `【指示】\n上記の引用元投稿に自然に反応する形式で、共感や肯定、専門性を含んだ引用投稿文を作成してください。200〜400文字以内。ハッシュタグ禁止。改行は最大1回。`;
 
-      prompt = `\n${policy}\n${personaText ? `【アカウントのペルソナ】\n${personaText}\n` : "【アカウントのペルソナ】\n(未設定)\n"}\n【投稿テーマ】\n${themeStr}\n\n${quoteIntro}${quoteInstruction}`.trim();
+      prompt = `\n${policyPrompt ? `【運用方針】\n${policyPrompt}\n` : ""}\n${personaText ? `【アカウントのペルソナ】\n${personaText}\n` : "【アカウントのペルソナ】\n(未設定)\n"}\n【投稿テーマ】\n${themeStr}\n\n${quoteIntro}${quoteInstruction}`.trim();
     } else {
       // デフォルトプロンプトを使用
       prompt = buildMasterPrompt(themeStr, acct.displayName);
