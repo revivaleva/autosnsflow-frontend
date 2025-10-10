@@ -1345,6 +1345,10 @@ async function fetchProviderUserIdFromPlatform(acct: any) {
   return json?.id || "";
 }
 
+// TEST FLAG: disable quote-related processing during integrated/parallel runs so tests
+// can drive quote flow in isolation. MUST be reset to false / removed before production.
+const DISABLE_QUOTE_PROCESSING = true;
+
 // DB更新つきの user-id 取得ラッパ
 async function ensureProviderUserId(userId: any, acct: any) {
   if (acct?.providerUserId) return acct.providerUserId;
@@ -2442,9 +2446,13 @@ async function runHourlyJobForUser(userId: any) {
   for (const acct of accounts) {
     // First: try creating quote reservations for accounts that opted-in
     try {
-      const qres = await createQuoteReservationForAccount(userId, acct);
-      if (qres && qres.created) createdCount += qres.created;
-      if (qres && qres.skipped) skippedAccounts++;
+      if (!DISABLE_QUOTE_PROCESSING) {
+        const qres = await createQuoteReservationForAccount(userId, acct);
+        if (qres && qres.created) createdCount += qres.created;
+        if (qres && qres.skipped) skippedAccounts++;
+      } else {
+        try { console.info('[info] quote reservation creation skipped by DISABLE_QUOTE_PROCESSING', { userId, account: acct.accountId }); } catch(_) {}
+      }
     } catch (e) {
       console.warn('[warn] createQuoteReservationForAccount failed:', String(e));
     }
@@ -2454,9 +2462,13 @@ async function runHourlyJobForUser(userId: any) {
     if (c.skipped) skippedAccounts++;
 
     try {
-      const fr = await fetchIncomingReplies(userId, acct);
-      fetchedReplies += fr.fetched || 0;
-      replyDrafts += fr.fetched || 0; // 取得したリプライ分だけ返信ドラフトが生成される
+      if (!DISABLE_QUOTE_PROCESSING) {
+        const fr = await fetchIncomingReplies(userId, acct);
+        fetchedReplies += fr.fetched || 0;
+        replyDrafts += fr.fetched || 0; // 取得したリプライ分だけ返信ドラフトが生成される
+      } else {
+        try { console.info('[info] fetchIncomingReplies skipped by DISABLE_QUOTE_PROCESSING', { userId, account: acct.accountId }); } catch(_) {}
+      }
     } catch (e) {
       await putLog({ userId, type: "reply-fetch", accountId: acct.accountId, status: "error", message: "返信取得失敗", detail: { error: String(e) } });
     }
