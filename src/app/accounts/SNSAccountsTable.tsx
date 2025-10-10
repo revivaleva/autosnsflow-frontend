@@ -342,22 +342,14 @@ export default function SNSAccountsTable() {
                 <td className="py-2 px-3">
                 <ToggleSwitch
                   checked={!!acc.autoPost}
-<<<<<<< HEAD
-                  onChange={() => handleToggle(acc, "autoPost")}
-=======
                   onChange={(v: boolean) => handleToggle(acc, "autoPost", v)}
->>>>>>> staging
                   disabled={updatingId === acc.accountId || acc.status === 'deleting' || acc.status === 'reauth_required'}
                 />
               </td>
               <td className="py-2 px-3">
                 <ToggleSwitch
                   checked={!!acc.autoGenerate}
-<<<<<<< HEAD
-                  onChange={() => handleToggle(acc, "autoGenerate")}
-=======
                   onChange={(v: boolean) => handleToggle(acc, "autoGenerate", v)}
->>>>>>> staging
                   disabled={updatingId === acc.accountId || acc.status === 'deleting' || acc.status === 'reauth_required'}
                 />
               </td>
@@ -365,11 +357,7 @@ export default function SNSAccountsTable() {
                 <div className="flex items-center gap-2 justify-center">
                   <ToggleSwitch
                     checked={!!acc.autoReply}
-<<<<<<< HEAD
-                    onChange={() => handleToggle(acc, "autoReply")}
-=======
                     onChange={(v: boolean) => handleToggle(acc, "autoReply", v)}
->>>>>>> staging
                     disabled={updatingId === acc.accountId || acc.status === 'deleting' || acc.status === 'reauth_required'}
                   />
                   {!acc.autoReply && (
