@@ -2084,6 +2084,12 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
 
   // 実投稿 → 成功時のみ posted に更新（冪等）
   try {
+    // Debug: log token fields to help investigate missing-token errors
+    try {
+      const tokenHashDebug = acct.oauthAccessToken ? crypto.createHash('sha256').update(String(acct.oauthAccessToken)).digest('hex').slice(0,12) : (acct.accessToken ? crypto.createHash('sha256').update(String(acct.accessToken)).digest('hex').slice(0,12) : '');
+      try { console.info('[DEBUG] runAutoPostForAccount token-check', { userId, account: acct.accountId, accessTokenPresent: !!acct.accessToken, oauthAccessTokenPresent: !!acct.oauthAccessToken, tokenHash: tokenHashDebug }); } catch(_) {}
+      try { await putLog({ userId, type: 'auto-post', accountId: acct.accountId, targetId: sk, status: 'info', message: 'token_inspection', detail: { accessTokenPresent: !!acct.accessToken, oauthAccessTokenPresent: !!acct.oauthAccessToken, tokenHash: tokenHashDebug } }); } catch(_) {}
+    } catch (e) {}
     // If this scheduled item is a quote (type === 'quote'), use the quote post flow
     let postResult: { postId: string; numericId?: string };
     const isQuote = (cand as any).type === 'quote';
