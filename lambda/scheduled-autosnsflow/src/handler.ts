@@ -925,7 +925,7 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
       // If we have a full quoteIntro (source text), prefer that and do NOT also include 投稿テーマ to avoid duplication.
       const policyBlock = policyPrompt ? `【運用方針】\n${policyPrompt}\n\n` : "";
       const personaBlock = personaText ? `【アカウントのペルソナ】\n${personaText}\n\n` : `【アカウントのペルソナ】\n(未設定)\n\n`;
-      const sourceBlock = (isQuoteType && quoteIntro) ? `${quoteIntro}` : `【投稿テーマ】\n${String(sourceTextForPrompt)}\n\n`;
+  const sourceBlock = (isQuoteType && quoteIntro) ? `${quoteIntro}` : `【投稿テーマ】\n${String(sourceTextForPrompt)}\n\n`;
 
       prompt = `${policyBlock}${personaBlock}${sourceBlock}${defaultQuoteInstruction}`.trim();
       try { await putLog({ userId, type: 'auto-post', accountId: acct.accountId, targetId: scheduledPostId, status: 'info', message: 'prompt_constructed', detail: { isQuoteType, policyPromptUsed: Boolean(policyPrompt), themeSample: String(sourceTextForPrompt).slice(0,200) } }); } catch(_) {}
