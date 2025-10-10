@@ -1040,14 +1040,11 @@ export const handler = async (event: any = {}) => {
   if (event?.userId && (job === 'hourly' || job === 'every-5min')) {
     const userId = event.userId;
     try {
-      // When running a test invocation, allow hourly/every-5min quote flows to run by
-      // setting a global test flag that downstream functions check.
-      try { (global as any).__TEST_ALLOW_HOURLY_QUOTES__ = !!event?.testInvocation; } catch(_) {}
+      // testInvocation flag is accepted for diagnostics only; do not gate quote posting on it
       const accounts = await getThreadsAccounts(userId);
       const accountIds = (accounts || []).map((a: any) => a.accountId).filter(Boolean);
       if (job === 'hourly') {
-        // enable hourly quote flows for test invocation only
-        try { (global as any).__TEST_ALLOW_HOURLY_QUOTES__ = !!event?.testInvocation; } catch(_) {}
+        // hourly job will run reservation creation; quote posting is not gated by test flag
         const res = await runHourlyJobForUser(userId);
         // For test mode, also process deletion queue for this user so tests exercise deletion flow
         let dqRes: any = { deletedCount: 0 };
@@ -2055,19 +2052,14 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
         await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "引用元の数値IDが存在しないため引用投稿をスキップ（失敗）" });
         return { posted: 0 };
       }
-      const allowQuotePosting = (global as any).__TEST_ALLOW_HOURLY_QUOTES__ === true;
-      if (allowQuotePosting) {
-        postResult = await sharedPostQuoteToThreads({
-          accessToken: acct.oauthAccessToken || acct.accessToken,
-          oauthAccessToken: acct.oauthAccessToken || undefined,
-          text,
-          referencedPostId: String(referenced),
-          userIdOnPlatform: acct.providerUserId,
-        });
-      } else {
-        // fallback to normal post when quote posting not enabled for this run
-        postResult = await postToThreads({ accessToken: acct.oauthAccessToken || acct.accessToken, text, userIdOnPlatform: acct.providerUserId });
-      }
+      // Always attempt quote posting for quote-type items (no test gating)
+      postResult = await sharedPostQuoteToThreads({
+        accessToken: acct.oauthAccessToken || acct.accessToken,
+        oauthAccessToken: acct.oauthAccessToken || undefined,
+        text,
+        referencedPostId: String(referenced),
+        userIdOnPlatform: acct.providerUserId,
+      });
     } else {
       postResult = await postToThreads({ accessToken: acct.oauthAccessToken || acct.accessToken, text, userIdOnPlatform: acct.providerUserId });
     }
@@ -2383,15 +2375,10 @@ async function runHourlyJobForUser(userId: any) {
   for (const acct of accounts) {
     // First: try creating quote reservations for accounts that opted-in
     try {
-      // For isolated testing, allow quote reservation creation only when test flag enabled
-      const allowHourlyQuotes = (global as any).__TEST_ALLOW_HOURLY_QUOTES__ === true;
-      if (allowHourlyQuotes) {
-        const qres = await createQuoteReservationForAccount(userId, acct);
-        if (qres && qres.created) createdCount += qres.created;
-        if (qres && qres.skipped) skippedAccounts++;
-      } else {
-        try { console.info('[test] createQuoteReservationForAccount skipped (test flag not set)', { userId, account: acct.accountId }); } catch(_) {}
-      }
+      // Hourly: create quote reservations (reservation creation only)
+      const qres = await createQuoteReservationForAccount(userId, acct);
+      if (qres && qres.created) createdCount += qres.created;
+      if (qres && qres.skipped) skippedAccounts++;
     } catch (e) {
       console.warn('[warn] createQuoteReservationForAccount failed:', String(e));
     }
@@ -2413,18 +2400,7 @@ async function runHourlyJobForUser(userId: any) {
     }
 
     // 短期対応: アカウントごとに少数ずつ本文生成を行う（ロック付き・limit=1）
-    try {
-      // Allow quote content generation in hourly test mode only
-      const allowHourlyQuotes = (global as any).__TEST_ALLOW_HOURLY_QUOTES__ === true;
-      if (allowHourlyQuotes) {
-        const genRes = await processPendingGenerationsForAccount(userId, acct, 1);
-        if (genRes && genRes.generated) createdCount += genRes.generated;
-      } else {
-        try { console.info('[test] processPendingGenerationsForAccount skipped (test flag not set)', { userId, account: acct.accountId }); } catch(_) {}
-      }
-    } catch (e) {
-      console.warn('[warn] processPendingGenerationsForAccount failed:', e);
-    }
+    // NOTE: hourly should NOT perform content generation here (generation belongs to every-5min)
   }
 
   const urls = await getDiscordWebhooks(userId);
