@@ -1345,9 +1345,8 @@ async function fetchProviderUserIdFromPlatform(acct: any) {
   return json?.id || "";
 }
 
-// TEST FLAG: disable quote-related processing during integrated/parallel runs so tests
-// can drive quote flow in isolation. MUST be reset to false / removed before production.
-const DISABLE_QUOTE_PROCESSING = true;
+// NOTE: Quote-related processing will be disabled by commenting out calls below
+// for test isolation. Revert the commented sections after testing.
 
 // DB更新つきの user-id 取得ラッパ
 async function ensureProviderUserId(userId: any, acct: any) {
@@ -2112,19 +2111,13 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
     // If this scheduled item is a quote (type === 'quote'), use the quote post flow
     let postResult: { postId: string; numericId?: string };
     const isQuote = (cand as any).type === 'quote';
+    /* QUOTE POSTING DISABLED FOR ISOLATED TESTING: comment out the quote branch so only normal posts are executed */
     if (isQuote) {
-      // choose referenced id (numeric preferred then shortcode)
-    // For quote posts require numericPostId only. No fallback: if numeric ID missing, treat as failure.
-    const referenced = (cand as any).numericPostId || "";
-    if (!referenced) {
-      await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "引用元の数値IDが存在しないため引用投稿をスキップ（失敗）" });
-      return { posted: 0 };
-    }
-      postResult = await sharedPostQuoteToThreads({
+      try { console.info('[test] quote posting branch is commented out for isolated testing', { userId, account: acct.accountId, scheduled: sk }); } catch(_) {}
+      // fall through to normal post to avoid attempting referenced_posts
+      postResult = await postToThreads({
         accessToken: acct.oauthAccessToken || acct.accessToken,
-        oauthAccessToken: acct.oauthAccessToken || undefined,
         text,
-        referencedPostId: String(referenced),
         userIdOnPlatform: acct.providerUserId,
       });
     } else {
@@ -2446,13 +2439,12 @@ async function runHourlyJobForUser(userId: any) {
   for (const acct of accounts) {
     // First: try creating quote reservations for accounts that opted-in
     try {
-      if (!DISABLE_QUOTE_PROCESSING) {
-        const qres = await createQuoteReservationForAccount(userId, acct);
-        if (qres && qres.created) createdCount += qres.created;
-        if (qres && qres.skipped) skippedAccounts++;
-      } else {
-        try { console.info('[info] quote reservation creation skipped by DISABLE_QUOTE_PROCESSING', { userId, account: acct.accountId }); } catch(_) {}
-      }
+      /* QUOTE RESERVATION CREATION DISABLED FOR ISOLATED TESTING
+      const qres = await createQuoteReservationForAccount(userId, acct);
+      if (qres && qres.created) createdCount += qres.created;
+      if (qres && qres.skipped) skippedAccounts++;
+      */
+      try { console.info('[test] createQuoteReservationForAccount is commented out for isolated quote testing', { userId, account: acct.accountId }); } catch(_) {}
     } catch (e) {
       console.warn('[warn] createQuoteReservationForAccount failed:', String(e));
     }
@@ -2475,8 +2467,11 @@ async function runHourlyJobForUser(userId: any) {
 
     // 短期対応: アカウントごとに少数ずつ本文生成を行う（ロック付き・limit=1）
     try {
+      /* QUOTE CONTENT GENERATION DISABLED FOR ISOLATED TESTING
       const genRes = await processPendingGenerationsForAccount(userId, acct, 1);
       if (genRes && genRes.generated) createdCount += genRes.generated;
+      */
+      try { console.info('[test] processPendingGenerationsForAccount is commented out for isolated quote testing', { userId, account: acct.accountId }); } catch(_) {}
     } catch (e) {
       console.warn('[warn] processPendingGenerationsForAccount failed:', e);
     }
