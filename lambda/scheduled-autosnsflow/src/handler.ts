@@ -943,8 +943,9 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
         const sanitized = Object.assign({}, openAiRequestPayload, { apiKey: openAiRequestPayload.apiKey ? '***REDACTED***' : '' });
         try { console.info('[QUOTE OPENAI REQ]', { model: sanitized.model, temperature: sanitized.temperature, max_tokens: sanitized.max_tokens, promptSnippet: String(sanitized.prompt).slice(0,1200) }); } catch (_) {}
         try {
-          (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
-          (global as any).__TEST_OUTPUT__.push({ tag: 'QUOTE_OPENAI_REQ', payload: { model: sanitized.model, temperature: sanitized.temperature, max_tokens: sanitized.max_tokens, prompt: String(sanitized.prompt).slice(0,2000) } });
+        (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+          // Include the full prompt for test inspection (no API keys)
+          (global as any).__TEST_OUTPUT__.push({ tag: 'QUOTE_OPENAI_REQ', payload: { model: sanitized.model, temperature: sanitized.temperature, max_tokens: sanitized.max_tokens, prompt: String(sanitized.prompt) } });
         } catch (_) {}
       } catch (_) {}
 
