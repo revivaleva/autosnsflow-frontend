@@ -897,10 +897,6 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
       const quoteInstruction = `【指示】\n上記の引用元投稿に自然に反応する形式で、共感や肯定、専門性を含んだ引用投稿文を作成してください。200〜400文字以内。ハッシュタグ禁止。改行は最大1回。`;
 
       prompt = `\n${policyPrompt ? `【運用方針】\n${policyPrompt}\n` : ""}\n${personaText ? `【アカウントのペルソナ】\n${personaText}\n` : "【アカウントのペルソナ】\n(未設定)\n"}\n【投稿テーマ】\n${themeStr}\n\n${quoteIntro}${quoteInstruction}`.trim();
-    } else {
-      // デフォルトプロンプトを使用
-      prompt = buildMasterPrompt(themeStr, acct.displayName);
-    }
 
     // OpenAI 呼び出しは共通ヘルパーを使い、内部でリトライ／フォールバックする
     let text: any = undefined;
