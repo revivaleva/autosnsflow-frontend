@@ -767,6 +767,7 @@ async function createQuoteReservationForAccount(userId: any, acct: any) {
     const p = posts[0];
     const sourcePostId = String(p.id || p.shortcode || '');
     const sourceShort = String(p.shortcode || '');
+    const sourceText = String(p.text || '');
     if (!sourcePostId) return { created: 0, skipped: true };
 
     // duplicate check
@@ -803,6 +804,7 @@ async function createQuoteReservationForAccount(userId: any, acct: any) {
       numericPostId: { S: String(p.id || '') },
       sourcePostId: { S: String(p.shortcode || p.id || '') },
       sourcePostShortcode: { S: sourceShort },
+      sourcePostText: { S: sourceText },
       type: { S: 'quote' },
     };
 
@@ -835,7 +837,7 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
     
     // 編集モーダルと共通化したプロンプト構築
     let prompt: string;
-    if (settings.masterPrompt?.trim()) {
+    if (settings.masterPrompt?.trim() || (acct && acct.quotePrompt)) {
       // ユーザー設定のマスタープロンプトがある場合
       const policy = `【運用方針（masterPrompt）】\n${settings.masterPrompt}\n`;
       
@@ -873,19 +875,20 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
         console.warn("[warn] accountIdが未設定のためペルソナ取得をスキップ");
       }
       
-      prompt = `
-${policy}
-${personaText ? `【アカウントのペルソナ】\n${personaText}\n` : "【アカウントのペルソナ】\n(未設定)\n"}
-【投稿テーマ】
-${themeStr}
+      // If this scheduled post is a quote, include the source post text and use quotePrompt if present
+      let quoteIntro = "";
+      try {
+        const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${scheduledPostId}` } }, ProjectionExpression: 'sourcePostText, type' }));
+        const st = full.Item?.sourcePostText?.S || '';
+        const t = full.Item?.type?.S || '';
+        if (t === 'quote' && st) {
+          quoteIntro = `【引用元投稿】\n${st}\n\n`;
+        }
+      } catch (e) { /* ignore */ }
 
-【指示】
-上記の方針とペルソナ・テーマに従い、SNS投稿本文を日本語で1つだけ生成してください。
-- 文末表現や語感はペルソナに合わせる
-- 長すぎない（140〜220文字目安）
-- 絵文字は多用しすぎない（0〜3個程度）
-- ハッシュタグは不要
-      `.trim();
+      const quoteInstruction = `【指示】\n上記の引用元投稿に自然に反応する形式で、共感や肯定、専門性を含んだ引用投稿文を作成してください。200〜400文字以内。ハッシュタグ禁止。改行は最大1回。`;
+
+      prompt = `\n${policy}\n${personaText ? `【アカウントのペルソナ】\n${personaText}\n` : "【アカウントのペルソナ】\n(未設定)\n"}\n【投稿テーマ】\n${themeStr}\n\n${quoteIntro}${quoteInstruction}`.trim();
     } else {
       // デフォルトプロンプトを使用
       prompt = buildMasterPrompt(themeStr, acct.displayName);
