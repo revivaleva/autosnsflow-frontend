@@ -907,20 +907,18 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
         }
       } catch (e) { /* ignore */ }
 
-      // quoteInstruction: prefer user-configured quotePrompt; fallback to default instruction
-      let quoteInstruction = (settings && String(settings.quotePrompt || "").trim()) || "";
-      try {
-        if (!quoteInstruction) {
-          await config.loadConfig();
-          quoteInstruction = String(config.getConfigValue('QUOTE_PROMPT') || "").trim() || quoteInstruction;
-        }
-      } catch (_) {}
-      if (!quoteInstruction) {
-        quoteInstruction = `【指示】\n上記の引用元投稿に自然に反応する形式で、共感や肯定、専門性を含んだ引用投稿文を作成してください。200〜400文字以内。ハッシュタグ禁止。改行は最大1回。`;
-      }
+      // quoteInstruction: always use a concise instruction block here.
+      // The detailed policyPrompt (user/AppConfig/master) is already included above and
+      // should not be duplicated in the instruction section to avoid repetition.
+      const defaultQuoteInstruction = `【指示】\n上記の引用元投稿に自然に反応する形式で、共感や肯定、専門性を含んだ引用投稿文を作成してください。200〜400文字以内。ハッシュタグ禁止。改行は最大1回。`;
 
-      // Build prompt: include policy, persona, and theme (for quotes theme is the source post text)
-      prompt = `\n${policyPrompt ? `【運用方針】\n${policyPrompt}\n` : ""}\n${personaText ? `【アカウントのペルソナ】\n${personaText}\n` : "【アカウントのペルソナ】\n(未設定)\n"}\n【投稿テーマ】\n${String(sourceTextForPrompt)}\n\n${quoteIntro}${quoteInstruction}`.trim();
+      // Build prompt: include policy (if any), persona, then the QUOTE source once and the concise instruction.
+      // If we have a full quoteIntro (source text), prefer that and do NOT also include 投稿テーマ to avoid duplication.
+      const policyBlock = policyPrompt ? `【運用方針】\n${policyPrompt}\n\n` : "";
+      const personaBlock = personaText ? `【アカウントのペルソナ】\n${personaText}\n\n` : `【アカウントのペルソナ】\n(未設定)\n\n`;
+      const sourceBlock = (isQuoteType && quoteIntro) ? `${quoteIntro}` : `【投稿テーマ】\n${String(sourceTextForPrompt)}\n\n`;
+
+      prompt = `${policyBlock}${personaBlock}${sourceBlock}${defaultQuoteInstruction}`.trim();
       try { await putLog({ userId, type: 'auto-post', accountId: acct.accountId, targetId: scheduledPostId, status: 'info', message: 'prompt_constructed', detail: { isQuoteType, policyPromptUsed: Boolean(policyPrompt), themeSample: String(sourceTextForPrompt).slice(0,200) } }); } catch(_) {}
 
     // OpenAI 呼び出しは共通ヘルパーを使い、内部でリトライ／フォールバックする
