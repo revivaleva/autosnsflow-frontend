@@ -1283,12 +1283,7 @@ export const handler = async (event: any = {}) => {
 
     // If no userId was specified, perform full-table prune
     if (!singleUser) {
-      // Safety: require explicit confirmFull flag to run full-table destructive prune
-      const confirmFull = !!event.confirmFull;
-      if (!confirmFull) {
-        await postDiscordMaster(`**[PRUNE] full-table prune skipped: confirmFull flag not set**`);
-        return { statusCode: 400, body: JSON.stringify({ error: 'confirmFull flag required for full-table prune; use dryRun or provide userId for safe operations' }) };
-      }
+    // Previously required confirmFull; allow full-table prune without confirmFull for operator-triggered calls
       try {
         // Before performing a full-table prune, reset any accounts that are
         // in `deleting` state but have no DeletionQueue entry. This avoids
@@ -1362,8 +1357,30 @@ export const handler = async (event: any = {}) => {
   }
 
   // every-5min（デフォルト）
-  // Restore normal global every-5min scheduled processing.
+  // Global every-5min: iterate active users and run per-user 5min job
   try { console.info('[info] every-5min global processing enabled'); } catch(_) {}
+  try {
+    const userIds = await getActiveUserIds();
+    let succeeded = 0;
+    const totals: any = { totalAuto: 0, totalReply: 0, totalTwo: 0, rateSkipped: 0 };
+    for (const uid of userIds) {
+      try {
+        const res = await runFiveMinJobForUser(uid);
+        succeeded += 1;
+        totals.totalAuto += Number(res.totalAuto || 0);
+        totals.totalReply += Number(res.totalReply || 0);
+        totals.totalTwo += Number(res.totalTwo || 0);
+        totals.rateSkipped += Number(res.rateSkipped || 0);
+      } catch (e) {
+        try { await putLog({ userId: uid, type: 'every-5min', status: 'error', message: 'run5min_failed', detail: { error: String(e) } }); } catch(_) {}
+      }
+    }
+    try { await postDiscordMaster(formatMasterMessage({ job: 'every-5min', startedAt, finishedAt: Date.now(), userTotal: userIds.length, userSucceeded: succeeded, totals })); } catch(_) {}
+    return { statusCode: 200, body: JSON.stringify({ processedUsers: userIds.length, userSucceeded: succeeded, totals }) };
+  } catch (e) {
+    console.warn('[error] every-5min global processing failed:', String(e));
+    return { statusCode: 500, body: JSON.stringify({ error: String(e) }) };
+  }
 };
 
 
