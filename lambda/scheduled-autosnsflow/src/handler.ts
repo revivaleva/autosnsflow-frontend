@@ -831,10 +831,12 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
     } catch (e) {
       // If AppConfig cannot be loaded, record error and skip generation
       await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "error", message: "AppConfigの読み込み失敗", detail: { error: String(e) } });
+      try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL_REASON', payload: { scheduledPostId, reason: 'appconfig_load_failed', error: String(e) } }); } catch(_) {}
       return false;
     }
     if (!settings?.openaiApiKey) {
       await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "skip", message: "AppConfig に OPENAI_API_KEY が設定されていないため本文生成をスキップ" });
+      try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL_REASON', payload: { scheduledPostId, reason: 'openai_key_missing' } }); } catch(_) {}
       return false;
     }
     
@@ -985,6 +987,7 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
       // record failure and rethrow to be handled by caller
       try { console.error('[error] OpenAI call failed', String(e)); } catch(_) {}
       try { await putLog({ userId, type: 'openai-call', accountId: acct.accountId, targetId: scheduledPostId, status: 'error', message: 'openai_call_failed', detail: { error: String(e) } }); } catch (_) {}
+      try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL_REASON', payload: { scheduledPostId, reason: 'openai_call_failed', error: String(e) } }); } catch(_) {}
       throw e;
     }
 
@@ -1023,10 +1026,17 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
         }));
         try { /* debug removed */ } catch(_) {}
         await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "ok", message: "本文生成を完了" });
+        // dump updated scheduled item (short) for test inspection
+        try {
+          const got = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${scheduledPostId}` } }, ProjectionExpression: 'scheduledPostId, status, content, pendingForAutoPostAccount, numericPostId' }));
+          const it = unmarshall(got.Item || {});
+          try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'UPDATED_SCHEDULED_ITEM', payload: { scheduledPostId: it.scheduledPostId || scheduledPostId, status: it.status || null, contentSample: String((it.content||'')).slice(0,200), pendingForAutoPostAccount: it.pendingForAutoPostAccount || null, numericPostId: it.numericPostId || null } }); } catch(_) {}
+        } catch (e) { /* non-fatal */ }
         return true;
       } else {
         try { console.warn('[warn] generated text invalid or too short', { scheduledPostId, originalLength: text ? String(text).length : 0, cleanedLength: cleanText ? cleanText.length : 0 }); } catch(_) {}
         await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "error", message: "生成されたテキストが不正です", detail: { originalText: text, cleanedText: cleanText } });
+        try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL_REASON', payload: { scheduledPostId, reason: 'generated_text_invalid', originalLength: text ? String(text).length : 0, cleanedLength: cleanText ? cleanText.length : 0 } }); } catch(_) {}
         return false;
       }
     }
