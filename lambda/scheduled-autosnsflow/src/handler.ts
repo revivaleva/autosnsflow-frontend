@@ -18,6 +18,7 @@ import {
   ScanCommand,
   DescribeTableCommand,
   DeleteItemCommand,
+  TransactWriteItemsCommand,
 } from "@aws-sdk/client-dynamodb";
 // @ts-expect-error: path aliases resolved at build time
 import config from '@/lib/config';
@@ -734,20 +735,10 @@ async function createQuoteReservationForAccount(userId: any, acct: any) {
     const sourceText = String(p.text || '');
     if (!sourcePostId) return { created: 0, skipped: true };
 
-    // duplicate check
-    const existsQ = await ddb.send(new QueryCommand({
-      TableName: TBL_SCHEDULED,
-      KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
-      FilterExpression: 'sourcePostId = :sp',
-      ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'SCHEDULEDPOST#' }, ':sp': { S: sourcePostId } },
-      Limit: 1,
-    }));
-    if ((existsQ as any).Items && (existsQ as any).Items.length > 0) return { created: 0, skipped: true };
-
-    // create reservation
+    // create reservation atomically with a source marker to avoid duplicates under concurrency
     const id = `${Date.now()}-${Math.floor(Math.random() * 100000)}`;
     const nowSecVal = Math.floor(Date.now() / 1000);
-    const item: any = {
+    const scheduledItem = {
       PK: { S: `USER#${userId}` },
       SK: { S: `SCHEDULEDPOST#${id}` },
       scheduledPostId: { S: id },
@@ -764,7 +755,6 @@ async function createQuoteReservationForAccount(userId: any, acct: any) {
       isDeleted: { BOOL: false },
       createdAt: { N: String(nowSecVal) },
       pendingForAutoPostAccount: { S: acct.accountId },
-      // store numeric ID for API use and shortcode for UI
       numericPostId: { S: String(p.id || '') },
       sourcePostId: { S: String(p.shortcode || p.id || '') },
       sourcePostShortcode: { S: sourceShort },
@@ -772,9 +762,33 @@ async function createQuoteReservationForAccount(userId: any, acct: any) {
       type: { S: 'quote' },
     };
 
-    await ddb.send(new PutItemCommand({ TableName: TBL_SCHEDULED, Item: item }));
-    await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'ok', message: '引用予約を作成', detail: { scheduledPostId: id, sourcePostId } });
-    return { created: 1, skipped: false };
+    // marker item key to ensure uniqueness per source in this user's partition
+    const markerKey = { PK: { S: `USER#${userId}` }, SK: { S: `SOURCE#${sourcePostId}` } };
+    const markerItem = { PK: markerKey.PK, SK: markerKey.SK, markerType: { S: 'quote_source' }, createdAt: { N: String(nowSecVal) } };
+
+    try {
+      await ddb.send(new TransactWriteItemsCommand({
+        TransactItems: [
+          // ensure marker does not exist
+          { ConditionCheck: { TableName: TBL_SCHEDULED, Key: markerKey, ConditionExpression: 'attribute_not_exists(SK)' } },
+          // put marker
+          { Put: { TableName: TBL_SCHEDULED, Item: markerItem } },
+          // put scheduled reservation
+          { Put: { TableName: TBL_SCHEDULED, Item: scheduledItem } },
+        ]
+      }));
+      await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'ok', message: '引用予約を作成', detail: { scheduledPostId: id, sourcePostId } });
+      return { created: 1, skipped: false };
+    } catch (e: any) {
+      const msg = String(e?.message || e || '');
+      // Transaction canceled due to condition failure => already exists
+      if (msg.includes('ConditionalCheckFailed') || msg.includes('TransactionCanceled')) {
+        return { created: 0, skipped: true };
+      }
+      console.warn('[warn] createQuoteReservationForAccount failed', String(e));
+      try { await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'error', message: '引用予約作成中に例外', detail: { error: String(e) } }); } catch (_) {}
+      return { created: 0, skipped: true };
+    }
   } catch (e) {
     console.warn('[warn] createQuoteReservationForAccount failed', String(e));
     try { await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'error', message: '引用予約作成中に例外', detail: { error: String(e) } }); } catch (_) {}
