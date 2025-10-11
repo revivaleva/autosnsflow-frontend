@@ -831,11 +831,11 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
     } catch (e) {
       // If AppConfig cannot be loaded, record error and skip generation
       await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "error", message: "AppConfigの読み込み失敗", detail: { error: String(e) } });
-      return;
+      return false;
     }
     if (!settings?.openaiApiKey) {
       await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "skip", message: "AppConfig に OPENAI_API_KEY が設定されていないため本文生成をスキップ" });
-      return;
+      return false;
     }
     
     // 編集モーダルと共通化したプロンプト構築
@@ -897,23 +897,23 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
         const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${scheduledPostId}` } }, ProjectionExpression: 'sourcePostText, type' }));
         const st = full.Item?.sourcePostText?.S || '';
         const t = full.Item?.type?.S || '';
-        try {
-          (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
-          (global as any).__TEST_OUTPUT__.push({ tag: 'QUOTE_PROMPT_DEBUG', payload: { scheduledPostId, stPresent: Boolean(st), stSample: String(st).slice(0,600), type: t, themeSample: String(themeStr).slice(0,200) } });
-        } catch (_) {}
+      try {
+        (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+        (global as any).__TEST_OUTPUT__.push({ tag: 'QUOTE_PROMPT_DEBUG', payload: { scheduledPostId, stPresent: Boolean(st), stSample: String(st).slice(0,600), type: t, themeSample: String(themeStr).slice(0,200) } });
+      } catch (_) {}
         if (t === 'quote') {
           isQuoteType = true;
           // enforce presence of sourcePostText
-          if (!st || !String(st).trim()) {
+        if (!st || !String(st).trim()) {
             try { await putLog({ userId, type: 'auto-post', accountId: acct.accountId, targetId: scheduledPostId, status: 'error', message: '引用元投稿テキストが存在しないため生成を中止' }); } catch (_) {}
-            return; // stop generation
+            return false; // stop generation
           }
           quoteIntro = `【引用元投稿】\n${st}\n\n`;
           sourceTextForPrompt = st;
         }
       } catch (e) {
         try { await putLog({ userId, type: 'auto-post', accountId: acct.accountId, targetId: scheduledPostId, status: 'error', message: '引用元投稿取得エラー', detail: { error: String(e) } }); } catch (_) {}
-        return;
+        return false;
       }
 
       // quoteInstruction: always use a concise instruction block here.
@@ -988,7 +988,7 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
       throw e;
     }
 
-    if (text) {
+      if (text) {
       // 編集モーダルと同様の処理：プロンプトの指示部分を除去
       let cleanText = text.trim();
       
@@ -1023,14 +1023,19 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
         }));
         try { /* debug removed */ } catch(_) {}
         await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "ok", message: "本文生成を完了" });
+        return true;
       } else {
         try { console.warn('[warn] generated text invalid or too short', { scheduledPostId, originalLength: text ? String(text).length : 0, cleanedLength: cleanText ? cleanText.length : 0 }); } catch(_) {}
         await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "error", message: "生成されたテキストが不正です", detail: { originalText: text, cleanedText: cleanText } });
+        return false;
       }
     }
   } catch (e) {
     await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "error", message: "本文生成に失敗", detail: { error: String(e) } });
+    return false;
   }
+  // If we reach here without explicit success, return false
+  return false;
 }
 
 // 任意の実行ログ出力（テーブル未作成時は黙ってスキップ）
