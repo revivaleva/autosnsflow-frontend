@@ -789,9 +789,28 @@ async function createQuoteReservationForAccount(userId: any, acct: any) {
       return { created: 1, skipped: false };
     } catch (e: any) {
       const msg = String(e?.message || e || '');
-      // Transaction canceled due to condition failure => already exists
+      try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'TRANSact_ERROR', payload: { scheduledPostId: id, sourcePostId, error: msg } }); } catch(_) {}
+      // If transaction failed due to condition (another process created marker), treat as already exists
       if (msg.includes('ConditionalCheckFailed') || msg.includes('TransactionCanceled')) {
-        return { created: 0, skipped: true };
+        // Attempt fallback: try to create marker with conditional Put (non-transactional) to claim source
+        try {
+          await ddb.send(new PutItemCommand({ TableName: TBL_SCHEDULED, Item: markerItem, ConditionExpression: 'attribute_not_exists(SK)' }));
+          // marker created, now put scheduled item
+          await ddb.send(new PutItemCommand({ TableName: TBL_SCHEDULED, Item: scheduledItem }));
+          // remove marker for cleanliness
+          try { await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: markerKey })); } catch (_) {}
+          await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'ok', message: '引用予約を作成 (fallback)', detail: { scheduledPostId: id, sourcePostId } });
+          return { created: 1, skipped: false };
+        } catch (ex2: any) {
+          const msg2 = String(ex2?.message || ex2 || '');
+          try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'FALLBACK_ERROR', payload: { scheduledPostId: id, sourcePostId, error: msg2 } }); } catch(_) {}
+          if (msg2.includes('ConditionalCheckFailed')) {
+            return { created: 0, skipped: true };
+          }
+          console.warn('[warn] fallback createQuoteReservationForAccount failed', String(ex2));
+          try { await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'error', message: '引用予約作成(fallback)に例外', detail: { error: String(ex2) } }); } catch (_) {}
+          return { created: 0, skipped: true };
+        }
       }
       console.warn('[warn] createQuoteReservationForAccount failed', String(e));
       try { await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'error', message: '引用予約作成中に例外', detail: { error: String(e) } }); } catch (_) {}
