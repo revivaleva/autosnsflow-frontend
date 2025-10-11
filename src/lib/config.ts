@@ -28,9 +28,9 @@ export async function loadConfig(): Promise<Record<string,string>> {
   const items: any[] = (out as any).Items || [];
   const m: Record<string,string> = {};
   for (const it of items) {
-    const k = it.Key?.S || it.key?.S || it.K?.S;
-    // value attribute may have different shapes (Value, value, Val) and may be stored as S or N
-    const v = (it.Value?.S ?? it.value?.S ?? it.Val?.S ?? it.Value?.N ?? it.value?.N ?? '') as string;
+    const k = it.Key?.S;
+    // Use only Value.S as canonical source to match AppConfig table schema
+    const v = it.Value?.S || '';
     if (k) m[k.toUpperCase()] = String(v ?? '');
   }
   cached = m;
