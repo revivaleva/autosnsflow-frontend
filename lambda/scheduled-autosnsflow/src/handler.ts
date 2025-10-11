@@ -1166,7 +1166,9 @@ export const handler = async (event: any = {}) => {
   // If caller provided a userId for hourly/5min jobs, run only that user's flow
   // and return a test-oriented response including which accounts were targeted.
   if (event?.userId && (job === 'hourly' || job === 'every-5min')) {
-    const userId = event.userId;
+    // normalize incoming userId: accept both "USER#..." and raw id
+    const rawUserId = String(event.userId || '');
+    const userId = rawUserId.replace(/^USER#/, '');
     try {
       // testInvocation flag is accepted for diagnostics only; do not gate quote posting on it
       const accounts = await getThreadsAccounts(userId);
@@ -2564,7 +2566,9 @@ async function runSecondStageForAccount(acct: any, userId = DEFAULT_USER_ID, set
 
 /// ========== ユーザー単位の実行ラッパー ==========
 async function runHourlyJobForUser(userId: any) {
-  const settings = await getUserSettings(userId);
+  // normalize incoming userId (strip USER# prefix if present)
+  const normalizedUserId = String(userId || '').replace(/^USER#/, '');
+  const settings = await getUserSettings(normalizedUserId);
   if (settings.autoPost === "inactive") {
     try {
       // マスターOFFで返信取得を含む全処理をスキップしたことを可視化
@@ -2572,7 +2576,7 @@ async function runHourlyJobForUser(userId: any) {
     } catch {}
     return { userId, createdCount: 0, replyDrafts: 0, fetchedReplies: 0, skippedAccounts: 0, skipped: "master_off" };
   }
-  const accounts = await getThreadsAccounts(userId);
+  const accounts = await getThreadsAccounts(normalizedUserId);
 
   let createdCount = 0;
   let fetchedReplies = 0;
@@ -2584,7 +2588,7 @@ async function runHourlyJobForUser(userId: any) {
     // First: try creating quote reservations for accounts that opted-in
     try {
       // Hourly: create quote reservations (reservation creation only)
-      const qres = await createQuoteReservationForAccount(userId, acct);
+      const qres = await createQuoteReservationForAccount(normalizedUserId, acct);
       if (qres && qres.created) createdCount += qres.created;
       if (qres && qres.skipped) skippedAccounts++;
       if (qres && qres.sourcePostId) checkedShortcodes.push({ sourcePostId: String(qres.sourcePostId), queriedPK: String(qres.queriedPK || ''), queriedAccountId: String(qres.queriedAccountId || '') });
@@ -2592,13 +2596,13 @@ async function runHourlyJobForUser(userId: any) {
       console.warn('[warn] createQuoteReservationForAccount failed:', String(e));
     }
 
-    const c = await ensureNextDayAutoPosts(userId, acct);
+    const c = await ensureNextDayAutoPosts(normalizedUserId, acct);
     createdCount += c.created || 0;
     if (c.skipped) skippedAccounts++;
 
     try {
       if (!DISABLE_QUOTE_PROCESSING) {
-        const fr = await fetchIncomingReplies(userId, acct);
+        const fr = await fetchIncomingReplies(normalizedUserId, acct);
         fetchedReplies += fr.fetched || 0;
         replyDrafts += fr.fetched || 0; // 取得したリプライ分だけ返信ドラフトが生成される
       } else {
