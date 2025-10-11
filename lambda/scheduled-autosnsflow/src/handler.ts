@@ -766,14 +766,46 @@ async function createQuoteReservationForAccount(userId: any, acct: any) {
     // Simple duplicate check against current scheduled/posts using canonicalSource (shortcode)
     const pkForQuery = `USER#${userId}`;
     const acctForQuery = acct.accountId || '';
+
+    // normalize helper: trim and strip surrounding quotes and invisible whitespace
+    const normalizeId = (s: any) => {
+      try { return String(s || '').trim().replace(/^"+|"+$/g, '').replace(/[\u00A0\u200B\uFEFF]/g, '').trim(); } catch(e) { return String(s || ''); }
+    };
+    const canonicalNormalized = normalizeId(canonicalSource);
+
+    // Fast direct check first (exact match)
     const existsQ2 = await ddb.send(new QueryCommand({
       TableName: TBL_SCHEDULED,
       KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
       FilterExpression: 'accountId = :acc AND sourcePostId = :sp',
-      ExpressionAttributeValues: { ':pk': { S: pkForQuery }, ':pfx': { S: 'SCHEDULEDPOST#' }, ':acc': { S: acctForQuery }, ':sp': { S: canonicalSource } },
+      ExpressionAttributeValues: { ':pk': { S: pkForQuery }, ':pfx': { S: 'SCHEDULEDPOST#' }, ':acc': { S: acctForQuery }, ':sp': { S: canonicalNormalized } },
       Limit: 1,
     }));
-    if ((existsQ2 as any).Items && (existsQ2 as any).Items.length > 0) return { created: 0, skipped: true, sourcePostId: canonicalSource, queriedPK: pkForQuery, queriedAccountId: acctForQuery, queriedSourcePostId: canonicalSource };
+    if ((existsQ2 as any).Items && (existsQ2 as any).Items.length > 0) return { created: 0, skipped: true, sourcePostId: canonicalNormalized, queriedPK: pkForQuery, queriedAccountId: acctForQuery, queriedSourcePostId: canonicalNormalized };
+
+    // Fallback: sometimes stored values may contain invisible chars or quotes; fetch recent account items and compare normalized values client-side
+    try {
+      const fallbackQ = await ddb.send(new QueryCommand({
+        TableName: TBL_SCHEDULED,
+        KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
+        ExpressionAttributeValues: { ':pk': { S: pkForQuery }, ':pfx': { S: 'SCHEDULEDPOST#' } },
+        ProjectionExpression: 'sourcePostId, accountId, SK, scheduledPostId',
+        Limit: 200
+      }));
+      const items = (fallbackQ as any).Items || [];
+      for (const it of items) {
+        const storedAcc = it.accountId?.S || '';
+        if (storedAcc !== acctForQuery) continue;
+        const stored = normalizeId(it.sourcePostId?.S || '');
+        if (!stored) continue;
+        if (stored === canonicalNormalized) {
+          return { created: 0, skipped: true, sourcePostId: canonicalNormalized, queriedPK: pkForQuery, queriedAccountId: acctForQuery, queriedSourcePostId: canonicalNormalized, matchedStoredSK: it.SK?.S || null, matchedStoredScheduledPostId: it.scheduledPostId?.S || null };
+        }
+      }
+    } catch (e) {
+      // non-fatal fallback error — proceed to create reservation
+      try { await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'warn', message: 'fallback_duplicate_check_failed', detail: { error: String(e) } }); } catch (_) {}
+    }
 
     // persist scheduled reservation using canonical sourcePostId
     scheduledItem.sourcePostId = { S: canonicalSource };
