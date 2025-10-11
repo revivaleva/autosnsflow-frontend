@@ -831,7 +831,8 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
     } catch (e) {
       // If AppConfig cannot be loaded, record error and skip generation
       await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "error", message: "AppConfigの読み込み失敗", detail: { error: String(e) } });
-      try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL_REASON', payload: { scheduledPostId, reason: 'appconfig_load_failed', error: String(e) } }); } catch(_) {}
+    // debug: suppressed test output in production
+    // try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL_REASON', payload: { scheduledPostId, reason: 'appconfig_load_failed', error: String(e) } }); } catch(_) {}
       return false;
     }
     if (!settings?.openaiApiKey) {
@@ -1118,7 +1119,7 @@ export const handler = async (event: any = {}) => {
   // Unified AppConfig load at handler startup to avoid inconsistent loads across flows
   try {
     await config.loadConfig();
-    try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'APPCONFIG_LOADED', payload: { ok: true } }); } catch (_) {}
+      // try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'APPCONFIG_LOADED', payload: { ok: true } }); } catch (_) {}
     // Build test-time handler-invoked snapshot using AppConfig values (not process.env)
     try {
       const cfgOpenAi = (() => { try { return config.getConfigValue('OPENAI_API_KEY', null); } catch (_) { return null; } })();
@@ -1131,10 +1132,10 @@ export const handler = async (event: any = {}) => {
         TBL_THREADS_ACCOUNTS: cfgThreads || '',
       };
       if (event?.testInvocation || event?.detailedDebug) {
-        (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
-        try { (global as any).__TEST_OUTPUT__.push({ tag: 'HANDLER_INVOKED', payload: { event: event, env: envSnapshot } }); } catch (_) {}
+        // (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+        // try { (global as any).__TEST_OUTPUT__.push({ tag: 'HANDLER_INVOKED', payload: { event: event, env: envSnapshot } }); } catch (_) {}
       }
-      try { (global as any).__TEST_OUTPUT__.push({ tag: 'APPCONFIG_VALUES', payload: { OPENAI_API_KEY_present_in_appconfig: !!cfgOpenAi, OPENAI_API_KEY_mask: cfgOpenAi ? ('***' + String(cfgOpenAi).slice(-6)) : null, QUOTE_PROMPT_present_in_appconfig: !!cfgQuotePrompt, TBL_THREADS_ACCOUNTS_in_appconfig: !!cfgThreads } }); } catch(_) {}
+      // try { (global as any).__TEST_OUTPUT__.push({ tag: 'APPCONFIG_VALUES', payload: { OPENAI_API_KEY_present_in_appconfig: !!cfgOpenAi, OPENAI_API_KEY_mask: cfgOpenAi ? ('***' + String(cfgOpenAi).slice(-6)) : null, QUOTE_PROMPT_present_in_appconfig: !!cfgQuotePrompt, TBL_THREADS_ACCOUNTS_in_appconfig: !!cfgThreads } }); } catch(_) {}
     } catch (_) {}
   } catch (e) {
     // Record failure; in testInvocation return error so user sees failure early
@@ -1393,10 +1394,8 @@ export const handler = async (event: any = {}) => {
   }
 
   // every-5min（デフォルト）
-  // Global every-5min scheduled processing is temporarily disabled for isolated quote testing.
-  // Scheduled runs should not execute quote flows while we run targeted test events.
-  try { console.info('[info] every-5min global processing is commented out for isolated testing'); } catch(_) {}
-  return { statusCode: 200, body: JSON.stringify({ processedUsers: 0, userSucceeded: 0, totals: { totalAuto: 0, totalReply: 0, totalTwo: 0, rateSkipped: 0 } }) };
+  // Restore normal global every-5min scheduled processing.
+  try { console.info('[info] every-5min global processing enabled'); } catch(_) {}
 };
 
 // (Removed) test-only helpers `getAccountById` and `createOneOffForTest`.
