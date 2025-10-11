@@ -89,10 +89,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     } catch (_) {
       effectiveLimit = 100;
     }
-    // Perform actual deletion using unified deletePostsForAccount
-    // Use shared package static import to ensure module is present in builds
-    const { deletePostsForAccount } = await import('@autosnsflow/shared');
-    const { deletedCount, remaining } = await deletePostsForAccount({ userId, accountId, limit: effectiveLimit });
+    // Perform actual deletion using local helper which delegates to shared implementation via adapters
+    const { deletedCount, remaining } = await deleteUserPosts({ userId, accountId, limit: effectiveLimit });
     // debug log removed
 
     if (remaining) {
