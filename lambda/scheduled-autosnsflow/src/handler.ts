@@ -902,12 +902,21 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
         if (t === 'quote') {
           isQuoteType = true;
           // enforce presence of sourcePostText
-        if (!st || !String(st).trim()) {
+          if (!st || !String(st).trim()) {
             try { await putLog({ userId, type: 'auto-post', accountId: acct.accountId, targetId: scheduledPostId, status: 'error', message: '引用元投稿テキストが存在しないため生成を中止' }); } catch (_) {}
             return false; // stop generation
           }
           quoteIntro = `【引用元投稿】\n${st}\n\n`;
           sourceTextForPrompt = st;
+        }
+        // If not a quote type, prefer themeStr (passed from caller) as the prompt source; fallback to settings.masterPrompt
+        if (!isQuoteType) {
+          const tstr = String(themeStr || '').trim();
+          const fallback = String(settings?.masterPrompt || '').trim();
+          sourceTextForPrompt = tstr || fallback || '';
+          if (!sourceTextForPrompt) {
+            try { await putLog({ userId, type: 'auto-post', accountId: acct.accountId, targetId: scheduledPostId, status: 'warn', message: '生成に使用する投稿テーマが空です', detail: { scheduledPostId, themeStr, fallbackPresent: Boolean(fallback) } }); } catch(_) {}
+          }
         }
       } catch (e) {
         try { await putLog({ userId, type: 'auto-post', accountId: acct.accountId, targetId: scheduledPostId, status: 'error', message: '引用元投稿取得エラー', detail: { error: String(e) } }); } catch (_) {}
@@ -3427,8 +3436,9 @@ async function deletePostedForUser(userId: any) {
 async function deleteUpTo100PostsForAccount(userId: any, accountId: any, limit = 100) {
   try {
     // delegating to deletePostsForAccount (minimal log)
-    const mod = await import('./lib/delete-posts-for-account');
-    const res = await mod.deletePostsForAccount({ userId, accountId, limit });
+    // static import from shared package to ensure bundling
+    const { deletePostsForAccount } = await import('@autosnsflow/shared');
+    const res = await deletePostsForAccount({ userId, accountId, limit });
     try { console.info('[info] deleteUpTo100PostsForAccount result', { userId, accountId, res }); } catch(_) {}
     return { deletedCount: res.deletedCount, remaining: res.remaining };
   } catch (e) {
