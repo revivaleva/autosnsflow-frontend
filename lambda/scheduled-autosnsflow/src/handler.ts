@@ -9,7 +9,6 @@
 // keep types but avoid disabling TypeScript globally; remove @ts-nocheck
 
 // Removed unused backend-core import; keep SDK calls local to this lambda
-// import { fetchThreadsAccounts } from "@autosnsflow/backend-core";
 import {
   DynamoDBClient,
   QueryCommand,
@@ -20,10 +19,15 @@ import {
   DescribeTableCommand,
   DeleteItemCommand,
 } from "@aws-sdk/client-dynamodb";
+// @ts-expect-error: path aliases resolved at build time
 import config from '@/lib/config';
+// @ts-expect-error: path aliases resolved at build time
 import { postToThreads as sharedPostToThreads, postQuoteToThreads as sharedPostQuoteToThreads } from '@/lib/threads';
 import crypto from "crypto";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
+
+// Disable test-only global output collector (no-op stub to avoid test-only side-effects)
+try { (global as any).__TEST_OUTPUT__ = { push: () => {} }; } catch (_) {}
 
 /// === テーブル名 ===
 const TBL_SETTINGS   = "UserSettings";
@@ -36,11 +40,13 @@ const TBL_GROUPS     = "AutoPostGroups";
 const TBL_LOGS       = "ExecutionLogs";
 const TBL_USAGE      = "UsageCounters";
 
-// 既定ユーザー（単体テスト用）
-const USER_ID = "c7e43ae8-0031-70c5-a8ec-0f7962ee250f";
+// USER_ID removed; use DEFAULT_USER_ID or explicit parameter
 
 const region = process.env.AWS_REGION || "ap-northeast-1";
 const ddb = new DynamoDBClient({ region });
+
+// Feature flags / env toggles
+const DISABLE_QUOTE_PROCESSING = !!process.env.DISABLE_QUOTE_PROCESSING;
 
 // Wrap ddb.send to automatically alias reserved keyword 'status' in ProjectionExpression
 // This prevents ValidationException when 'status' is used as an attribute name in projections
@@ -177,86 +183,41 @@ function sanitizeModelName(model: any): string {
   return allow.includes(m) ? m : "gpt-5-mini";
 }
 
-async function callOpenAIText({ apiKey, model, temperature, max_tokens, prompt }: any) {
-  const m = sanitizeModelName(model);
-  const isInference = String(m).startsWith("gpt-5");
+async function callOpenAIText(params: any) {
+  // Try to use shared helper first
+  try {
+    const mod = await import('./lib/openai');
+    if (mod && typeof mod.callOpenAIText === 'function') {
+      return await mod.callOpenAIText({ apiKey: params.apiKey, model: params.model, systemPrompt: params.systemPrompt || "", userPrompt: params.prompt || params.userPrompt || "", temperature: params.temperature, max_tokens: params.max_tokens });
+    }
+  } catch (e) {
+    // ignore and fallback to local implementation
+  }
 
+  // Local fallback implementation
+  const m = sanitizeModelName(params.model);
+  const isInference = String(m).startsWith("gpt-5");
   const buildBody = (mdl: string, opts: any = {}) => {
     const base: any = {
       model: mdl,
-      messages: [{ role: "user", content: prompt }],
-      temperature: isInference ? 1 : (typeof temperature === "number" ? temperature : DEFAULT_OPENAI_TEMP),
+      messages: [{ role: "system", content: params.systemPrompt || "" }, { role: "user", content: params.prompt || params.userPrompt || "" }],
+      temperature: isInference ? 1 : (typeof params.temperature === "number" ? params.temperature : DEFAULT_OPENAI_TEMP),
     };
-    if (isInference) {
-      base.max_completion_tokens = opts.maxOut ?? Math.max(max_tokens || DEFAULT_OPENAI_MAXTOKENS, 1024);
-      // Avoid sending 'reasoning' parameter to models that don't accept it
-    } else {
-      base.max_tokens = opts.maxOut ?? (max_tokens || DEFAULT_OPENAI_MAXTOKENS);
-    }
+    if (isInference) base.max_completion_tokens = opts.maxOut ?? Math.max(params.max_tokens || DEFAULT_OPENAI_MAXTOKENS, 1024);
+    else base.max_tokens = opts.maxOut ?? (params.max_tokens || DEFAULT_OPENAI_MAXTOKENS);
     return JSON.stringify(base);
   };
-
-  // primary call
   const resp = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
-    headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    headers: { "Authorization": `Bearer ${params.apiKey}`, "Content-Type": "application/json" },
     body: buildBody(m),
   });
-
   const raw = await resp.text();
   let data: any = {};
   try { data = raw ? JSON.parse(raw) : {}; } catch { data = { raw }; }
-
   if (!resp.ok) throw new Error(`OpenAI API error: ${resp.status} ${raw}`);
-
-  let text = data?.choices?.[0]?.message?.content?.trim() || "";
-
-  // retry once with smaller output budget if inference model returned empty
-  if (!text && isInference) {
-    try {
-      const retryResp = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-        body: buildBody(m, { maxOut: 150 }),
-      });
-      const retryRaw = await retryResp.text();
-      let retryData: any = {};
-      try { retryData = retryRaw ? JSON.parse(retryRaw) : {}; } catch { retryData = { raw: retryRaw }; }
-      const retryText = retryData?.choices?.[0]?.message?.content?.trim() || "";
-      if (retryText) {
-        text = retryText;
-        try { data._retry = retryData; } catch {}
-      }
-    } catch (e) {
-      console.warn("retry openai failed:", e);
-    }
-  }
-
-  // fallback to non-inference small model if still empty
-  if (!text && isInference) {
-    try {
-      const fb = "gpt-4o-mini";
-      const fbResp = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-        body: buildBody(fb, { maxOut: 300 }),
-      });
-      const fbRaw = await fbResp.text();
-      let fbData: any = {};
-      try { fbData = fbRaw ? JSON.parse(fbRaw) : {}; } catch { fbData = { raw: fbRaw }; }
-      const fbText = fbData?.choices?.[0]?.message?.content?.trim() || "";
-      if (fbText) {
-        text = fbText;
-        try { data._fallback = { model: fb, raw: fbData }; } catch {}
-      } else {
-        try { data._fallback = { model: fb, raw: fbData }; } catch {}
-      }
-    } catch (e) {
-      console.warn("fallback openai failed:", e);
-    }
-  }
-
-  return { text, usage: data?.usage || {} };
+  const text = data?.choices?.[0]?.message?.content?.trim() || "";
+  return { text, raw: data };
 }
 
 /// ========== Discord ==========
@@ -300,7 +261,7 @@ async function postDiscord(urls: string[], content: string) {
   console.info(`[info] Discord webhook送信完了: ${successCount}/${totalCount} 成功`);
 }
 
-async function getDiscordWebhooks(userId = USER_ID) {
+async function getDiscordWebhooks(userId = DEFAULT_USER_ID) {
   const out = await ddb.send(
     new GetItemCommand({
       TableName: TBL_SETTINGS,
@@ -313,7 +274,7 @@ async function getDiscordWebhooks(userId = USER_ID) {
   return urls;
 }
 
-async function postDiscordLog({ userId = USER_ID, content, isError = false }: any) {
+async function postDiscordLog({ userId = DEFAULT_USER_ID, content, isError = false }: any) {
   try {
     const sets = await getDiscordWebhookSets(userId);
     const urls = isError ? (sets.error && sets.error.length ? sets.error : sets.normal) : sets.normal;
@@ -327,7 +288,7 @@ async function postDiscordLog({ userId = USER_ID, content, isError = false }: an
   }
 }
 
-async function getDiscordWebhookSets(userId = USER_ID) {
+async function getDiscordWebhookSets(userId = DEFAULT_USER_ID) {
   const out = await ddb.send(
     new GetItemCommand({
       TableName: TBL_SETTINGS,
@@ -378,7 +339,7 @@ async function getActiveUserIds() {
   return ids;
 }
 
-async function getUserSettings(userId = USER_ID) {
+async function getUserSettings(userId = DEFAULT_USER_ID) {
   const out = await ddb.send(
     new GetItemCommand({
       TableName: TBL_SETTINGS,
@@ -427,7 +388,7 @@ async function getUserSettings(userId = USER_ID) {
 }
 
 /// ========== OpenAI使用制限（1日200回相当。文章生成は1カウント） ==========
-async function getOpenAiLimitForUser(userId = USER_ID) {
+async function getOpenAiLimitForUser(userId = DEFAULT_USER_ID) {
   const out = await ddb.send(
     new GetItemCommand({
       TableName: TBL_SETTINGS,
@@ -440,7 +401,7 @@ async function getOpenAiLimitForUser(userId = USER_ID) {
   return { limit, unit };
 }
 
-async function reserveOpenAiCredits(userId = USER_ID, cost = 1) {
+async function reserveOpenAiCredits(userId = DEFAULT_USER_ID, cost = 1) {
   const day = yyyymmddJst();
   const pk = { S: `USER#${userId}` };
   const sk = { S: `OPENAI#${day}` };
@@ -493,7 +454,7 @@ async function reserveOpenAiCredits(userId = USER_ID, cost = 1) {
 }
 
 /// ========== アカウント・グループ ==========
-async function getThreadsAccounts(userId = USER_ID) {
+async function getThreadsAccounts(userId = DEFAULT_USER_ID) {
   let lastKey: any; let items: any[] = [];
   do {
     const res: any = await ddb.send(
@@ -842,21 +803,7 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
     }
     
     // 編集モーダルと共通化したプロンプト構築
-    let prompt: string;
-    // Prefer user settings quotePrompt, else AppConfig QUOTE_PROMPT, else masterPrompt
-    let policyPrompt = "";
-    try {
-      if (settings && String(settings.quotePrompt || "").trim()) {
-        policyPrompt = String(settings.quotePrompt).trim();
-      }
-    } catch (_) { policyPrompt = ""; }
-    try {
-      if (!policyPrompt) {
-        await config.loadConfig();
-        policyPrompt = String(config.getConfigValue('QUOTE_PROMPT') || "").trim();
-      }
-    } catch (_) {}
-    if (!policyPrompt) policyPrompt = String(settings.masterPrompt || "").trim();
+    // prompt を下で定義するため、ここでは一旦スキップして後で組み立てる
 
     // ペルソナ情報を取得（簡易版）
       let personaText = "";
@@ -929,13 +876,29 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
       // should not be duplicated in the instruction section to avoid repetition.
       const defaultQuoteInstruction = `【指示】\n上記の引用元投稿に自然に反応する形式で、共感や肯定、専門性を含んだ引用投稿文を作成してください。200〜400文字以内。ハッシュタグ禁止。改行は最大1回。`;
 
+      // Prefer user settings quotePrompt, else AppConfig QUOTE_PROMPT, else masterPrompt
+      let policyPrompt = "";
+      try {
+        if (settings && String(settings.quotePrompt || "").trim()) {
+          policyPrompt = String(settings.quotePrompt).trim();
+        }
+      } catch (_) { policyPrompt = ""; }
+      try {
+        if (!policyPrompt) {
+          await config.loadConfig();
+          policyPrompt = String(config.getConfigValue('QUOTE_PROMPT') || "").trim();
+        }
+      } catch (_) {}
+      if (!policyPrompt) policyPrompt = String(settings.masterPrompt || "").trim();
+
       // Build prompt: include policy (if any), persona, then the QUOTE source once and the concise instruction.
       // If we have a full quoteIntro (source text), prefer that and do NOT also include 投稿テーマ to avoid duplication.
       const policyBlock = policyPrompt ? `【運用方針】\n${policyPrompt}\n\n` : "";
       const personaBlock = personaText ? `【アカウントのペルソナ】\n${personaText}\n\n` : `【アカウントのペルソナ】\n(未設定)\n\n`;
   const sourceBlock = (isQuoteType && quoteIntro) ? `${quoteIntro}` : `【投稿テーマ】\n${String(sourceTextForPrompt)}\n\n`;
 
-      prompt = `${policyBlock}${personaBlock}${sourceBlock}${defaultQuoteInstruction}`.trim();
+      // Build the prompt from the previously prepared blocks
+      const prompt: string = `${policyBlock}${personaBlock}${sourceBlock}${defaultQuoteInstruction}`.trim();
       try { await putLog({ userId, type: 'auto-post', accountId: acct.accountId, targetId: scheduledPostId, status: 'info', message: 'prompt_constructed', detail: { isQuoteType, policyPromptUsed: Boolean(policyPrompt), themeSample: String(sourceTextForPrompt).slice(0,200) } }); } catch(_) {}
 
     // OpenAI 呼び出しは共通ヘルパーを使い、内部でリトライ／フォールバックする
@@ -952,6 +915,7 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
         temperature: settings.openAiTemperature ?? DEFAULT_OPENAI_TEMP,
         max_tokens: settings.openAiMaxTokens ?? DEFAULT_OPENAI_MAXTOKENS,
         prompt,
+        systemPrompt: "",
       };
       try {
         // Log sanitized request for debugging and attach to test output when running tests
@@ -971,13 +935,7 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
       } catch (_) {}
       } catch (_) {}
 
-      const openAiRes = await callOpenAIText({
-        apiKey: settings.openaiApiKey,
-        model: settings.model || DEFAULT_OPENAI_MODEL,
-        temperature: settings.openAiTemperature ?? DEFAULT_OPENAI_TEMP,
-        max_tokens: settings.openAiMaxTokens ?? DEFAULT_OPENAI_MAXTOKENS,
-        prompt,
-      });
+      const openAiRes = await callOpenAIText(openAiRequestPayload);
       text = openAiRes?.text;
       // when running tests, attach the full OpenAI response to test output for inspection
       try {
@@ -1056,7 +1014,7 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
 
 // 任意の実行ログ出力（テーブル未作成時は黙ってスキップ）
 async function putLog({
-  userId = USER_ID,
+  userId = DEFAULT_USER_ID,
   type,
   accountId = "",
   targetId = "",
@@ -1096,15 +1054,7 @@ async function putLog({
   }
 }
 
-// デバッグ用に強制的に ExecutionLogs テーブルへ保存するユーティリティ
-// 使用例: await persistDebugLog({ userId, type: 'debug-event', message: '詳細', detail: { ... } })
-async function persistDebugLog(args: any) {
-  try {
-    return await putLog({ ...args, persist: true });
-  } catch (e) {
-    console.warn('[warn] persistDebugLog failed:', String(e));
-  }
-}
+// persistDebugLog removed (test utility)
 
 type EventLike = { userId?: string };
 
@@ -1210,7 +1160,7 @@ export const handler = async (event: any = {}) => {
 
   // === 集計用の開始時刻 ===
   const startedAt = Date.now();
-  let userSucceeded = 0;
+  const userSucceeded = 0;
 
   if (job === "hourly") {
     /*
@@ -1950,7 +1900,7 @@ async function postToThreads({ accessToken, oauthAccessToken, text, userIdOnPlat
 
 /// ========== 5分ジョブ（実投稿・返信送信・2段階投稿） ==========
 // 5分ジョブ：実投稿
-async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any = undefined, debugMode = false) {
+async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settings: any = undefined, debugMode = false) {
   if (!acct.autoPost) return { posted: 0 };
   if (acct.status && acct.status !== "active") {
     await putLog({ userId, type: "auto-post", accountId: acct.accountId, status: "skip", message: `status=${acct.status} のためスキップ` });
@@ -2181,9 +2131,11 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
     // Debug: log token fields to help investigate missing-token errors
     try {
       const tokenHashDebug = acct.oauthAccessToken ? crypto.createHash('sha256').update(String(acct.oauthAccessToken)).digest('hex').slice(0,12) : (acct.accessToken ? crypto.createHash('sha256').update(String(acct.accessToken)).digest('hex').slice(0,12) : '');
-      try { console.info('[DEBUG] runAutoPostForAccount token-check', { userId, account: acct.accountId, accessTokenPresent: !!acct.accessToken, oauthAccessTokenPresent: !!acct.oauthAccessToken, tokenHash: tokenHashDebug }); } catch(_) {}
       try { await putLog({ userId, type: 'auto-post', accountId: acct.accountId, targetId: sk, status: 'info', message: 'token_inspection', detail: { accessTokenPresent: !!acct.accessToken, oauthAccessTokenPresent: !!acct.oauthAccessToken, tokenHash: tokenHashDebug } }); } catch(_) {}
-    } catch (e) {}
+    } catch (e) {
+      console.error('[error] runAutoPostForAccount token-inspection failed:', String(e));
+      throw e;
+    }
     // If this scheduled item is a quote (type === 'quote'), use the quote post flow
     let postResult: { postId: string; numericId?: string };
     const isQuote = (cand as any).type === 'quote';
@@ -2273,7 +2225,7 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
 }
 
 // 返信送信：Replies に未返信がある場合に送信し、成功時に replied へ更新
-async function runRepliesForAccount(acct: any, userId = USER_ID, settings: any = undefined) {
+async function runRepliesForAccount(acct: any, userId = DEFAULT_USER_ID, settings: any = undefined) {
   if (!acct.autoReply) return { replied: 0 };
   if (acct.status && acct.status !== "active") {
     await putLog({ userId, type: "auto-reply", accountId: acct.accountId, status: "skip", message: `status=${acct.status} のためスキップ` });
@@ -2387,7 +2339,7 @@ async function runRepliesForAccount(acct: any, userId = USER_ID, settings: any =
 }
 
 // 2段階投稿：postedAt + delay 経過、doublePostStatus != "done" のものに本文のみを返信
-async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: any = undefined, debugMode = false) {
+async function runSecondStageForAccount(acct: any, userId = DEFAULT_USER_ID, settings: any = undefined, debugMode = false) {
   if (!acct.secondStageContent) return { posted2: 0 };
   
   // アカウントに二段階投稿設定があれば実行。遅延時間は設定値またはデフォルト30分
@@ -2566,7 +2518,9 @@ async function runHourlyJobForUser(userId: any) {
         try { console.info('[info] fetchIncomingReplies skipped by DISABLE_QUOTE_PROCESSING', { userId, account: acct.accountId }); } catch(_) {}
       }
     } catch (e) {
+      console.error('[error] fetchThreadsRepliesAndSave reply-fetch failed:', String(e));
       await putLog({ userId, type: "reply-fetch", accountId: acct.accountId, status: "error", message: "返信取得失敗", detail: { error: String(e) } });
+      throw e;
     }
 
     // 短期対応: アカウントごとに少数ずつ本文生成を行う（ロック付き・limit=1）
@@ -2576,7 +2530,7 @@ async function runHourlyJobForUser(userId: any) {
   const urls = await getDiscordWebhooks(userId);
   const now = new Date().toISOString();
   // minor debug: totals logged at info level only
-  try { console.info('[info] hourly totals', { createdCount, fetchedReplies, replyDrafts, skippedAccounts }); } catch (e) {}
+  try { console.info('[info] hourly totals', { createdCount, fetchedReplies, replyDrafts, skippedAccounts }); } catch (e) { console.error('[error] hourly totals logging failed:', String(e)); }
   // `metrics` が空（= 実行なし）の場合は簡略化して 'hourly：実行なし' のみ送る
   const metrics = formatNonZeroLine([
     { label: "予約投稿作成", value: createdCount, suffix: " 件" },
@@ -2744,7 +2698,10 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
           Key: { PK: { S: pk }, SK: { S: sk } },
           UpdateExpression: "REMOVE generateLock, generateLockedAt",
         }));
-      } catch (e) { }
+      } catch (e) {
+        console.error('[error] failed to clear generateLock during generation flow:', String(e));
+        throw e;
+      }
     }
   } catch (e) {
     console.warn('[warn] processPendingGenerationsForAccount query failed:', e);
@@ -3024,7 +2981,7 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
           } catch (e) {
             // debug removed
           }
-          try { await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: fpk }, SK: { S: fsk } }, UpdateExpression: "REMOVE generateLock, generateLockedAt" })); } catch(_) {}
+          try { await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: fpk }, SK: { S: fsk } }, UpdateExpression: "REMOVE generateLock, generateLockedAt" })); } catch(e) { console.error('[error] fallback clear generateLock failed:', String(e)); throw e; }
         }
       }
     } catch (e) { console.warn('[gen] fallback error', String(e)); }
@@ -3312,7 +3269,10 @@ async function countPostedCandidates(userId: any) {
           // postedAt > 0 or status === 'posted' indicates posted
           if (isDeleted) continue;
           if (postedAt > 0 || status === 'posted') totalCandidates++;
-        } catch (e) {}
+        } catch (e) {
+          console.error('[error] countPostedCandidates iteration failed:', String(e));
+          throw e;
+        }
       }
 
       lastKey = q.LastEvaluatedKey;
@@ -3367,7 +3327,7 @@ async function deletePostedForUser(userId: any) {
 async function deleteUpTo100PostsForAccount(userId: any, accountId: any, limit = 100) {
   try {
     // delegating to deletePostsForAccount (minimal log)
-    const mod = await import('@/lib/delete-posts-for-account');
+    const mod = await import('./lib/delete-posts-for-account');
     const res = await mod.deletePostsForAccount({ userId, accountId, limit });
     try { console.info('[info] deleteUpTo100PostsForAccount result', { userId, accountId, res }); } catch(_) {}
     return { deletedCount: res.deletedCount, remaining: res.remaining };

@@ -6,7 +6,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { GetItemCommand, UpdateItemCommand } from "@aws-sdk/client-dynamodb";
 import { createDynamoClient } from "@/lib/ddb";
 import { verifyUserFromRequest } from "@/lib/auth";
-import { postToThreads, getThreadsPermalink } from "@/lib/threads";
+import { postToThreads, postQuoteToThreads, getThreadsPermalink } from "@/lib/threads";
 
 const ddb = createDynamoClient();
 const TBL_SCHEDULED = "ScheduledPosts";
@@ -74,12 +74,32 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // 実投稿（GAS/Lambda準拠の送信先指定）
     // Debug webhook removed
 
-    const { postId, numericId } = await postToThreads({ 
-      accessToken, 
-      oauthAccessToken: oauthAccessToken || undefined,
-      text: content,
-      userIdOnPlatform: providerUserId 
-    });
+    // If this scheduled item is a quote, use the quote-specific create/publish flow
+    const scheduledType = it.type?.S || '';
+    let postId: string = '';
+    let numericId: string | undefined;
+    if (scheduledType === 'quote') {
+      const referenced = it.sourcePostId?.S || it.sourcePostShortcode?.S || '';
+      if (!referenced) return res.status(400).json({ error: 'missing_referenced_post_id_for_quote' });
+      const quoteResult = await postQuoteToThreads({
+        accessToken: oauthAccessToken || accessToken,
+        oauthAccessToken: oauthAccessToken || undefined,
+        text: content,
+        referencedPostId: String(referenced),
+        userIdOnPlatform: providerUserId,
+      });
+      postId = quoteResult.postId || '';
+      numericId = quoteResult.numericId;
+    } else {
+      const normal = await postToThreads({ 
+        accessToken, 
+        oauthAccessToken: oauthAccessToken || undefined,
+        text: content,
+        userIdOnPlatform: providerUserId 
+      });
+      postId = normal.postId;
+      numericId = normal.numericId;
+    }
 
     // [MOD] permalink 取得（失敗時は null）
     const permalink = await getThreadsPermalink({ accessToken: (oauthAccessToken && oauthAccessToken.trim()) ? oauthAccessToken : accessToken, postId });
