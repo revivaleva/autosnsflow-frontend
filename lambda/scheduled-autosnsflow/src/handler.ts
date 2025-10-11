@@ -1088,31 +1088,26 @@ export const handler = async (event: any = {}) => {
   const job = event?.job || "every-5min";
   // handler invoked (lean logging for production)
 
-  // Test-output bootstrap for diagnostics when invoked in test mode
-  try {
-    if (event?.testInvocation || event?.detailedDebug) {
-      (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
-      // Capture event and relevant env/config snapshot (mask API keys)
-      const envSnapshot: any = {
-        OPENAI_API_KEY_present: !!process.env.OPENAI_API_KEY,
-        QUOTE_PROMPT_present: !!process.env.QUOTE_PROMPT,
-        ALLOW_DEBUG_EXEC_LOGS: process.env.ALLOW_DEBUG_EXEC_LOGS || '',
-        TBL_THREADS_ACCOUNTS: process.env.TBL_THREADS_ACCOUNTS || '',
-      };
-      try { (global as any).__TEST_OUTPUT__.push({ tag: 'HANDLER_INVOKED', payload: { event: event, env: envSnapshot } }); } catch (_) {}
-    }
-  } catch (_) {}
-
   // Unified AppConfig load at handler startup to avoid inconsistent loads across flows
   try {
     await config.loadConfig();
     try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'APPCONFIG_LOADED', payload: { ok: true } }); } catch (_) {}
-    // Also expose AppConfig-derived presence flags into test output so test runs can verify
+    // Build test-time handler-invoked snapshot using AppConfig values (not process.env)
     try {
       const cfgOpenAi = (() => { try { return config.getConfigValue('OPENAI_API_KEY', null); } catch (_) { return null; } })();
       const cfgQuotePrompt = (() => { try { return config.getConfigValue('QUOTE_PROMPT', null); } catch (_) { return null; } })();
-      (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
-      (global as any).__TEST_OUTPUT__.push({ tag: 'APPCONFIG_VALUES', payload: { OPENAI_API_KEY_present_in_appconfig: !!cfgOpenAi, OPENAI_API_KEY_mask: cfgOpenAi ? ('***' + String(cfgOpenAi).slice(-6)) : null, QUOTE_PROMPT_present_in_appconfig: !!cfgQuotePrompt } });
+      const cfgThreads = (() => { try { return config.getConfigValue('TBL_THREADS_ACCOUNTS', null); } catch (_) { return null; } })();
+      const envSnapshot: any = {
+        OPENAI_API_KEY_present: !!cfgOpenAi,
+        QUOTE_PROMPT_present: !!cfgQuotePrompt,
+        ALLOW_DEBUG_EXEC_LOGS: process.env.ALLOW_DEBUG_EXEC_LOGS || '',
+        TBL_THREADS_ACCOUNTS: cfgThreads || '',
+      };
+      if (event?.testInvocation || event?.detailedDebug) {
+        (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+        try { (global as any).__TEST_OUTPUT__.push({ tag: 'HANDLER_INVOKED', payload: { event: event, env: envSnapshot } }); } catch (_) {}
+      }
+      try { (global as any).__TEST_OUTPUT__.push({ tag: 'APPCONFIG_VALUES', payload: { OPENAI_API_KEY_present_in_appconfig: !!cfgOpenAi, OPENAI_API_KEY_mask: cfgOpenAi ? ('***' + String(cfgOpenAi).slice(-6)) : null, QUOTE_PROMPT_present_in_appconfig: !!cfgQuotePrompt, TBL_THREADS_ACCOUNTS_in_appconfig: !!cfgThreads } }); } catch(_) {}
     } catch (_) {}
   } catch (e) {
     // Record failure; in testInvocation return error so user sees failure early
