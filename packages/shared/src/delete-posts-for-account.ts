@@ -1,13 +1,4 @@
-import { createDynamoClient } from '@/lib/ddb';
-import { QueryCommand, DeleteItemCommand, GetItemCommand, UpdateItemCommand } from '@aws-sdk/client-dynamodb';
-import { fetchThreadsPosts } from '@/lib/fetch-threads-posts';
-import fetchUserReplies from '@/lib/fetch-user-replies';
-import { getTokenForAccount, deleteThreadsPostWithToken } from '@/lib/threads-delete';
-import { putLog } from '@/lib/logger';
-import { deleteScheduledRecord } from '@/lib/scheduled-posts-delete';
-
-const ddb = createDynamoClient();
-const TBL_SCHEDULED = process.env.TBL_SCHEDULED || 'ScheduledPosts';
+import type { DeletionAdapters } from './types';
 
 function stringifyError(err: unknown): string {
   if (typeof err === 'string') return err;
@@ -30,14 +21,13 @@ function isMissingPostError(msg: string) {
   return false;
 }
 
-export async function deletePostsForAccount({ userId, accountId, limit }: { userId: string; accountId: string; limit?: number }): Promise<{ deletedCount: number; remaining: boolean }> {
+export async function deletePostsForAccountWithAdapters({ userId, accountId, limit }: { userId: string; accountId: string; limit?: number }, adapters: DeletionAdapters): Promise<{ deletedCount: number; remaining: boolean }> {
   if (!userId) throw new Error('userId required');
   if (!accountId) throw new Error('accountId required');
 
   if (typeof limit === 'undefined' || limit === null) {
     try {
-      const cfg = await import('@/lib/config');
-      const v = cfg.getConfigValue('DELETION_BATCH_SIZE');
+      const v = adapters.getConfigValue ? adapters.getConfigValue('DELETION_BATCH_SIZE') : undefined;
       limit = Number(v || '100') || 100;
     } catch (_) {
       limit = 100;
@@ -46,14 +36,14 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
 
   let threads: any[] = [];
   try {
-    threads = await fetchThreadsPosts({ userId, accountId, limit: limit as number });
+    threads = await adapters.fetchThreadsPosts({ userId, accountId, limit: limit as number });
     try {
       let providerUserId: string | undefined = undefined;
       try {
-        const acct = await ddb.send(new GetItemCommand({ TableName: process.env.TBL_THREADS_ACCOUNTS || 'ThreadsAccounts', Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } }, ProjectionExpression: 'providerUserId' }));
-        providerUserId = acct?.Item?.providerUserId?.S || undefined;
+        const acct = await adapters.getScheduledAccount({ userId, accountId });
+        providerUserId = acct?.providerUserId;
       } catch (_) {}
-      const replies = await fetchUserReplies({ userId, accountId, limit: limit as number, providerUserId });
+      const replies = await adapters.fetchUserReplies({ userId, accountId, limit: limit as number, providerUserId });
       if (Array.isArray(replies) && replies.length > 0) {
         const existing = new Set((threads || []).map((x: any) => String(x.id)));
         for (const r of replies) {
@@ -61,29 +51,28 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
         }
       }
     } catch (e) {
-      try { console.warn('[warn] fetchUserReplies failed', { userId, accountId, error: String(e) }); } catch(_) {}
+      try { adapters.putLog && adapters.putLog({ userId, accountId, action: 'deletion', status: 'warn', message: 'fetchUserReplies failed', detail: { error: String(e) } }); } catch(_) {}
     }
     if (!Array.isArray(threads)) threads = [];
   } catch (e) {
     const msg = stringifyError(e);
-    await putLog({ userId, accountId, action: 'deletion', status: 'error', message: 'fetch_failed', detail: { error: msg } });
+    try { adapters.putLog && adapters.putLog({ userId, accountId, action: 'deletion', status: 'error', message: 'fetch_failed', detail: { error: msg } }); } catch(_) {}
     throw new Error(`fetchThreadsPosts failed: ${msg}`);
   }
 
   let deletedCount = 0;
   let token: string | null = null;
   try {
-    try { await putLog({ userId, accountId, action: 'deletion', status: 'info', message: 'attempt_get_token' }); } catch (_) {}
-    token = await getTokenForAccount({ userId, accountId });
+    try { adapters.putLog && adapters.putLog({ userId, accountId, action: 'deletion', status: 'info', message: 'attempt_get_token' }); } catch (_) {}
+    token = await adapters.getTokenForAccount({ userId, accountId });
     if (!token) {
-      await putLog({ userId, accountId, action: 'deletion', status: 'warn', message: 'missing_oauth_access_token' });
-      try { const tThreads = process.env.TBL_THREADS_ACCOUNTS || 'ThreadsAccounts'; await ddb.send(new UpdateItemCommand({ TableName: tThreads, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } }, UpdateExpression: 'SET #st = :s', ExpressionAttributeNames: { '#st': 'status' }, ExpressionAttributeValues: { ':s': { S: 'reauth_required' } } })); } catch(_) {}
+      try { adapters.putLog && adapters.putLog({ userId, accountId, action: 'deletion', status: 'warn', message: 'missing_oauth_access_token' }); } catch(_) {}
       throw new Error('missing_oauth_access_token');
     }
-    try { await putLog({ userId, accountId, action: 'deletion', status: 'info', message: 'got_token', detail: { tokenPreview: token ? `len=${String(token.length)}` : null } }); } catch (_) {}
+    try { adapters.putLog && adapters.putLog({ userId, accountId, action: 'deletion', status: 'info', message: 'got_token', detail: { tokenPreview: token ? `len=${String(token.length)}` : null } }); } catch (_) {}
   } catch (e) {
     const msg = stringifyError(e);
-    await putLog({ userId, accountId, action: 'deletion', status: 'error', message: 'failed_read_account_token', detail: { error: msg } });
+    try { adapters.putLog && adapters.putLog({ userId, accountId, action: 'deletion', status: 'error', message: 'failed_read_account_token', detail: { error: msg } }); } catch(_) {}
     throw e;
   }
 
@@ -91,46 +80,34 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
     const postId = String(t.id || t.postId || t.numericPostId || '');
     if (!postId) continue;
     try {
-      try { await putLog({ userId, accountId, action: 'deletion', status: 'info', message: 'deleting_post', detail: { postId } }); } catch (_) {}
-      await deleteThreadsPostWithToken({ postId, token });
-      try { await putLog({ userId, accountId, action: 'deletion', status: 'info', message: 'deleted_post', detail: { postId } }); } catch (_) {}
+      try { adapters.putLog && adapters.putLog({ userId, accountId, action: 'deletion', status: 'info', message: 'deleting_post', detail: { postId } }); } catch (_) {}
+      await adapters.deleteThreadsPostWithToken({ postId, token });
+      try { adapters.putLog && adapters.putLog({ userId, accountId, action: 'deletion', status: 'info', message: 'deleted_post', detail: { postId } }); } catch (_) {}
     } catch (err) {
       const msg = stringifyError(err);
       if (isMissingPostError(msg)) {
         // treat missing post as deleted
       } else {
-        console.warn('[delete-posts-for-account] threads delete failed', { userId, accountId, postId, error: msg });
-        if (/threads_delete_failed:\s*4\d\d/.test(msg) || msg.includes('missing_access_token')) {
-          await putLog({ userId, accountId, action: 'deletion', status: 'error', message: 'delete_failed', detail: { postId, error: msg } });
-          throw new Error(msg);
-        }
+        try { adapters.putLog && adapters.putLog({ userId, accountId, action: 'deletion', status: 'error', message: 'delete_failed', detail: { postId, error: msg } }); } catch(_) {}
         throw new Error(msg);
       }
     }
 
     try {
-      const q = await ddb.send(new QueryCommand({
-        TableName: TBL_SCHEDULED,
-        KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
-        ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'SCHEDULEDPOST#' }, ':acc': { S: accountId }, ':f': { BOOL: false }, ':pid': { S: postId }, ':pidN': { N: postId } },
-        FilterExpression: 'accountId = :acc AND (postId = :pid OR numericPostId = :pid OR numericPostId = :pidN) AND (attribute_not_exists(isDeleted) OR isDeleted = :f)',
-        ProjectionExpression: 'PK,SK,postId,numericPostId',
-        Limit: 100,
-      }));
-      const foundItems = (q as any).Items || [];
-      for (const it of foundItems) {
-        const skToDel = it?.SK?.S;
+      const foundItems = await adapters.queryScheduled({ userId, accountId, postId });
+      for (const it of foundItems || []) {
+        const skToDel = it?.SK;
         if (!skToDel) continue;
         try {
-          await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: `USER#${userId}` }, SK: { S: skToDel } } }));
+          await adapters.deleteScheduledItem({ PK: it.PK, SK: skToDel });
         } catch (e) {
-          try { console.warn('[delete-posts-for-account] failed to delete scheduled record', { userId, accountId, sk: skToDel, error: String(e) }); } catch(_) {}
+          try { adapters.putLog && adapters.putLog({ userId, accountId, action: 'deletion', status: 'error', message: 'failed_to_delete_scheduled', detail: { sk: skToDel, error: String(e) } }); } catch(_) {}
           throw e;
         }
       }
     } catch (e) {
       const msg = stringifyError(e);
-      console.warn('[delete-posts-for-account] db cleanup failed', { userId, accountId, postId, error: msg });
+      try { adapters.putLog && adapters.putLog({ userId, accountId, action: 'deletion', status: 'error', message: 'db_cleanup_failed', detail: { postId, error: msg } }); } catch(_) {}
       throw new Error(msg);
     }
 
@@ -139,60 +116,17 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
 
   let remaining = false;
   try {
-    const extra = await fetchThreadsPosts({ userId, accountId, limit: 1 });
+    const extra = await adapters.fetchThreadsPosts({ userId, accountId, limit: 1 });
     remaining = Array.isArray(extra) && extra.length > 0;
   } catch (e) {
     const msg = stringifyError(e);
-    console.warn('[delete-posts-for-account] remaining check fetch failed', { userId, accountId, error: msg });
+    try { adapters.putLog && adapters.putLog({ userId, accountId, action: 'deletion', status: 'warn', message: 'remaining_check_failed', detail: { error: msg } }); } catch(_) {}
     remaining = true;
-  }
-
-  if (!remaining) {
-    try {
-      try { await putLog({ userId, accountId, action: 'deletion', status: 'info', message: 'final_cleanup_start' }); } catch(_) {}
-      let lastKey: any = undefined;
-      let totalDeletedRecords = 0;
-      let totalFailedDeletes = 0;
-      do {
-        const qAll = await ddb.send(new QueryCommand({
-          TableName: TBL_SCHEDULED,
-          KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
-          ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'SCHEDULEDPOST#' }, ':acc': { S: accountId } },
-          FilterExpression: 'accountId = :acc',
-          ProjectionExpression: 'PK,SK',
-          ExclusiveStartKey: lastKey,
-          Limit: 100,
-        }));
-        const items = (qAll as any).Items || [];
-        for (const it of items) {
-          const skToDel = it?.SK?.S;
-          if (!skToDel) continue;
-          try {
-            const key = { PK: { S: `USER#${userId}` }, SK: { S: skToDel } };
-            const resp = await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: key }));
-            totalDeletedRecords++;
-            try {
-              const get = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: key }));
-              const exists = Boolean(get && get.Item);
-            } catch (ge) {
-              try { console.warn('[warn] final_cleanup_verify_get failed', { userId, accountId, sk: skToDel, error: String(ge) }); } catch(_) {}
-            }
-          } catch (e) {
-            totalFailedDeletes++;
-            try { console.warn('[delete-posts-for-account] final cleanup delete failed', { userId, accountId, sk: skToDel, error: String(e) }); } catch(_) {}
-          }
-        }
-        lastKey = (qAll as any).LastEvaluatedKey;
-      } while (lastKey);
-      try { await putLog({ userId, accountId, action: 'deletion', status: totalFailedDeletes > 0 ? 'error' : 'warn', message: 'final_cleanup_done', detail: { deletedCount, cleanedRecords: totalDeletedRecords, failedDeletes: totalFailedDeletes } }); } catch(_) {}
-    } catch (e) {
-      try { console.warn('[delete-posts-for-account] final cleanup failed', { userId, accountId, error: String(e) }); } catch(_) {}
-    }
   }
 
   return { deletedCount, remaining };
 }
 
-export default deletePostsForAccount;
+export default deletePostsForAccountWithAdapters;
 
 

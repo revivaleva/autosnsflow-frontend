@@ -1096,17 +1096,24 @@ async function putLog({
     return;
   }
 
-  const item = {
-    PK: { S: `USER#${userId}` },
-    SK: { S: `LOG#${Date.now()}#${crypto.randomUUID()}` },
-    type: { S: type || "system" },
-    accountId: { S: accountId },
-    targetId: { S: targetId },
+  const now = nowSec();
+  const pk = userId ? `USER#${userId}` : `LOG#${new Date().toISOString().slice(0,10).replace(/-/g,'')}`;
+  const sk = `LOG#${Date.now()}#${crypto.randomUUID()}`;
+
+  const item: any = {
+    PK: { S: pk },
+    SK: { S: sk },
+    action: { S: type || "system" },
+    createdAt: { N: String(now) },
     status: { S: status },
-    message: { S: message },
-    detail: { S: JSON.stringify(detail || {}) },
-    createdAt: { N: String(nowSec()) },
+    message: { S: String(message || "") },
+    detail: { S: JSON.stringify(detail || {}).slice(0, 35000) },
   };
+
+  if (accountId) item.accountId = { S: String(accountId) };
+  if (targetId) item.targetId = { S: String(targetId) };
+  // preserve any numeric summary if provided in detail
+  if (typeof (detail || {}).deletedCount === 'number') item.deletedCount = { N: String((detail || {}).deletedCount) };
   try {
     await ddb.send(new PutItemCommand({ TableName: TBL_LOGS, Item: item }));
   } catch (e) {

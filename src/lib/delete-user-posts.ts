@@ -3,7 +3,7 @@ import { QueryCommand, UpdateItemCommand, DeleteItemCommand } from '@aws-sdk/cli
 import { getTokenForAccount, deleteThreadsPostWithToken } from '@/lib/threads-delete';
 import { fetchThreadsPosts } from '@/lib/fetch-threads-posts';
 import { putLog } from '@/lib/logger';
-import { deletePostsForAccount } from '@autosnsflow/shared';
+import deletePostsForAccountWithAdapters from '@autosnsflow/shared';
 
 const MAX_DELETE_RETRIES = Number(process.env.DELETION_API_RETRY_COUNT || '3');
 
@@ -88,7 +88,40 @@ export async function deleteUserPosts({ userId, accountId, limit, dryRun }: { us
     return { deletedCount: 0, remaining, totalCandidates, fetchedCount };
   }
 
-  // delegated to deletePostsForAccount
-  const res = await deletePostsForAccount({ userId, accountId: accountId!, limit });
+  // delegated to deletePostsForAccountWithAdapters via adapters built from frontend helpers
+  const adapters = {
+    fetchThreadsPosts: (opts: any) => fetchThreadsPosts(opts),
+    fetchUserReplies: (opts: any) => import('@/lib/fetch-user-replies').then(m => (m.default ? m.default(opts) : m(opts))),
+    getTokenForAccount: ({ userId, accountId }: any) => import('@/lib/threads-delete').then(m => m.getTokenForAccount({ userId, accountId })),
+    deleteThreadsPostWithToken: ({ postId, token }: any) => import('@/lib/threads-delete').then(m => m.deleteThreadsPostWithToken({ postId, token })),
+    getScheduledAccount: async ({ userId, accountId }: any) => {
+      try {
+        const res = await ddb.send(new QueryCommand({ TableName: process.env.TBL_THREADS_ACCOUNTS || 'ThreadsAccounts', KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)', ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'ACCOUNT#' } }, ProjectionExpression: 'providerUserId, SK' }));
+        const items = (res as any).Items || [];
+        for (const it of items) {
+          const sk = it.SK?.S || '';
+          const acc = sk.replace(/^ACCOUNT#/, '');
+          if (acc === accountId) return { providerUserId: it.providerUserId?.S || undefined };
+        }
+      } catch (_) {}
+      return null;
+    },
+    queryScheduled: async ({ userId, accountId, postId }: any) => {
+      try {
+        const q = await ddb.send(new QueryCommand({ TableName: process.env.TBL_SCHEDULED || 'ScheduledPosts', KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)', ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'SCHEDULEDPOST#' }, ':acc': { S: accountId }, ':f': { BOOL: false }, ':pid': { S: postId }, ':pidN': { N: postId } }, FilterExpression: 'accountId = :acc AND (postId = :pid OR numericPostId = :pid OR numericPostId = :pidN) AND (attribute_not_exists(isDeleted) OR isDeleted = :f)', ProjectionExpression: 'PK,SK', Limit: 100 }));
+        const items = (q as any).Items || [];
+        return items.map((it: any) => ({ PK: it.PK?.S || '', SK: it.SK?.S || '' }));
+      } catch (e) { return []; }
+    },
+    deleteScheduledItem: async ({ PK, SK }: any) => {
+      await ddb.send(new DeleteItemCommand({ TableName: process.env.TBL_SCHEDULED || 'ScheduledPosts', Key: { PK: { S: PK }, SK: { S: SK } } }));
+    },
+    getConfigValue: (k: string) => {
+      try { const cfg = require('@/lib/config'); return cfg.getConfigValue(k); } catch(_) { return undefined; }
+    },
+    putLog: (entry: any) => putLog(entry),
+  } as any;
+
+  const res = await deletePostsForAccountWithAdapters({ userId, accountId: accountId!, limit }, adapters);
   return { deletedCount: res.deletedCount, remaining: res.remaining } as any;
 }
