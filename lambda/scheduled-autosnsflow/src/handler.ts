@@ -792,7 +792,7 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
     } catch (e) {
       // If AppConfig cannot be loaded, record error and skip generation
       await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "error", message: "AppConfigの読み込み失敗", detail: { error: String(e) } });
-    // debug: suppressed test output in production
+    
     // try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL_REASON', payload: { scheduledPostId, reason: 'appconfig_load_failed', error: String(e) } }); } catch(_) {}
       return false;
     }
@@ -1118,7 +1118,7 @@ export const handler = async (event: any = {}) => {
     }
   }
 
-  // (Removed) Temporary maintenance action: clear pendingForAutoPostAccount for already-posted items
+  
 
   // If caller provided a userId for hourly/5min jobs, run only that user's flow
   // and return a test-oriented response including which accounts were targeted.
@@ -1142,7 +1142,7 @@ export const handler = async (event: any = {}) => {
         const merged = Object.assign({}, res || {}, { deletedCount: Number(dqRes?.deletedCount || 0) });
         return { statusCode: 200, body: JSON.stringify({ testInvocation: true, job: 'hourly', userId, accountIds, result: merged }) };
       } else {
-        // debug removed
+        
         const res = await runFiveMinJobForUser(userId);
         // attach any collected test-time output from threads lib so caller can inspect POST bodies
         const testOut = (global as any).__TEST_OUTPUT__ || [];
@@ -1366,7 +1366,7 @@ export const handler = async (event: any = {}) => {
   try { console.info('[info] every-5min global processing enabled'); } catch(_) {}
 };
 
-// (Removed) test-only helpers `getAccountById` and `createOneOffForTest`.
+
 // These were only used by the legacy interactive `test` job and have been deleted.
 
 // Threads の user-id を取得して ThreadsAccounts に保存
@@ -1557,7 +1557,7 @@ async function upsertReplyItem(userId: any, acct: any, { externalReplyId, postId
 }
 
 async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 }: any) {
-  // debug removed
+  
   if (!acct?.accessToken) throw new Error("Threads のトークン不足");
   if (!acct?.providerUserId) {
     const pid = await ensureProviderUserId(userId, acct);
@@ -1637,11 +1637,11 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
     let usedUrl = buildRepliesUrl(replyApiId);
     let r = await fetch(usedUrl);
     if (!r.ok) {
-      // debug removed
+      
       usedUrl = buildConversationUrl(replyApiId);
       r = await fetch(usedUrl);
       if (!r.ok && alternativeId) {
-        // debug removed
+        
         usedUrl = buildRepliesUrl(alternativeId);
         r = await fetch(usedUrl);
       }
@@ -1663,7 +1663,7 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
     for (const rep of (json?.data || [])) {
       // is_reply_owned_by_me フィールドが利用可能な場合はそれを優先して除外
       if (rep.is_reply_owned_by_me === true) {
-        // debug removed
+        
         try {
           await putLog({
             userId,
@@ -1771,7 +1771,7 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
     return { created: 0, deleted: 0, skipped: true, debug: [{ reason: "no_slots", group: group.groupName }] } as any;
   }
   const useSlots = slots.slice(0, 10);
-  // debug removed
+  
 
   const today = jstNow();
   const settings = await getUserSettings(userId);
@@ -1963,7 +1963,7 @@ async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settin
       Limit: 50               // 上限を増やして取りこぼしを回避
     }));
   }
-  // debug: capture raw q items if requested
+  
   const debugInfo: any = debugMode ? { qItemsCount: (q.Items || []).length, items: [] as any[] } : undefined;
 
   // If GSI returned no items, try a PK-based fallback query for observability
@@ -2021,7 +2021,7 @@ async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settin
     // 詳細デバッグ: 対象アカウントだったらフルアイテムとパース後オブジェクトを出力
     if (acct.accountId === 'remigiozarcorb618' || userId === 'b7b44a38-e051-70fa-2001-0260ae388816') {
       try {
-        // debug removed
+        
       } catch (e) { /* debug removed */ }
       try { /* debug removed */ } catch(e) { /* debug removed */ }
     }
@@ -2366,7 +2366,7 @@ async function runSecondStageForAccount(acct: any, userId = DEFAULT_USER_ID, set
   const threshold = nowSec() - delayMin * 60;
 
   // 観測性向上: 入口ログ
-  // debug removed
+  
 
   let q;
   try {
@@ -2402,7 +2402,7 @@ async function runSecondStageForAccount(acct: any, userId = DEFAULT_USER_ID, set
   }
 
   // 観測性向上: クエリ結果を記録
-  // debug removed
+  
   if (!q.Items || q.Items.length === 0) {
     await putLog({
       userId,
@@ -2576,7 +2576,7 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
 
   // Prefer sparse GSI (needsContentAccount + nextGenerateAt) to find candidates needing content
   try {
-    // debug removed
+    
     let q;
     // fetchLimit: how many candidates to fetch from GSI/PK before sorting and applying the user-requested `limit`
     const fetchLimit = Math.max(Number(limit) * 10, 100);
@@ -2611,7 +2611,7 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
     }
 
     const items = (q.Items || []);
-    // debug removed
+    
 
     // Prefetch full items so we can sort by scheduledAt (oldest first)
     const candidates: any[] = [];
@@ -2623,7 +2623,7 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
         const rec = unmarshall(full.Item || {});
         candidates.push({ pk, sk, rec });
       } catch (e) {
-        // debug removed
+        
       }
     }
 
@@ -2633,19 +2633,19 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
     for (const c of candidates) {
       if (generated >= limit) break;
       const pk = c.pk; const sk = c.sk; const rec = c.rec || {};
-      // debug removed
+      
       const contentEmpty = !rec.content || String(rec.content || '').trim() === '';
-      // debug removed
+      
       // 定期実行は「本文が空のデータ」のみに対して生成を行う
       if (!contentEmpty) {
-        // debug removed
+        
         try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_SKIP', payload: { accountId: acct.accountId, pk, sk, reason: 'content_exists' } }); } catch(_) {}
         continue;
       }
       const nextGen = Number(rec.nextGenerateAt || 0);
       // nextGenerateAt が将来に設定されていればスキップ（バックオフ等）
       if (nextGen > now) {
-        // debug removed
+        
         try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_SKIP', payload: { accountId: acct.accountId, pk, sk, reason: 'nextGenerateAt_future', nextGenerateAt: nextGen, now } }); } catch(_) {}
         continue;
       }
@@ -2655,7 +2655,7 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
       const lockExpireSec = 60 * 10; // ロック10分
       const expiresAt = now + lockExpireSec;
       try {
-        // debug removed
+        
         await ddb.send(new UpdateItemCommand({
           TableName: TBL_SCHEDULED,
           Key: { PK: { S: pk }, SK: { S: sk } },
@@ -2668,9 +2668,9 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
             ":now": { N: String(now) }
           }
         }));
-        // debug removed
+        
       } catch (e) {
-        // debug removed
+        
         try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_LOCK_FAIL', payload: { accountId: acct.accountId, pk, sk, error: String(e) } }); } catch(_) {}
         continue;
       }
@@ -2966,11 +2966,11 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
         }));
 
         const fbItems = (fb.Items || []);
-        // debug removed
+        
           for (const fit of fbItems) {
           if (_fallback_generated >= _fallback_limit) break;
           const fpk = getS(fit.PK) || ''; const fsk = getS(fit.SK) || '';
-          // debug removed
+          
           const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: fpk }, SK: { S: fsk } } }));
           const rec = unmarshall(full.Item || {});
           const contentEmpty = !rec.content || String(rec.content || '').trim() === '';
@@ -2988,16 +2988,16 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
               ExpressionAttributeValues: { ":id": { S: `worker:${process.env.AWS_LAMBDA_LOG_STREAM_NAME || 'lambda'}:${now}` }, ":ts": { N: String(now + 600) }, ":now": { N: String(now) } }
             }));
           } catch (e) {
-            // debug removed
+            
             continue;
           }
 
           try {
             await generateAndAttachContent(userId, acct, fsk.replace(/^SCHEDULEDPOST#/, ''), rec.theme || '', await getUserSettings(userId));
             _fallback_generated++;
-            // debug removed
+            
           } catch (e) {
-            // debug removed
+            
           }
           try { await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: fpk }, SK: { S: fsk } }, UpdateExpression: "REMOVE generateLock, generateLockedAt" })); } catch(e) { console.error('[error] fallback clear generateLock failed:', String(e)); throw e; }
         }
