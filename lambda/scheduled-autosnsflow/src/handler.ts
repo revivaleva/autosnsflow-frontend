@@ -1083,6 +1083,21 @@ export const handler = async (event: any = {}) => {
   const job = event?.job || "every-5min";
   // handler invoked (lean logging for production)
 
+  // Test-output bootstrap for diagnostics when invoked in test mode
+  try {
+    if (event?.testInvocation || event?.detailedDebug) {
+      (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+      // Capture event and relevant env/config snapshot (mask API keys)
+      const envSnapshot: any = {
+        OPENAI_API_KEY_present: !!process.env.OPENAI_API_KEY,
+        QUOTE_PROMPT_present: !!process.env.QUOTE_PROMPT,
+        ALLOW_DEBUG_EXEC_LOGS: process.env.ALLOW_DEBUG_EXEC_LOGS || '',
+        TBL_THREADS_ACCOUNTS: process.env.TBL_THREADS_ACCOUNTS || '',
+      };
+      try { (global as any).__TEST_OUTPUT__.push({ tag: 'HANDLER_INVOKED', payload: { event: event, env: envSnapshot } }); } catch (_) {}
+    }
+  } catch (_) {}
+
   // (Removed) Temporary maintenance action: clear pendingForAutoPostAccount for already-posted items
 
   // If caller provided a userId for hourly/5min jobs, run only that user's flow
