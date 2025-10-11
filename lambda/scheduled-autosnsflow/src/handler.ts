@@ -777,6 +777,14 @@ async function createQuoteReservationForAccount(userId: any, acct: any) {
           { Put: { TableName: TBL_SCHEDULED, Item: scheduledItem } },
         ]
       }));
+      // remove the transient marker for cleanliness: marker is only needed to prevent duplicates
+      try {
+        await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: markerKey }));
+      } catch (_) {
+        // non-fatal: if marker deletion fails, leave it (harmless) but log minimal
+        try { await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'warn', message: 'marker_delete_failed', detail: { scheduledPostId: id, sourcePostId } }); } catch(_) {}
+      }
+
       await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'ok', message: '引用予約を作成', detail: { scheduledPostId: id, sourcePostId } });
       return { created: 1, skipped: false };
     } catch (e: any) {
