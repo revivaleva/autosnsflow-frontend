@@ -160,30 +160,28 @@ export async function postQuoteToThreads({
 
   const create = async () => {
     if (!primaryToken) throw { type: 'auth_required', needsReauth: true, message: 'oauthAccessToken required for quote create' };
-    const body: Record<string, any> = {
-      media_type: "TEXT",
-      text,
-      // referenced_posts as array object per official doc
-      referenced_posts: [{ id: referencedPostId, reference_type: 'QUOTE' }],
-    };
-    if (process.env.THREADS_TEXT_APP_ID) body.text_post_app_id = process.env.THREADS_TEXT_APP_ID;
+    // Per Threads behaviour, referenced_posts must be sent as a JSON string in form-encoded or multipart body.
+    // Use application/x-www-form-urlencoded and put referenced_posts as JSON string.
     const endpoint = `${base}/me/threads`;
     const url = `${endpoint}?access_token=${encodeURIComponent(primaryToken)}`;
+    const form = new URLSearchParams();
+    form.append('media_type', 'TEXT');
+    form.append('text', text);
+    form.append('referenced_posts', JSON.stringify([{ id: referencedPostId, reference_type: 'QUOTE' }]));
+    if (process.env.THREADS_TEXT_APP_ID) form.append('text_post_app_id', process.env.THREADS_TEXT_APP_ID);
     // Log sanitized request (no tokens)
     try {
-      const sanitized = JSON.parse(JSON.stringify(body));
-      if (sanitized.access_token) delete sanitized.access_token;
-      console.info('[THREADS QUOTE CREATE REQ]', { endpoint: url.replace(primaryToken, '***'), body: sanitized });
+      const sanitizedBody = { media_type: 'TEXT', text: String(text).slice(0,2000), referenced_posts: JSON.stringify([{ id: referencedPostId, reference_type: 'QUOTE' }]) };
+      console.info('[THREADS QUOTE CREATE REQ]', { endpoint: url.replace(primaryToken, '***'), body: sanitizedBody });
       try {
-        // collect test-time output when running in test invocation mode
         (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
-        (global as any).__TEST_OUTPUT__.push({ tag: 'THREADS_QUOTE_CREATE_REQ', endpoint: String(endpoint).replace(primaryToken, '***'), body: sanitized });
+        (global as any).__TEST_OUTPUT__.push({ tag: 'THREADS_QUOTE_CREATE_REQ', endpoint: String(endpoint).replace(primaryToken, '***'), body: sanitizedBody });
       } catch (_) {}
     } catch (_) {}
     const r = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: form.toString(),
     });
     const tx = await r.text().catch(() => '');
     // Log response
