@@ -213,22 +213,23 @@ export default function SNSAccountModal({
     setPersona({ ...persona, [e.target.name]: e.target.value });
 
   const handleCopyAccountData = (acc: any) => {
-    setDisplayName("");
-    setAccountId("");
-    setAccessToken("");
-    setClientId(acc.clientId || "");
-    setClientSecret(acc.clientSecret || "");
-    setGroupId("");
-    setCharacterImage(acc.characterImage || "");
+    // ペルソナ情報と投稿グループのみ上書きし、その他の入力値は保持する
+    setGroupId(acc.autoPostGroupId || acc.auto_post_group_id || "");
     setPersonaMode(acc.personaMode || "detail");
     setPersonaSimple(acc.personaSimple || "");
-    // ▼【追加】コピー元のJSONもガード
+    // コピー元のJSONを安全に取り込む
     try {
-      setPersona(acc.personaDetail ? JSON.parse(acc.personaDetail) : { ...emptyPersona }); // 【追加】
+      const detail = acc.personaDetail ?? acc.persona_detail ?? acc.persona;
+      if (typeof detail === "string") {
+        setPersona(detail.trim() === "" ? { ...emptyPersona } : JSON.parse(detail));
+      } else if (typeof detail === "object" && detail !== null) {
+        setPersona({ ...emptyPersona, ...(detail || {}) });
+      } else {
+        setPersona({ ...emptyPersona });
+      }
     } catch {
-      setPersona({ ...emptyPersona }); // 【追加】
+      setPersona({ ...emptyPersona });
     }
-    setSecondStageContent(acc.secondStageContent || ""); // ← 追加
     setCopyModalOpen(false);
   };
 

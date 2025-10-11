@@ -92,33 +92,14 @@ export async function upsertReplyItem(userId: string, acct: any, { externalReply
   }
 }
 
-// 簡易的なログ出力（Lambda の putLog と同等の最小実装）
-async function putLog({
-  userId = "", type, accountId = "", targetId = "", status = "info", message = "", detail = {}
-}: any) {
-  try {
-    const allowDebug = (process.env.ALLOW_DEBUG_EXEC_LOGS === 'true' || process.env.ALLOW_DEBUG_EXEC_LOGS === '1');
-    const uid = userId || "unknown";
-    const shouldPersist = (status === 'error' && uid !== "unknown") || allowDebug;
-    if (!shouldPersist) {
-      // debug output removed
-      return;
-    }
+import { putLog as putLogCanonical } from '@/lib/logger';
 
-    const item = {
-      PK: { S: `USER#${uid}` },
-      SK: { S: `LOG#${Date.now()}#${Math.random().toString(36).slice(2,10)}` },
-      type: { S: type || "system" },
-      accountId: { S: accountId || "" },
-      targetId: { S: targetId || "" },
-      status: { S: status || "info" },
-      message: { S: String(message || "") },
-      detail: { S: JSON.stringify(detail || {}) },
-      createdAt: { N: String(nowSec()) },
-    };
-    await ddb.send(new PutItemCommand({ TableName: TBL_LOGS, Item: item }));
+// Adapter: reuse canonical putLog implementation
+async function putLog({ userId = "", type, accountId = "", targetId = "", status = "info", message = "", detail = {} }: any) {
+  try {
+    await putLogCanonical({ userId: userId || undefined, accountId: accountId || undefined, action: type || 'log', status, message, detail, targetId: targetId || undefined });
   } catch (e) {
-    console.warn("[warn] putLog skipped (fetch-replies):", String((e as Error)?.message || e));
+    console.warn('[putLog adapter - fetch-replies] failed', e);
   }
 }
 

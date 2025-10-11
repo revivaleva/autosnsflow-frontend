@@ -918,28 +918,37 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
       const defaultQuoteInstruction = `【指示】\n上記の引用元投稿に自然に反応する形式で、共感や肯定、専門性を含んだ引用投稿文を作成してください。200〜400文字以内。ハッシュタグ禁止。改行は最大1回。`;
       const defaultPostInstruction = `【指示】\n以下の投稿テーマに沿って、140字前後で読み手に寄り添う自然な本文を作成してください。絵文字は控えめに、ハッシュタグは使用しないでください。改行は最大1回。`;
 
-      // Prefer user settings quotePrompt, else AppConfig QUOTE_PROMPT, else masterPrompt
+      // Decide policy prompt and build prompt blocks after we determined isQuoteType and sourceTextForPrompt
       let policyPrompt = "";
       try {
-        if (settings && String(settings.quotePrompt || "").trim()) {
-          policyPrompt = String(settings.quotePrompt).trim();
+        if (isQuoteType) {
+          // For quote generation prefer quotePrompt from settings or AppConfig
+          if (settings && String(settings.quotePrompt || "").trim()) {
+            policyPrompt = String(settings.quotePrompt).trim();
+          }
+          if (!policyPrompt) {
+            try { await config.loadConfig(); } catch(_) {}
+            policyPrompt = String(config.getConfigValue('QUOTE_PROMPT') || "").trim();
+          }
+          if (!policyPrompt) policyPrompt = String(settings.masterPrompt || "").trim();
+        } else {
+          // For normal posts prefer masterPrompt (user-level) or a generic POST_PROMPT from AppConfig
+          if (settings && String(settings.masterPrompt || "").trim()) {
+            policyPrompt = String(settings.masterPrompt).trim();
+          }
+          if (!policyPrompt) {
+            try { await config.loadConfig(); } catch(_) {}
+            policyPrompt = String(config.getConfigValue('POST_PROMPT') || "").trim();
+          }
+          if (!policyPrompt) policyPrompt = String(settings.masterPrompt || "").trim();
         }
-      } catch (_) { policyPrompt = ""; }
-      try {
-        if (!policyPrompt) {
-          await config.loadConfig();
-          policyPrompt = String(config.getConfigValue('QUOTE_PROMPT') || "").trim();
-        }
-      } catch (_) {}
-      if (!policyPrompt) policyPrompt = String(settings.masterPrompt || "").trim();
+      } catch (_) { policyPrompt = String(settings.masterPrompt || "").trim(); }
 
-      // Build prompt: include policy (if any), persona, then the QUOTE source once and the concise instruction.
-      // If we have a full quoteIntro (source text), prefer that and do NOT also include 投稿テーマ to avoid duplication.
+      // Build prompt blocks
       const policyBlock = policyPrompt ? `【運用方針】\n${policyPrompt}\n\n` : "";
       const personaBlock = personaText ? `【アカウントのペルソナ】\n${personaText}\n\n` : `【アカウントのペルソナ】\n(未設定)\n\n`;
-  const sourceBlock = (isQuoteType && quoteIntro) ? `${quoteIntro}` : `【投稿テーマ】\n${String(sourceTextForPrompt)}\n\n`;
+      const sourceBlock = (isQuoteType && quoteIntro) ? `${quoteIntro}` : `【投稿テーマ】\n${String(sourceTextForPrompt)}\n\n`;
 
-      // Build the prompt from the previously prepared blocks and appropriate instruction
       const instructionBlock = isQuoteType ? defaultQuoteInstruction : defaultPostInstruction;
       const prompt: string = `${policyBlock}${personaBlock}${sourceBlock}${instructionBlock}`.trim();
       try { await putLog({ userId, type: 'auto-post', accountId: acct.accountId, targetId: scheduledPostId, status: 'info', message: 'prompt_constructed', detail: { isQuoteType, policyPromptUsed: Boolean(policyPrompt), themeSample: String(sourceTextForPrompt).slice(0,200) } }); } catch(_) {}

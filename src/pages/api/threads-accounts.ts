@@ -319,8 +319,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if ("autoPostGroupId" in body) setStr("autoPostGroupId", body.autoPostGroupId);
       if ("secondStageContent" in body) setStr("secondStageContent", body.secondStageContent);
       if ("monitoredAccountId" in body) setStr("monitoredAccountId", body.monitoredAccountId);
-      if ("quoteTimeStart" in body) setStr("quoteTimeStart", body.quoteTimeStart);
-      if ("quoteTimeEnd" in body) setStr("quoteTimeEnd", body.quoteTimeEnd);
+      // quoteTime は空文字の場合にデフォルト値を与えるため、下のブロックで一度だけ設定する
       if ("quoteTimeStart" in body) {
         const v = (body.quoteTimeStart === undefined || body.quoteTimeStart === '') ? '00:00' : String(body.quoteTimeStart);
         setStr("quoteTimeStart", v);
