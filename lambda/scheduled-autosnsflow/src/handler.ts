@@ -2654,9 +2654,10 @@ async function runHourlyJobForUser(userId: any) {
 
 // === 予約レコードの本文生成をアカウント単位で段階的に処理する（短期対応） ===
 async function processPendingGenerationsForAccount(userId: any, acct: any, limit = 1) {
-  if (!acct.autoGenerate) return { generated: 0, skipped: true };
+  if (!acct.autoGenerate) return { generated: 0, skipped: true, processed: [] };
   const now = nowSec();
   let generated = 0;
+  const processed: Array<{ scheduledPostId: string; themeUsed: string; isQuote: boolean }> = [];
   // compute JST start of today to avoid generating for old reservations
   const nowDate = new Date();
   const utc = nowDate.getTime() + nowDate.getTimezoneOffset() * 60000;
@@ -2770,9 +2771,12 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
       try {
         const userSettings = await getUserSettings(userId);
         try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_START', payload: { accountId: acct.accountId, pk, sk, settings_present: !!userSettings, settings_sample: { openaiApiKeyPresent: !!userSettings.openaiApiKey, model: userSettings.model || null } } }); } catch(_) {}
-        const ok = await generateAndAttachContent(userId, acct, sk.replace(/^SCHEDULEDPOST#/, ''), rec.theme || '', userSettings);
+        const scheduledId = sk.replace(/^SCHEDULEDPOST#/, '');
+        const themePassed = String(rec.theme || '');
+        const ok = await generateAndAttachContent(userId, acct, scheduledId, themePassed, userSettings);
         if (ok) {
           generated++;
+          processed.push({ scheduledPostId: scheduledId, themeUsed: themePassed, isQuote: (rec.type === 'quote') });
           try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_DONE', payload: { accountId: acct.accountId, pk, sk, generated: 1 } }); } catch(_) {}
         } else {
           try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL', payload: { accountId: acct.accountId, pk, sk } }); } catch(_) {}
@@ -2817,7 +2821,7 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
   }
 
   if (generated > 0) await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'ok', message: `本文生成 ${generated} 件` });
-  return { generated };
+  return { generated, processed };
 }
 
 async function runFiveMinJobForUser(userId: any) {
