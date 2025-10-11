@@ -2658,13 +2658,24 @@ async function runFiveMinJobForUser(userId: any) {
       console.warn('[warn] token-check failed for', userId, acct.accountId, String(e));
     }
 
+    try {
+      (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+      try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_ACCOUNT_START', payload: { accountId: acct.accountId } }); } catch(_) {}
+    } catch(_) {}
+
     const a = await runAutoPostForAccount(acct, userId, settings);
+    try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_AUTO_POST_RESULT', payload: { accountId: acct.accountId, result: a } }); } catch(_) {}
+
     const r = await runRepliesForAccount(acct, userId, settings);
+    try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_REPLY_RESULT', payload: { accountId: acct.accountId, result: r } }); } catch(_) {}
+
     const t = await runSecondStageForAccount(acct, userId, settings, true);
+    try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_SECOND_STAGE_RESULT', payload: { accountId: acct.accountId, result: t } }); } catch(_) {}
 
     // 短期対応: 5分ジョブでも本文生成を少数処理する（安全策）
     try {
       const genRes = await processPendingGenerationsForAccount(userId, acct, 1);
+      try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_GENERATION_RESULT', payload: { accountId: acct.accountId, result: genRes } }); } catch(_) {}
       if (genRes && genRes.generated) {
         // 観測ログ用記録
       }
@@ -2684,6 +2695,7 @@ async function runFiveMinJobForUser(userId: any) {
         reason: (t as any).debug?.reason || "-"
       });
     }
+    try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_ACCOUNT_DONE', payload: { accountId: acct.accountId, summary: perAccount[perAccount.length-1] } }); } catch(_) {}
 
     if (a.skipped === "window_expired") rateSkipped++;
     // 二段階投稿削除のスケジュールがある場合、期限切れのものを処理
