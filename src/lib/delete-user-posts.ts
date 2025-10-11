@@ -3,7 +3,7 @@ import { QueryCommand, UpdateItemCommand, DeleteItemCommand } from '@aws-sdk/cli
 import { getTokenForAccount, deleteThreadsPostWithToken } from '@/lib/threads-delete';
 import { fetchThreadsPosts } from '@/lib/fetch-threads-posts';
 import { putLog } from '@/lib/logger';
-import deletePostsForAccount from '@/lib/delete-posts-for-account';
+import { deletePostsForAccount } from '@autosnsflow/shared';
 
 const MAX_DELETE_RETRIES = Number(process.env.DELETION_API_RETRY_COUNT || '3');
 

@@ -90,8 +90,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       effectiveLimit = 100;
     }
     // Perform actual deletion using unified deletePostsForAccount
-    const mod = await import('@/lib/delete-posts-for-account');
-    const { deletedCount, remaining } = await mod.deletePostsForAccount({ userId, accountId, limit: effectiveLimit });
+    // Use shared package static import to ensure module is present in builds
+    const { deletePostsForAccount } = await import('@autosnsflow/shared');
+    const { deletedCount, remaining } = await deletePostsForAccount({ userId, accountId, limit: effectiveLimit });
     // debug log removed
 
     if (remaining) {
