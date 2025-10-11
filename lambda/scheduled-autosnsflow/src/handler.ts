@@ -2047,8 +2047,8 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
     const full = await ddb.send(new GetItemCommand({
       TableName: TBL_SCHEDULED,
       Key: { PK: { S: String(pk) }, SK: { S: String(sk) } },
-      ProjectionExpression: "content, postedAt, timeRange, scheduledAt, autoPostGroupId, #st",
-      ExpressionAttributeNames: { "#st": "status" }
+      ProjectionExpression: "content, postedAt, timeRange, scheduledAt, autoPostGroupId, numericPostId, #st, #type",
+      ExpressionAttributeNames: { "#st": "status", "#type": "type" }
     }));
     const x = unmarshall(full.Item || {});
     // 詳細デバッグ: 対象アカウントだったらフルアイテムとパース後オブジェクトを出力
