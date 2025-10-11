@@ -1107,6 +1107,13 @@ export const handler = async (event: any = {}) => {
   try {
     await config.loadConfig();
     try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'APPCONFIG_LOADED', payload: { ok: true } }); } catch (_) {}
+    // Also expose AppConfig-derived presence flags into test output so test runs can verify
+    try {
+      const cfgOpenAi = (() => { try { return config.getConfigValue('OPENAI_API_KEY', null); } catch (_) { return null; } })();
+      const cfgQuotePrompt = (() => { try { return config.getConfigValue('QUOTE_PROMPT', null); } catch (_) { return null; } })();
+      (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+      (global as any).__TEST_OUTPUT__.push({ tag: 'APPCONFIG_VALUES', payload: { OPENAI_API_KEY_present_in_appconfig: !!cfgOpenAi, OPENAI_API_KEY_mask: cfgOpenAi ? ('***' + String(cfgOpenAi).slice(-6)) : null, QUOTE_PROMPT_present_in_appconfig: !!cfgQuotePrompt } });
+    } catch (_) {}
   } catch (e) {
     // Record failure; in testInvocation return error so user sees failure early
     try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'APPCONFIG_ERROR', payload: { error: String(e) } }); } catch (_) {}
