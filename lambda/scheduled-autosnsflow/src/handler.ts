@@ -1163,14 +1163,32 @@ export const handler = async (event: any = {}) => {
   const userSucceeded = 0;
 
   if (job === "hourly") {
-    /*
-    Hourly global processing is temporarily disabled for isolated quote testing.
-    When running in scheduled environment, this block would iterate all users and run
-    runHourlyJobForUser for each. For testing we skip that to avoid interference; tests
-    should invoke the handler with event.userId to run only the specified user's flow.
-    */
-    try { console.info('[info] hourly global processing is commented out for isolated testing'); } catch(_) {}
-    return { statusCode: 200, body: JSON.stringify({ processedUsers: 0, userSucceeded: 0, totals: { createdCount: 0, fetchedReplies: 0, replyDrafts: 0, skippedAccounts: 0, deletedCount: 0 } }) };
+    // Global hourly processing: iterate active users and run per-user hourly job
+    try {
+      const userIds = await getActiveUserIds();
+      const totals = { createdCount: 0, fetchedReplies: 0, replyDrafts: 0, skippedAccounts: 0, deletedCount: 0 } as any;
+      let succeeded = 0;
+      for (const uid of userIds) {
+        try {
+          const res = await runHourlyJobForUser(uid);
+          succeeded += 1;
+          totals.createdCount += Number(res.createdCount || 0);
+          totals.fetchedReplies += Number(res.fetchedReplies || 0);
+          totals.replyDrafts += Number(res.replyDrafts || 0);
+          totals.skippedAccounts += Number(res.skippedAccounts || 0);
+        } catch (e) {
+          try { await putLog({ userId: uid, type: 'hourly', status: 'error', message: 'run_hourly_failed', detail: { error: String(e) } }); } catch(_) {}
+        }
+      }
+
+      // Notify master channel with summary (best-effort)
+      try { await postDiscordMaster(formatMasterMessage({ job: 'hourly', startedAt, finishedAt: Date.now(), userTotal: userIds.length, userSucceeded: succeeded, totals })); } catch(_) {}
+
+      return { statusCode: 200, body: JSON.stringify({ processedUsers: userIds.length, userSucceeded: succeeded, totals }) };
+    } catch (e) {
+      console.warn('[error] hourly global processing failed:', String(e));
+      return { statusCode: 500, body: JSON.stringify({ error: String(e) }) };
+    }
   }
 
   // daily prune: delete scheduled posts older than 7 days
