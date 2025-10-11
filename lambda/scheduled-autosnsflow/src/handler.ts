@@ -1098,6 +1098,25 @@ export const handler = async (event: any = {}) => {
     }
   } catch (_) {}
 
+  // Support a direct AppConfig check action for tests
+  if (event?.checkAppConfig) {
+    try {
+      await config.loadConfig();
+      const keys = ['OPENAI_API_KEY', 'QUOTE_PROMPT', 'TBL_THREADS_ACCOUNTS'];
+      const out: any = {};
+      for (const k of keys) {
+        try { out[k] = config.getConfigValue(k, null); } catch (e) { out[k] = null; }
+      }
+      try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'APPCONFIG', payload: out }); } catch (_) {}
+      const testOut = (global as any).__TEST_OUTPUT__ || [];
+      try { (global as any).__TEST_OUTPUT__ = []; } catch(_) {}
+      return { statusCode: 200, body: JSON.stringify({ testInvocation: true, action: 'checkAppConfig', result: out, testOutput: testOut }) };
+    } catch (e) {
+      try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'APPCONFIG_ERROR', payload: String(e) }); } catch(_) {}
+      return { statusCode: 500, body: JSON.stringify({ testInvocation: true, action: 'checkAppConfig', error: String(e), testOutput: (global as any).__TEST_OUTPUT__ || [] }) };
+    }
+  }
+
   // (Removed) Temporary maintenance action: clear pendingForAutoPostAccount for already-posted items
 
   // If caller provided a userId for hourly/5min jobs, run only that user's flow
