@@ -764,21 +764,23 @@ async function createQuoteReservationForAccount(userId: any, acct: any) {
     };
 
     // Simple duplicate check against current scheduled/posts using canonicalSource (shortcode)
+    const pkForQuery = `USER#${userId}`;
+    const acctForQuery = acct.accountId || '';
     const existsQ2 = await ddb.send(new QueryCommand({
       TableName: TBL_SCHEDULED,
       KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
-      FilterExpression: 'sourcePostId = :sp',
-      ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'SCHEDULEDPOST#' }, ':sp': { S: canonicalSource } },
+      FilterExpression: 'accountId = :acc AND sourcePostId = :sp',
+      ExpressionAttributeValues: { ':pk': { S: pkForQuery }, ':pfx': { S: 'SCHEDULEDPOST#' }, ':acc': { S: acctForQuery }, ':sp': { S: canonicalSource } },
       Limit: 1,
     }));
-    if ((existsQ2 as any).Items && (existsQ2 as any).Items.length > 0) return { created: 0, skipped: true, sourcePostId: canonicalSource };
+    if ((existsQ2 as any).Items && (existsQ2 as any).Items.length > 0) return { created: 0, skipped: true, sourcePostId: canonicalSource, queriedPK: pkForQuery, queriedAccountId: acctForQuery, queriedSourcePostId: canonicalSource };
 
     // persist scheduled reservation using canonical sourcePostId
     scheduledItem.sourcePostId = { S: canonicalSource };
     try {
       await ddb.send(new PutItemCommand({ TableName: TBL_SCHEDULED, Item: scheduledItem }));
-      await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'ok', message: '引用予約を作成', detail: { scheduledPostId: id, sourcePostId: canonicalSource } });
-      return { created: 1, skipped: false, sourcePostId: canonicalSource };
+      await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'ok', message: '引用予約を作成', detail: { scheduledPostId: id, sourcePostId: canonicalSource, queriedPK: pkForQuery, queriedAccountId: acctForQuery, queriedSourcePostId: canonicalSource } });
+      return { created: 1, skipped: false, sourcePostId: canonicalSource, queriedPK: pkForQuery, queriedAccountId: acctForQuery, queriedSourcePostId: canonicalSource };
     } catch (e: any) {
       console.warn('[warn] createQuoteReservationForAccount failed during PutItem', String(e));
       try { await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'error', message: '引用予約作成中に例外', detail: { error: String(e) } }); } catch (_) {}
