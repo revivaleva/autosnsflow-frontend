@@ -896,7 +896,12 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
       let isQuoteType = false;
       let sourceTextForPrompt = "";
       try {
-        const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${scheduledPostId}` } }, ProjectionExpression: 'sourcePostText, type' }));
+        const full = await ddb.send(new GetItemCommand({
+          TableName: TBL_SCHEDULED,
+          Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${scheduledPostId}` } },
+          ProjectionExpression: 'sourcePostText, #t',
+          ExpressionAttributeNames: { '#t': 'type' }
+        }));
         const st = full.Item?.sourcePostText?.S || '';
         const t = full.Item?.type?.S || '';
       try {
