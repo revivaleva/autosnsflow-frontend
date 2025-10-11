@@ -3,7 +3,7 @@ import { QueryCommand, UpdateItemCommand, DeleteItemCommand } from '@aws-sdk/cli
 import { getTokenForAccount, deleteThreadsPostWithToken } from '@/lib/threads-delete';
 import { fetchThreadsPosts } from '@/lib/fetch-threads-posts';
 import { putLog } from '@/lib/logger';
-import deletePostsForAccountWithAdapters from '@autosnsflow/shared';
+import { deletePostsForAccountWithAdapters } from '@autosnsflow/shared';
 
 const MAX_DELETE_RETRIES = Number(process.env.DELETION_API_RETRY_COUNT || '3');
 
@@ -91,7 +91,11 @@ export async function deleteUserPosts({ userId, accountId, limit, dryRun }: { us
   // delegated to deletePostsForAccountWithAdapters via adapters built from frontend helpers
   const adapters = {
     fetchThreadsPosts: (opts: any) => fetchThreadsPosts(opts),
-    fetchUserReplies: (opts: any) => import('@/lib/fetch-user-replies').then(m => (m.default ? m.default(opts) : m(opts))),
+    fetchUserReplies: async (opts: any) => {
+      const m = await import('@/lib/fetch-user-replies');
+      const fn = (m && ((m as any).default || (m as any).fetchUserReplies || m));
+      return (fn as any)(opts);
+    },
     getTokenForAccount: ({ userId, accountId }: any) => import('@/lib/threads-delete').then(m => m.getTokenForAccount({ userId, accountId })),
     deleteThreadsPostWithToken: ({ postId, token }: any) => import('@/lib/threads-delete').then(m => m.deleteThreadsPostWithToken({ postId, token })),
     getScheduledAccount: async ({ userId, accountId }: any) => {
