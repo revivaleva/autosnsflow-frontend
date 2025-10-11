@@ -15,6 +15,8 @@
  - `Deprecate accessToken usage: remove all checks/fallbacks and prefer oauthAccessToken` — in_progress
  - `Design and implement token auto-refresh worker` — pending
  - `Mark accounts with missing/expired oauthAccessToken as reauth_required and show UI badge` — pending
+ - `Fix: ensure normal posts use normal prompts, not quote prompts` — pending
+   - Description: Investigate and fix code path where normal scheduled posts are generated using the quote-generation prompt. Ensure `generateAndAttachContent` selects prompt based on `type` (quote vs normal) and UserSettings/AppConfig precedence.
 <<<<<<< HEAD
 =======
 
