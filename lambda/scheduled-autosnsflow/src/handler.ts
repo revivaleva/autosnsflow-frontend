@@ -954,6 +954,13 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
           // Include the full prompt for test inspection (no API keys)
           (global as any).__TEST_OUTPUT__.push({ tag: 'QUOTE_OPENAI_REQ', payload: { model: sanitized.model, temperature: sanitized.temperature, max_tokens: sanitized.max_tokens, prompt: String(sanitized.prompt) } });
         } catch (_) {}
+
+      // Also emit explicit settings/payload snapshot (masked) so test runs can verify key presence and payload
+      try {
+        (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+        (global as any).__TEST_OUTPUT__.push({ tag: 'OPENAI_SETTINGS', payload: { settings_openai_present: !!settings.openaiApiKey, settings_openai_mask: settings.openaiApiKey ? ('***' + String(settings.openaiApiKey).slice(-6)) : null, settings_model: settings.model || DEFAULT_OPENAI_MODEL } });
+        (global as any).__TEST_OUTPUT__.push({ tag: 'OPENAI_CALL_PAYLOAD', payload: { model: sanitized.model, temperature: sanitized.temperature, max_tokens: sanitized.max_tokens, prompt: String(sanitized.prompt) } });
+      } catch (_) {}
       } catch (_) {}
 
       const openAiRes = await callOpenAIText({
