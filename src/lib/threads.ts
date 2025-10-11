@@ -70,9 +70,8 @@ export async function postToThreads({
   };
 
     const publish = async (creationId: string) => {
-    const publishEndpoint = userIdOnPlatform
-      ? `${base}/${encodeURIComponent(userIdOnPlatform)}/threads_publish`
-      : `${base}/me/threads_publish`;
+    // Always publish via /me/threads_publish to ensure create/publish user context matches token owner
+    const publishEndpoint = `${base}/me/threads_publish`;
     if (!creationId) throw new Error('creation_id missing');
     if (!primaryToken) throw { type: 'auth_required', needsReauth: true, message: 'oauthAccessToken required for publish' };
     const urlWithToken = `${publishEndpoint}?access_token=${encodeURIComponent(primaryToken)}`;
