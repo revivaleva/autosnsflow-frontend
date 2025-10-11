@@ -2665,9 +2665,13 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
       try {
         const userSettings = await getUserSettings(userId);
         try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_START', payload: { accountId: acct.accountId, pk, sk, settings_present: !!userSettings, settings_sample: { openaiApiKeyPresent: !!userSettings.openaiApiKey, model: userSettings.model || null } } }); } catch(_) {}
-        await generateAndAttachContent(userId, acct, sk.replace(/^SCHEDULEDPOST#/, ''), rec.theme || '', userSettings);
-        generated++;
-        try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_DONE', payload: { accountId: acct.accountId, pk, sk, generated: 1 } }); } catch(_) {}
+        const ok = await generateAndAttachContent(userId, acct, sk.replace(/^SCHEDULEDPOST#/, ''), rec.theme || '', userSettings);
+        if (ok) {
+          generated++;
+          try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_DONE', payload: { accountId: acct.accountId, pk, sk, generated: 1 } }); } catch(_) {}
+        } else {
+          try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL', payload: { accountId: acct.accountId, pk, sk } }); } catch(_) {}
+        }
       } catch (e) {
         // 失敗したらリトライタイミングを後ろにずらす
         const backoff = Math.min(3600, ((rec.generateAttempts || 0) + 1) * 60);
