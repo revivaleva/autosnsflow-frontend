@@ -92,33 +92,14 @@ export async function upsertReplyItem(userId: string, acct: any, { externalReply
   }
 }
 
-// 簡易的なログ出力（Lambda の putLog と同等の最小実装）
-async function putLog({
-  userId = "", type, accountId = "", targetId = "", status = "info", message = "", detail = {}
-}: any) {
-  try {
-    const allowDebug = (process.env.ALLOW_DEBUG_EXEC_LOGS === 'true' || process.env.ALLOW_DEBUG_EXEC_LOGS === '1');
-    const uid = userId || "unknown";
-    const shouldPersist = (status === 'error' && uid !== "unknown") || allowDebug;
-    if (!shouldPersist) {
-      // debug output removed
-      return;
-    }
+import { putLog as putLogCanonical } from '@/lib/logger';
 
-    const item = {
-      PK: { S: `USER#${uid}` },
-      SK: { S: `LOG#${Date.now()}#${Math.random().toString(36).slice(2,10)}` },
-      type: { S: type || "system" },
-      accountId: { S: accountId || "" },
-      targetId: { S: targetId || "" },
-      status: { S: status || "info" },
-      message: { S: String(message || "") },
-      detail: { S: JSON.stringify(detail || {}) },
-      createdAt: { N: String(nowSec()) },
-    };
-    await ddb.send(new PutItemCommand({ TableName: TBL_LOGS, Item: item }));
+// Adapter: reuse canonical putLog implementation
+async function putLog({ userId = "", type, accountId = "", targetId = "", status = "info", message = "", detail = {} }: any) {
+  try {
+    await putLogCanonical({ userId: userId || undefined, accountId: accountId || undefined, action: type || 'log', status, message, detail, targetId: targetId || undefined });
   } catch (e) {
-    console.warn("[warn] putLog skipped (fetch-replies):", String((e as Error)?.message || e));
+    console.warn('[putLog adapter - fetch-replies] failed', e);
   }
 }
 
@@ -126,7 +107,8 @@ async function putLog({
 export async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 }: any) {
   // debug output removed
   
-  if (!acct?.accessToken) throw new Error("Threads のトークン不足");
+  // support oauthAccessToken as the canonical token field
+  if (!acct?.accessToken && !acct?.oauthAccessToken) throw new Error("Threads のトークン不足");
   if (!acct?.providerUserId) throw new Error("Threads のユーザーID取得失敗");
   
   const since = nowSec() - lookbackSec;
@@ -207,7 +189,8 @@ export async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 2
       try {
         // 方法1: GAS同様の直接リプライ取得（replyApiId使用）
         // include is_reply_owned_by_me to enable reliable self-reply detection
-        let url = `https://graph.threads.net/v1.0/${encodeURIComponent(replyApiId)}/replies?fields=id,text,username,permalink,is_reply_owned_by_me&access_token=${encodeURIComponent(acct.accessToken)}`;
+        const tokenToUse = acct.oauthAccessToken || acct.accessToken || '';
+        let url = `https://graph.threads.net/v1.0/${encodeURIComponent(replyApiId)}/replies?fields=id,text,username,permalink,is_reply_owned_by_me&access_token=${encodeURIComponent(tokenToUse)}`;
         
         // debug output removed
         
@@ -216,13 +199,13 @@ export async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 2
         // 方法1が失敗した場合、conversation エンドポイントを試行
         if (!r.ok && attempt === 0) {
           // debug output removed
-          url = `https://graph.threads.net/v1.0/${encodeURIComponent(replyApiId)}/conversation?fields=id,text,username,permalink,is_reply_owned_by_me&access_token=${encodeURIComponent(acct.accessToken)}`;
+          url = `https://graph.threads.net/v1.0/${encodeURIComponent(replyApiId)}/conversation?fields=id,text,username,permalink,is_reply_owned_by_me&access_token=${encodeURIComponent(tokenToUse)}`;
           r = await fetch(url);
           // 代替IDがある場合は再試行
           if (!r.ok && post.numericPostId && post.postId && post.numericPostId !== post.postId) {
             const alternativeId = post.numericPostId === replyApiId ? post.postId : post.numericPostId;
             // debug output removed
-            url = `https://graph.threads.net/v1.0/${encodeURIComponent(alternativeId)}/replies?fields=id,text,username,permalink&access_token=${encodeURIComponent(acct.accessToken)}`;
+            url = `https://graph.threads.net/v1.0/${encodeURIComponent(alternativeId)}/replies?fields=id,text,username,permalink&access_token=${encodeURIComponent(tokenToUse)}`;
             r = await fetch(url);
           }
         }

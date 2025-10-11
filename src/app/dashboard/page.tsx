@@ -56,10 +56,20 @@ export default function DashboardPage() {
   }, []);
 
   // 【追加】タブ適用後のエラー一覧
+  // 同一のエラー（type+id+message が同じ）は複数回出力されても最新のものだけ表示する
   const filteredErrors = useMemo(() => {
     if (!stats) return [];
-    if (activeTab === 'all') return stats.recentErrors;
-    return stats.recentErrors.filter(e => e.type === activeTab);
+    // stats.recentErrors はサーバ側で降順ソートされているため、最初に出現したものが最新
+    const seen = new Set<string>();
+    const uniqueErrors: any[] = [];
+    for (const e of stats.recentErrors) {
+      const key = `${e.type}|${e.id}|${e.message}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      uniqueErrors.push(e);
+    }
+    if (activeTab === 'all') return uniqueErrors;
+    return uniqueErrors.filter((e) => e.type === activeTab);
   }, [stats, activeTab]);
 
   if (loading) {
@@ -101,7 +111,7 @@ export default function DashboardPage() {
         {/* 【追加】最近のエラー（タブ＋リスト） */}
         <section className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
           <div className="flex items-center justify-between border-b border-gray-200 dark:border-gray-700 px-4 py-3">
-            <h2 className="text-base font-semibold">最近のエラー（直近7日・最大20件）</h2>
+            <h2 className="text-base font-semibold">最近のエラー（直近7日・最大20件、重複除去後: {stats?.recentErrors?.length ?? 0}件）</h2>
             <Tabs active={activeTab} onChange={setActiveTab} />
           </div>
 

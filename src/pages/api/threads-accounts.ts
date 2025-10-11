@@ -39,6 +39,7 @@ const UPDATABLE_FIELDS = new Set([
   "quoteTimeStart",
   "quoteTimeEnd",
   "accessToken",
+  "oauthAccessToken",
   "clientId",
   "clientSecret",
 ]);
@@ -86,6 +87,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         autoPostGroupId: it.autoPostGroupId,
         secondStageContent: it.secondStageContent,
         monitoredAccountId: (it as any).monitoredAccountId || (it as any).monitored_account_id || "",
+        quoteTimeStart: (it as any).quoteTimeStart || "",
+        quoteTimeEnd: (it as any).quoteTimeEnd || "",
         // clientId/clientSecret may be present under various names depending on origin
         clientId: (it as any).clientId || (it as any).client_id || ((it as any).client && (it as any).client.id) || "",
         // Do not expose clientSecret plaintext. Instead expose a boolean flag indicating presence.
@@ -100,8 +103,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           const out = await ddb.send(new GetItemCommand({
             TableName: TBL,
             Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${acc.accountId}` } },
-            // include autoQuote so fallback read returns the attribute when present
-            ProjectionExpression: 'clientId, clientSecret, #st, monitoredAccountId, autoQuote',
+            // include fields so fallback read returns the attribute when present
+            ProjectionExpression: 'clientId, clientSecret, #st, monitoredAccountId, autoQuote, quoteTimeStart, quoteTimeEnd',
             ExpressionAttributeNames: { '#st': 'status' },
           }));
           const it: any = (out as any).Item || {};
@@ -111,6 +114,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           if (it.status && it.status.S) acc.status = it.status.S;
           // monitoredAccountId が DynamoDB にあれば反映
           if (it.monitoredAccountId && it.monitoredAccountId.S) acc.monitoredAccountId = it.monitoredAccountId.S;
+          if (it.quoteTimeStart && it.quoteTimeStart.S) acc.quoteTimeStart = it.quoteTimeStart.S;
+          if (it.quoteTimeEnd && it.quoteTimeEnd.S) acc.quoteTimeEnd = it.quoteTimeEnd.S;
           // autoQuote が DynamoDB にあれば反映
           if (typeof it.autoQuote !== 'undefined') {
             // autoQuote may be stored as BOOL
@@ -142,7 +147,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
 
     if (req.method === "POST") {
-      const { accountId, username, displayName, accessToken = "", clientId, clientSecret, monitoredAccountId } = safeBody(req.body);
+      const { accountId, username, displayName, accessToken = "", oauthAccessToken = "", clientId, clientSecret, monitoredAccountId, quoteTimeStart, quoteTimeEnd } = safeBody(req.body);
       if (!accountId) return res.status(400).json({ error: "accountId required" });
       // Prevent creating the same SK for different users: check if any existing item with SK ACCOUNT#<accountId> exists for a different PK
       try {
@@ -211,6 +216,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         username: { S: username || "" },
         displayName: { S: displayName || "" },
         accessToken: { S: accessToken }, // [ADD]
+        oauthAccessToken: { S: oauthAccessToken },
         autoPost: { BOOL: false },
         autoGenerate: { BOOL: false },
         autoReply: { BOOL: false },
@@ -241,6 +247,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (monitoredAccountId) {
         item.monitoredAccountId = { S: String(monitoredAccountId) };
       }
+      // Ensure defaults for quote time when not provided: full day
+      item.quoteTimeStart = { S: String(typeof quoteTimeStart !== 'undefined' && quoteTimeStart !== '' ? quoteTimeStart : '00:00') };
+      item.quoteTimeEnd = { S: String(typeof quoteTimeEnd !== 'undefined' && quoteTimeEnd !== '' ? quoteTimeEnd : '23:59') };
 
       // Ensure we are not creating duplicate account items with mismatched PKs.
       // Use conditional Put: only create when the exact PK/SK doesn't exist.
@@ -310,6 +319,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if ("autoPostGroupId" in body) setStr("autoPostGroupId", body.autoPostGroupId);
       if ("secondStageContent" in body) setStr("secondStageContent", body.secondStageContent);
       if ("monitoredAccountId" in body) setStr("monitoredAccountId", body.monitoredAccountId);
+      // quoteTime は空文字の場合にデフォルト値を与えるため、下のブロックで一度だけ設定する
+      if ("quoteTimeStart" in body) {
+        const v = (body.quoteTimeStart === undefined || body.quoteTimeStart === '') ? '00:00' : String(body.quoteTimeStart);
+        setStr("quoteTimeStart", v);
+      }
+      if ("quoteTimeEnd" in body) {
+        const v = (body.quoteTimeEnd === undefined || body.quoteTimeEnd === '') ? '23:59' : String(body.quoteTimeEnd);
+        setStr("quoteTimeEnd", v);
+      }
 
       if (sets.length === 1) return res.status(400).json({ error: "no fields" });
 

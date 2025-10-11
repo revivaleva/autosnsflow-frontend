@@ -15,6 +15,17 @@
  - `Deprecate accessToken usage: remove all checks/fallbacks and prefer oauthAccessToken` — in_progress
  - `Design and implement token auto-refresh worker` — pending
  - `Mark accounts with missing/expired oauthAccessToken as reauth_required and show UI badge` — pending
+ - `Fix: ensure normal posts use normal prompts, not quote prompts` — pending
+   - Description: Investigate and fix code path where normal scheduled posts are generated using the quote-generation prompt. Ensure `generateAndAttachContent` selects prompt based on `type` (quote vs normal) and UserSettings/AppConfig precedence.
+ - `Unify ExecutionLogs writes across Next.js APIs` — in_progress
+   - Files updated: `src/pages/api/threads/delete-post.ts`, `src/pages/api/fetch-replies.ts`, `src/pages/api/scheduled-posts/index.ts`
+   - Remaining: adapt other `src/pages/api/**` files that write ExecutionLogs (e.g. `threads-accounts.ts`, `auto-posts/create-today.ts`, `auto-post-group-items.ts`, etc.)
+ - `Standardize lambda ExecutionLogs item shape` — completed
+   - File updated: `lambda/scheduled-autosnsflow/src/handler.ts` (normalize fields: action, createdAt, detail length limit, targetId, deletedCount)
+ - `Introduce postKey / detailSignature extraction for dashboard aggregation` — pending
+   - Purpose: enable grouping by same post while allowing different error details to show separately
+ - `Run staging smoke tests for dashboard error dedupe` — pending
+   - Verify deduplication and normalizedMessage/detailSignature effectiveness
 
 ### 一時デバッグ用ソースの掃除
 
@@ -22,7 +33,6 @@
   - **短期対応**: 機能実装と動作確認が完了したら、不要なデバッグAPIを削除する。 (責任者: 実装者)
   - **期限**: 次回リリース直前のリファクタ作業内で削除する
   - **理由**: デバッグ用エンドポイントはセキュリティリスクとメンテナンスコストを増やすため、本番へは含めない
-
 
 （詳細は `.cursor/rules/pjspec.mdc` とソースの TODO コメントを参照）
 

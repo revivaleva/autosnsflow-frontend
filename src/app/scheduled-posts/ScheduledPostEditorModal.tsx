@@ -563,16 +563,32 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
 
     try {
       setIsGenerating(true);
+      // If the selected scheduled post appears to be a quote (editing an existing
+      // scheduled item with type === 'quote' or user selected a quote flow), call
+      // the quote-specific generator. We detect quote mode if initial?.timeRange
+      // isn't relevant; instead rely on presence of initial?.scheduledPostId +
+      // initial?.content empty but initial?.theme containing a source marker is not
+      // reliable. For now, provide a user-controlled switch: if the content is
+      // empty and initial?.type === 'quote' is present, call quote-generate.
+      // Since ScheduledPostType doesn't include `type` on the frontend currently,
+      // we'll detect by checking if `initial` contains `timeRange` and `content`.
+
+      // Decide purpose and payload
+      let purpose = "post-generate";
+      const payloadInput: any = { accountId, theme, prompt, personaModeUsed };
+      // If editing existing scheduled post and it looks like a quote (has no content but theme contains '引用' marker OR initial?.content is empty and initial has sourcePostText), call quote-generate
+      try {
+        if ((initial as any)?.type === 'quote' || ((initial as any)?.sourcePostText && !(initial as any)?.content)) {
+          purpose = "quote-generate";
+          payloadInput.sourcePostText = (initial as any)?.sourcePostText || "";
+        }
+      } catch (_) {}
+
       const res = await fetch("/api/ai-gateway", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({
-          purpose: "post-generate",
-          // [MOD] サーバ側でのログ紐付けのため accountId は送る
-          //       実際の生成テキストは prompt をメイン入力にする
-          input: { accountId, theme, prompt, personaModeUsed }, // [MOD]
-        }),
+        body: JSON.stringify({ purpose, input: payloadInput }),
       });
       const data = await res.json();
       if (!res.ok || data?.error) throw new Error(data?.error || "AI生成に失敗しました");
