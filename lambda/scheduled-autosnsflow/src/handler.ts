@@ -771,14 +771,14 @@ async function createQuoteReservationForAccount(userId: any, acct: any) {
       ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'SCHEDULEDPOST#' }, ':sp': { S: canonicalSource } },
       Limit: 1,
     }));
-    if ((existsQ2 as any).Items && (existsQ2 as any).Items.length > 0) return { created: 0, skipped: true };
+    if ((existsQ2 as any).Items && (existsQ2 as any).Items.length > 0) return { created: 0, skipped: true, sourcePostId: canonicalSource };
 
     // persist scheduled reservation using canonical sourcePostId
     scheduledItem.sourcePostId = { S: canonicalSource };
     try {
       await ddb.send(new PutItemCommand({ TableName: TBL_SCHEDULED, Item: scheduledItem }));
       await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'ok', message: '引用予約を作成', detail: { scheduledPostId: id, sourcePostId: canonicalSource } });
-      return { created: 1, skipped: false };
+      return { created: 1, skipped: false, sourcePostId: canonicalSource };
     } catch (e: any) {
       console.warn('[warn] createQuoteReservationForAccount failed during PutItem', String(e));
       try { await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'error', message: '引用予約作成中に例外', detail: { error: String(e) } }); } catch (_) {}
@@ -2544,6 +2544,7 @@ async function runHourlyJobForUser(userId: any) {
   let fetchedReplies = 0;
   let replyDrafts = 0;
   let skippedAccounts = 0;
+  const checkedShortcodes: string[] = [];
 
   for (const acct of accounts) {
     // First: try creating quote reservations for accounts that opted-in
@@ -2552,6 +2553,7 @@ async function runHourlyJobForUser(userId: any) {
       const qres = await createQuoteReservationForAccount(userId, acct);
       if (qres && qres.created) createdCount += qres.created;
       if (qres && qres.skipped) skippedAccounts++;
+      if (qres && qres.sourcePostId) checkedShortcodes.push(String(qres.sourcePostId));
     } catch (e) {
       console.warn('[warn] createQuoteReservationForAccount failed:', String(e));
     }
