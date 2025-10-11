@@ -730,10 +730,11 @@ async function createQuoteReservationForAccount(userId: any, acct: any) {
     const posts = Array.isArray(j?.data) ? j.data : [];
     if (!posts.length) return { created: 0, skipped: true };
     const p = posts[0];
-    const sourcePostId = String(p.id || p.shortcode || '');
+    // canonicalSource: prefer shortcode (string ID) for duplicate checks per policy
+    const canonicalSource = String(p.shortcode || p.id || '');
     const sourceShort = String(p.shortcode || '');
     const sourceText = String(p.text || '');
-    if (!sourcePostId) return { created: 0, skipped: true };
+    if (!canonicalSource) return { created: 0, skipped: true };
 
     // create reservation atomically with a source marker to avoid duplicates under concurrency
     const id = `${Date.now()}-${Math.floor(Math.random() * 100000)}`;
@@ -762,24 +763,21 @@ async function createQuoteReservationForAccount(userId: any, acct: any) {
       type: { S: 'quote' },
     };
 
-    // marker item key to ensure uniqueness per source in this user's partition
-    const markerKey = { PK: { S: `USER#${userId}` }, SK: { S: `SOURCE#${sourcePostId}` } };
-    const markerItem = { PK: markerKey.PK, SK: markerKey.SK, markerType: { S: 'quote_source' }, createdAt: { N: String(nowSecVal) } };
-
-    // Simple duplicate check against current scheduled/posts; if none, create reservation
+    // Simple duplicate check against current scheduled/posts using canonicalSource (shortcode)
     const existsQ2 = await ddb.send(new QueryCommand({
       TableName: TBL_SCHEDULED,
       KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
       FilterExpression: 'sourcePostId = :sp',
-      ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'SCHEDULEDPOST#' }, ':sp': { S: sourcePostId } },
+      ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'SCHEDULEDPOST#' }, ':sp': { S: canonicalSource } },
       Limit: 1,
     }));
     if ((existsQ2 as any).Items && (existsQ2 as any).Items.length > 0) return { created: 0, skipped: true };
 
-    // Create reservation (non-transactional, relying on single-threaded per-user assumption)
+    // persist scheduled reservation using canonical sourcePostId
+    scheduledItem.sourcePostId = { S: canonicalSource };
     try {
       await ddb.send(new PutItemCommand({ TableName: TBL_SCHEDULED, Item: scheduledItem }));
-      await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'ok', message: '引用予約を作成', detail: { scheduledPostId: id, sourcePostId } });
+      await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'ok', message: '引用予約を作成', detail: { scheduledPostId: id, sourcePostId: canonicalSource } });
       return { created: 1, skipped: false };
     } catch (e: any) {
       console.warn('[warn] createQuoteReservationForAccount failed during PutItem', String(e));
