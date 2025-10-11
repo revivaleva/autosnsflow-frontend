@@ -2593,7 +2593,7 @@ async function runHourlyJobForUser(userId: any) {
   ], "hourly");
   const content = metrics === "hourly：実行なし" ? metrics : `**[定期実行レポート] ${now} (hourly)**\n${metrics}`;
   await postDiscordLog({ userId, content });
-  return { userId, createdCount, fetchedReplies, replyDrafts, skippedAccounts };
+  return { userId, createdCount, fetchedReplies, replyDrafts, skippedAccounts, checkedShortcodes };
 }
 
 // === 予約レコードの本文生成をアカウント単位で段階的に処理する（短期対応） ===
