@@ -964,6 +964,11 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
         prompt,
       });
       text = openAiRes?.text;
+      // when running tests, attach the full OpenAI response to test output for inspection
+      try {
+        (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+        (global as any).__TEST_OUTPUT__.push({ tag: 'QUOTE_OPENAI_RESP', payload: { ok: Boolean(openAiRes), text: openAiRes?.text || null, raw: openAiRes } });
+      } catch (_) {}
 
       // log response length only (avoid full text in logs)
       try { /* debug removed */ } catch(_) {}

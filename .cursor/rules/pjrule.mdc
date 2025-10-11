@@ -49,6 +49,54 @@ description:
 
 ---
 
+## テスト出力ファイル管理と命名規則
+
+- テスト実行でローカルに書き出す Lambda の出力ファイル（`aws lambda invoke` の出力等）は原則 `/tmp` 配下に保存すること。
+- ファイル名には必ず実行日時を含める（例: `lambda_every5_YYYYMMDD_HHMMSS.json`）など、タイムスタンプを付与していつの実行か分かる命名を行うこと。
+- テスト終了時は生成したすべてのテストアーティファクトを削除すること（ローカルの `/tmp/lambda_*.json` など）。削除は手動でも自動スクリプトでも構わないが、必ず作業手順に明記する。テスト用ワークフローに自動削除コマンドを含めることを推奨する。
+- テスト用ログが CI／共有環境に残らないよう注意する。共有が必要な場合は要約だけを別ファイルにエクスポートし、機密情報（APIキー等）はマスクすること。
+
+## AppConfig の読み込みタイミングと使用方法（lambda / amplify / local）
+
+- 目的: AppConfig を一元管理し、Lambda とフロントエンドで同一の既定値を参照できるようにする。
+
+- 共通ルール:
+  - AppConfig の値は起動時またはワーカー処理開始時に読み込み、処理中に再度読み込みが必要ない限りキャッシュして使う（ロードの重複を避ける）。
+  - 重要な設定（例: `OPENAI_API_KEY` 等）が取得できない場合は fail-fast とし、明示的なエラーを出力して処理を停止する。
+  - DynamoDB の AppConfig 値は AttributeValue の形状が異なる場合があるため、`config.loadConfig()` は複数の形状に対応して正規化した値（文字列）を返すユーティリティを使うこと。
+
+- Lambda 環境:
+  - Lambda ハンドラ起動時に `config.loadConfig()` を一度だけ呼び、戻り値を処理全体で使い回す。テスト実行（`testInvocation`）時も同様にロードに失敗したら 500 を返す設計とする。
+  - AppConfig の取得はネットワーク／DynamoDB 依存のためタイムアウトや例外処理を厳格に行うこと。取得ログは `__TEST_OUTPUT__`（テスト時）や `ExecutionLogs` に保存する。
+
+- Amplify / フロントエンド:
+  - ローカル開発では `scripts/preload-app-config.js` のような仕組みで `.tmp/app-config.json` を生成し、起動時に参照する。開発中はこのファイルが最新の AppConfig を反映しているか確認すること。
+  - 本番ビルド時にはビルドパイプラインが AppConfig の最新値を注入するか、ランタイムで取得する設計にする（セキュリティ要件に応じて選択）。
+
+- ローカル開発:
+  - ローカルでの実行は `.tmp/app-config.json` を優先参照する。必ず `scripts/preload-app-config.js` を実行して最新設定を生成してからサーバを起動すること。
+  - ローカルで AppConfig が未設定の場合は明示的に警告を出し、テスト時に必要なキーが無い場合は手動で `.tmp/app-config.json` を編集する手順をドキュメント化する。
+
+## テストイベント実行手順（今回の every-5min / hourly テスト）
+
+- 概要: 定期ワーカー（`every-5min` / `hourly`）の特定対象（`userId` や `scheduledPostId`）の動作を検証するための手順。
+
+- 推奨手順（手順は 1 ステップ = 1 コマンド）:
+  1. テスト前: `/tmp` に古いテスト出力が残っていないことを確認・削除する。
+     - 例: `rm -f /tmp/lambda_*.json /tmp/lambda_every5_*.json /tmp/lambda_hourly_*.json`
+  2. テストイベント JSON を作成（ファイル名にタイムスタンプを付与）:
+     - 例: `/home/revival/tmp_every5_$(date +%Y%m%d_%H%M%S).json`
+  3. Lambda を呼び出して結果を /tmp に出力:
+     - `aws lambda invoke --function-name scheduled-autosnsflow --payload fileb:///path/to/event.json /tmp/lambda_YYYYMMDD_HHMMSS.json --log-type Tail`
+  4. 出力ファイルから必要なエントリを抽出（`testOutput` に req/resp を出力する実装が入っていることを前提）:
+     - `jq` や `python` スクリプトで `QUOTE_OPENAI_REQ/RESP`、`THREADS_QUOTE_CREATE_REQ/RESP`、`THREADS_QUOTE_PUBLISH_REQ/RESP` を抽出して保存する。
+  5. テスト結果の確認と保存: 重要な req/resp（機密をマスク済み）を運用用ログに保存するか、必要なら一時的に共有場所にアップロードする。
+  6. テスト後クリーンアップ: 生成したすべての `/tmp/lambda_*.json` と一時スクリプトを削除する。
+
+- 補足: テストで収集するログは機密情報をマスクして保存すること（APIキーやトークンは `***` に置換）。
+
+---
+
 （詳細は `.cursor/rules/pjspec.mdc` を参照）
 
 ---
