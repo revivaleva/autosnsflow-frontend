@@ -1198,6 +1198,13 @@ export const handler = async (event: any = {}) => {
           totals.fetchedReplies += Number(res.fetchedReplies || 0);
           totals.replyDrafts += Number(res.replyDrafts || 0);
           totals.skippedAccounts += Number(res.skippedAccounts || 0);
+        // Also attempt to process deletion queue for this user (batch deletions)
+        try {
+          const dqRes = await processDeletionQueueForUser(uid);
+          totals.deletedCount = (totals.deletedCount || 0) + Number(dqRes?.deletedCount || 0);
+        } catch (e) {
+          try { await putLog({ userId: uid, type: 'prune', status: 'warn', message: 'processDeletionQueueForUser failed', detail: { error: String(e) } }); } catch(_) {}
+        }
         } catch (e) {
           try { await putLog({ userId: uid, type: 'hourly', status: 'error', message: 'run_hourly_failed', detail: { error: String(e) } }); } catch(_) {}
         }
