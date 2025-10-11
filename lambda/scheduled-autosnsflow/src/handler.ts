@@ -1098,6 +1098,22 @@ export const handler = async (event: any = {}) => {
     }
   } catch (_) {}
 
+  // Unified AppConfig load at handler startup to avoid inconsistent loads across flows
+  try {
+    await config.loadConfig();
+    try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'APPCONFIG_LOADED', payload: { ok: true } }); } catch (_) {}
+  } catch (e) {
+    // Record failure; in testInvocation return error so user sees failure early
+    try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'APPCONFIG_ERROR', payload: { error: String(e) } }); } catch (_) {}
+    try { await putLog({ type: 'system', status: 'error', message: 'AppConfig load failed at handler startup', detail: { error: String(e) } }); } catch (_) {}
+    if (event?.testInvocation) {
+      const testOut = (global as any).__TEST_OUTPUT__ || [];
+      try { (global as any).__TEST_OUTPUT__ = []; } catch(_) {}
+      return { statusCode: 500, body: JSON.stringify({ testInvocation: true, error: 'AppConfig load failed', testOutput: testOut }) };
+    }
+    // otherwise continue and allow per-call callers to handle missing config
+  }
+
   // Support a direct AppConfig check action for tests
   if (event?.checkAppConfig) {
     try {
