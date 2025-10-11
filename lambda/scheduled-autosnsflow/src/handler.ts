@@ -2620,12 +2620,14 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
       // 定期実行は「本文が空のデータ」のみに対して生成を行う
       if (!contentEmpty) {
         // debug removed
+        try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_SKIP', payload: { accountId: acct.accountId, pk, sk, reason: 'content_exists' } }); } catch(_) {}
         continue;
       }
       const nextGen = Number(rec.nextGenerateAt || 0);
       // nextGenerateAt が将来に設定されていればスキップ（バックオフ等）
       if (nextGen > now) {
         // debug removed
+        try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_SKIP', payload: { accountId: acct.accountId, pk, sk, reason: 'nextGenerateAt_future', nextGenerateAt: nextGen, now } }); } catch(_) {}
         continue;
       }
 
@@ -2650,13 +2652,17 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
         // debug removed
       } catch (e) {
         // debug removed
+        try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_LOCK_FAIL', payload: { accountId: acct.accountId, pk, sk, error: String(e) } }); } catch(_) {}
         continue;
       }
 
       // 生成処理
       try {
-        await generateAndAttachContent(userId, acct, sk.replace(/^SCHEDULEDPOST#/, ''), rec.theme || '', await getUserSettings(userId));
+        const userSettings = await getUserSettings(userId);
+        try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_START', payload: { accountId: acct.accountId, pk, sk, settings_present: !!userSettings, settings_sample: { openaiApiKeyPresent: !!userSettings.openaiApiKey, model: userSettings.model || null } } }); } catch(_) {}
+        await generateAndAttachContent(userId, acct, sk.replace(/^SCHEDULEDPOST#/, ''), rec.theme || '', userSettings);
         generated++;
+        try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_DONE', payload: { accountId: acct.accountId, pk, sk, generated: 1 } }); } catch(_) {}
       } catch (e) {
         // 失敗したらリトライタイミングを後ろにずらす
         const backoff = Math.min(3600, ((rec.generateAttempts || 0) + 1) * 60);
@@ -2666,6 +2672,7 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
           UpdateExpression: "SET nextGenerateAt = :next, generateAttempts = if_not_exists(generateAttempts, :zero) + :inc REMOVE generateLock, generateLockedAt",
           ExpressionAttributeValues: { ":next": { N: String(now + backoff) }, ":inc": { N: "1" }, ":zero": { N: "0" } }
         }));
+        try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_ERROR', payload: { accountId: acct.accountId, pk, sk, error: String(e), nextGenerateAt: now + backoff } }); } catch(_) {}
       }
 
       // 正常終了または失敗後にロックをクリア
