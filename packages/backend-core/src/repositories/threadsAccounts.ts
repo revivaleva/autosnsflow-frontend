@@ -46,6 +46,7 @@ export type ThreadsAccountFull = {
   username: string;
   displayName: string;
   accessToken: string;
+  oauthAccessToken: string;
   providerUserId: string; // [ADD] リプライ取得に必要
 
   autoPost: boolean;
@@ -78,6 +79,7 @@ export async function fetchThreadsAccountsFull(
     "username",
     "displayName",
     "accessToken",
+    "oauthAccessToken",
     "providerUserId", // [ADD] リプライ取得に必要
     "autoPost",
     "autoGenerate",
@@ -114,6 +116,7 @@ export async function fetchThreadsAccountsFull(
     username: it?.username?.S || "",
     displayName: it?.displayName?.S || "",
     accessToken: it?.accessToken?.S || "",
+    oauthAccessToken: it?.oauthAccessToken?.S || "",
     providerUserId: it?.providerUserId?.S || "", // [ADD] リプライ取得に必要
 
     autoPost: Boolean(it?.autoPost?.BOOL || false),

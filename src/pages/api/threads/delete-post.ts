@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { GetItemCommand, DeleteItemCommand, PutItemCommand, QueryCommand } from "@aws-sdk/client-dynamodb";
 import { createDynamoClient } from "@/lib/ddb";
+import { logEvent, putLog as putLogCanonical } from '@/lib/logger';
 import { verifyUserFromRequest } from "@/lib/auth";
 
 const ddb = createDynamoClient();
@@ -8,29 +9,12 @@ const TBL_THREADS = "ThreadsAccounts";
 const TBL_SCHEDULED = "ScheduledPosts";
 const TBL_LOGS = "ExecutionLogs";
 
+// Local adapter to keep existing call-sites using putLog({...}) working
 async function putLog({ userId = "unknown", type, accountId = "", targetId = "", status = "info", message = "", detail = {} }: any) {
-  const allowDebug = (process.env.ALLOW_DEBUG_EXEC_LOGS === 'true' || process.env.ALLOW_DEBUG_EXEC_LOGS === '1');
-  const shouldPersist = (status === 'error' && !!userId) || allowDebug;
-  if (!shouldPersist) {
-    // debug output removed
-    return;
-  }
-
-  const item = {
-    PK: { S: `USER#${userId}` },
-    SK: { S: `LOG#${Date.now()}#${Math.random().toString(36).slice(2, 9)}` },
-    type: { S: type || "system" },
-    accountId: { S: accountId },
-    targetId: { S: targetId },
-    status: { S: status },
-    message: { S: message },
-    detail: { S: JSON.stringify(detail || {}) },
-    createdAt: { N: String(Math.floor(Date.now() / 1000)) },
-  };
   try {
-    await ddb.send(new PutItemCommand({ TableName: TBL_LOGS, Item: item }));
+    await putLogCanonical({ userId, accountId, action: type || 'log', status, message, detail, targetId });
   } catch (e) {
-    console.warn("[warn] putLog skipped:", String((e as Error)?.message || e));
+    console.warn('[putLog adapter] failed', e);
   }
 }
 

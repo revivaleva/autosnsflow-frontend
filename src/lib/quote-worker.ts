@@ -52,19 +52,21 @@ export async function runHourlyQuoteCreation(userId: string) {
       }
       if (!autoQuote) continue; // skip if account not opted-in
 
-      // fetch latest post for this account (limit 1)
-      const posts = await fetchThreadsPosts({ userId, accountId, limit: 1 });
+      // fetch latest post for the monitored account (limit 1)
+      // NOTE: use the monitored account's token to fetch its posts, not the quoting account's token
+      const posts = await fetchThreadsPosts({ userId, accountId: monitored, limit: 1 });
       if (!Array.isArray(posts) || posts.length === 0) continue;
       const p = posts[0];
-      const sourcePostId = String(p.id || p.shortcode || '');
-      if (!sourcePostId) continue;
+      // Use shortcode (string post id) as the canonical source identifier.
+      const shortcode = p.shortcode ? String(p.shortcode) : '';
+      if (!shortcode) continue; // require string post id (shortcode) per new policy
 
-      // Check if a scheduled post already references this sourcePostId
+      // Check if a scheduled post already references this source by sourcePostId (shortcode)
       const existsQ = await ddb.send(new QueryCommand({
         TableName: TBL_SCHEDULED,
         KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
         FilterExpression: 'sourcePostId = :sp',
-        ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'SCHEDULEDPOST#' }, ':sp': { S: sourcePostId } },
+        ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'SCHEDULEDPOST#' }, ':sp': { S: shortcode } },
         Limit: 1,
       }));
       const existItems = (existsQ as any).Items || [];
@@ -94,7 +96,9 @@ export async function runHourlyQuoteCreation(userId: string) {
         // marker for GSI (if needed)
         pendingForAutoPostAccount: { S: accountId },
         // quote metadata
-        sourcePostId: { S: sourcePostId },
+        // store numeric id for reference (if available) and use shortcode as canonical sourcePostId
+        numericPostId: { S: String(p.id || '') },
+        sourcePostId: { S: String(p.shortcode || '') },
         sourcePostShortcode: { S: String(p.shortcode || '') },
         type: { S: 'quote' },
       };

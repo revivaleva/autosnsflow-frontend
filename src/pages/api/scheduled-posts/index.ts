@@ -20,39 +20,14 @@ const TBL_REPLIES = "Replies";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const TBL_LOGS = "ExecutionLogs";
 
-// 任意の実行ログ出力（テーブル未作成時は黙ってスキップ）
-async function putLog({
-  userId = "unknown",
-  type,
-  accountId = "",
-  targetId = "",
-  status = "info",
-  message = "",
-  detail = {},
-}: any) {
-  // Follow same persistence policy as lambda putLog
-  const allowDebug = (process.env.ALLOW_DEBUG_EXEC_LOGS === 'true' || process.env.ALLOW_DEBUG_EXEC_LOGS === '1');
-  const shouldPersist = (status === 'error' && !!userId) || allowDebug;
-  if (!shouldPersist) {
-    // debug output removed
-    return;
-  }
+import { putLog as putLogCanonical } from '@/lib/logger';
 
-  const item = {
-    PK: { S: `USER#${userId}` },
-    SK: { S: `LOG#${Date.now()}#${crypto.randomUUID()}` },
-    type: { S: type || "system" },
-    accountId: { S: accountId },
-    targetId: { S: targetId },
-    status: { S: status },
-    message: { S: message },
-    detail: { S: JSON.stringify(detail || {}) },
-    createdAt: { N: String(Math.floor(Date.now() / 1000)) },
-  };
+// Adapter to canonical putLog
+async function putLog({ userId = "unknown", type, accountId = "", targetId = "", status = "info", message = "", detail = {} }: any) {
   try {
-    await ddb.send(new PutItemCommand({ TableName: TBL_LOGS, Item: item }));
+    await putLogCanonical({ userId: userId || undefined, accountId: accountId || undefined, action: type || 'log', status, message, detail, targetId: targetId || undefined });
   } catch (e) {
-    console.warn("[warn] putLog skipped:", String((e as Error)?.message || e));
+    console.warn('[putLog adapter - scheduled-posts] failed', e);
   }
 }
 

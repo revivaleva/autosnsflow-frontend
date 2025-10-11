@@ -67,8 +67,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       try {
         const tableName = (await import('@/lib/config').then(m => m.getConfigValue('TBL_DELETION_QUEUE'))) || TBL_DELETION_QUEUE;
         await ddb.send(new PutItemCommand({ TableName: tableName, Item: qItem }));
-        // Mark account as deleting and disable automation flags
-        await ddb.send(new UpdateItemCommand({ TableName: TBL_THREADS_ACCOUNTS, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } }, UpdateExpression: 'SET #st = :s, autoPost = :f, autoGenerate = :f, autoReply = :f', ExpressionAttributeNames: { '#st': 'status' }, ExpressionAttributeValues: { ':s': { S: 'deleting' }, ':f': { BOOL: false } } }));
+        // Mark account as deleting and disable automation flags (include autoQuote)
+        await ddb.send(new UpdateItemCommand({ TableName: TBL_THREADS_ACCOUNTS, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } }, UpdateExpression: 'SET #st = :s, autoPost = :f, autoGenerate = :f, autoReply = :f, autoQuote = :f', ExpressionAttributeNames: { '#st': 'status' }, ExpressionAttributeValues: { ':s': { S: 'deleting' }, ':f': { BOOL: false } } }));
         } catch (e) {
         await putLog({ userId, accountId, action: 'deletion_queue', status: 'error', message: String((e as any)?.message || e) });
         return res.status(500).json({ error: 'queue_create_failed' });
@@ -89,9 +89,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     } catch (_) {
       effectiveLimit = 100;
     }
-    // Perform actual deletion using unified deletePostsForAccount
-    const mod = await import('@/lib/delete-posts-for-account');
-    const { deletedCount, remaining } = await mod.deletePostsForAccount({ userId, accountId, limit: effectiveLimit });
+    // Perform actual deletion using local helper which delegates to shared implementation via adapters
+    const { deletedCount, remaining } = await deleteUserPosts({ userId, accountId, limit: effectiveLimit });
     // debug log removed
 
     if (remaining) {
@@ -111,8 +110,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       try {
         const tableName = (await import('@/lib/config').then(m => m.getConfigValue('TBL_DELETION_QUEUE'))) || TBL_DELETION_QUEUE;
         await ddb.send(new PutItemCommand({ TableName: tableName, Item: qItem }));
-        // set account status to deleting
-        await ddb.send(new UpdateItemCommand({ TableName: TBL_THREADS_ACCOUNTS, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } }, UpdateExpression: 'SET #st = :s', ExpressionAttributeNames: { '#st': 'status' }, ExpressionAttributeValues: { ':s': { S: 'deleting' } } }));
+        // set account status to deleting and disable autoQuote
+        await ddb.send(new UpdateItemCommand({ TableName: TBL_THREADS_ACCOUNTS, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } }, UpdateExpression: 'SET #st = :s, autoQuote = :f', ExpressionAttributeNames: { '#st': 'status' }, ExpressionAttributeValues: { ':s': { S: 'deleting' }, ':f': { BOOL: false } } }));
       } catch (e) {
         await putLog({ userId, accountId, action: 'deletion_queue', status: 'error', message: String((e as any)?.message || e) });
         return res.status(500).json({ error: 'queue_create_failed' });

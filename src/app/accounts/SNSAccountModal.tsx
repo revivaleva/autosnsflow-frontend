@@ -99,6 +99,9 @@ export default function SNSAccountModal({
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [clientSecretMasked, setClientSecretMasked] = useState(false);
+  // 保持: 表示時に DB から取得した clientId と secret の存在フラグ
+  const [originalClientId, setOriginalClientId] = useState("");
+  const [originalHasClientSecret, setOriginalHasClientSecret] = useState(false);
   const [characterImage, setCharacterImage] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [groupId, setGroupId] = useState("");
@@ -152,6 +155,11 @@ export default function SNSAccountModal({
       );
       setClientSecret("");
       setClientSecretMasked(hasSecret);
+      // store original values for change-detection
+      setOriginalClientId(
+        account.clientId || account.client_id || account.CLIENT_ID || (account?.client && account.client.id) || ""
+      );
+      setOriginalHasClientSecret(hasSecret);
       setGroupId(account.autoPostGroupId || "");
       // ▼【追加】不正なJSON文字列で落ちないようガード
       try {
@@ -173,6 +181,8 @@ export default function SNSAccountModal({
       setClientId("");
       setClientSecret("");
       setClientSecretMasked(false);
+      setOriginalClientId("");
+      setOriginalHasClientSecret(false);
       setGroupId("");
       setPersonaMode("detail");
       setPersonaSimple("");
@@ -186,26 +196,40 @@ export default function SNSAccountModal({
     setError("");
   }, [account, mode]);
 
+  // 変更判定: clientId が変わったか、clientSecret が編集モードになった or 元が空で新規入力されたか
+  function areCredentialsModified(): boolean {
+    try {
+      const idChanged = (originalClientId || "").trim() !== (clientId || "").trim();
+      const secretChanged =
+        (clientSecretMasked === false) || // マスク解除して編集可能にした = 変更意図あり
+        (!originalHasClientSecret && (clientSecret || "").trim() !== ""); // 元が空で入力がある
+      return idChanged || secretChanged;
+    } catch (e) {
+      return false;
+    }
+  }
+
   const handlePersonaChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setPersona({ ...persona, [e.target.name]: e.target.value });
 
   const handleCopyAccountData = (acc: any) => {
-    setDisplayName("");
-    setAccountId("");
-    setAccessToken("");
-    setClientId(acc.clientId || "");
-    setClientSecret(acc.clientSecret || "");
-    setGroupId("");
-    setCharacterImage(acc.characterImage || "");
+    // ペルソナ情報と投稿グループのみ上書きし、その他の入力値は保持する
+    setGroupId(acc.autoPostGroupId || acc.auto_post_group_id || "");
     setPersonaMode(acc.personaMode || "detail");
     setPersonaSimple(acc.personaSimple || "");
-    // ▼【追加】コピー元のJSONもガード
+    // コピー元のJSONを安全に取り込む
     try {
-      setPersona(acc.personaDetail ? JSON.parse(acc.personaDetail) : { ...emptyPersona }); // 【追加】
+      const detail = acc.personaDetail ?? acc.persona_detail ?? acc.persona;
+      if (typeof detail === "string") {
+        setPersona(detail.trim() === "" ? { ...emptyPersona } : JSON.parse(detail));
+      } else if (typeof detail === "object" && detail !== null) {
+        setPersona({ ...emptyPersona, ...(detail || {}) });
+      } else {
+        setPersona({ ...emptyPersona });
+      }
     } catch {
-      setPersona({ ...emptyPersona }); // 【追加】
+      setPersona({ ...emptyPersona });
     }
-    setSecondStageContent(acc.secondStageContent || ""); // ← 追加
     setCopyModalOpen(false);
   };
 
@@ -608,6 +632,12 @@ export default function SNSAccountModal({
                 type="button"
                 className="bg-yellow-500 text-white rounded px-3 py-1 hover:bg-yellow-600"
                 onClick={async () => {
+                  // 変更が検知されたら処理中止してメッセージを出す
+                  if (areCredentialsModified()) {
+                    alert('Threads App ID / Secret が編集されています。先に保存して続行してください');
+                    return;
+                  }
+
                   const apiUrl = '/api/auth/threads/start' + (accountId ? `?accountId=${encodeURIComponent(accountId)}` : '');
                   try {
                     const r = await fetch(apiUrl + '&raw=1', { headers: { Accept: 'application/json' } });

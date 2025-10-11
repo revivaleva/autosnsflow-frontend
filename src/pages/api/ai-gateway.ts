@@ -258,6 +258,44 @@ ${incomingReply}
 返信内容のみを出力してください（説明や前置きは不要）。`;
     max_tokens = 300;
 
+  } else if (purpose === "quote-generate") {
+    // 引用投稿用の本文生成
+    const accountId = (input?.accountId ?? "").toString();
+    const sourcePost = (input?.sourcePostText ?? input?.sourcePost ?? "").toString();
+    if (!accountId || !sourcePost) {
+      res.status(400).json({ error: "accountId and sourcePostText are required for quote-generate" }); return;
+    }
+
+    // persona を取得
+    let personaText = "";
+    try {
+      const acc = await client.send(new GetItemCommand({
+        TableName: process.env.TBL_THREADS_ACCOUNTS || 'ThreadsAccounts',
+        Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } },
+        ProjectionExpression: "#pm, #ps, #pd",
+        ExpressionAttributeNames: { "#pm": "personaMode", "#ps": "personaSimple", "#pd": "personaDetail" },
+      }));
+      const mode = (acc.Item?.personaMode?.S || "").toLowerCase();
+      const simple = acc.Item?.personaSimple?.S || "";
+      const detail = acc.Item?.personaDetail?.S || "";
+      if (mode === "detail") {
+        personaText = detail ? `【詳細ペルソナ(JSON)】\n${detail}` : "";
+      } else if (mode === "simple") {
+        personaText = simple ? `【簡易ペルソナ】${simple}` : "";
+      } else {
+        personaText = detail ? `【詳細ペルソナ(JSON)】\n${detail}` : (simple ? `【簡易ペルソナ】${simple}` : "");
+      }
+    } catch (e) {
+      personaText = "";
+    }
+
+    // Build quote prompt using shared builder
+    const { buildQuotePrompt } = await import('@/lib/generate-quote');
+    const pq = buildQuotePrompt({ policyPrompt: input?.policyPrompt || "", personaText, sourcePost, masterPrompt });
+    systemPrompt = pq.systemPrompt;
+    userPrompt = pq.userPrompt;
+    max_tokens = pq.max_tokens;
+
   } else if (purpose === "persona-generate") {
     systemPrompt = "あなたはSNS運用の専門家です。";
     userPrompt = `

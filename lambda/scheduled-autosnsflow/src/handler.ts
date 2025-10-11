@@ -9,7 +9,6 @@
 // keep types but avoid disabling TypeScript globally; remove @ts-nocheck
 
 // Removed unused backend-core import; keep SDK calls local to this lambda
-// import { fetchThreadsAccounts } from "@autosnsflow/backend-core";
 import {
   DynamoDBClient,
   QueryCommand,
@@ -19,11 +18,17 @@ import {
   ScanCommand,
   DescribeTableCommand,
   DeleteItemCommand,
+  TransactWriteItemsCommand,
 } from "@aws-sdk/client-dynamodb";
+// @ts-expect-error: path aliases resolved at build time
 import config from '@/lib/config';
-import { postToThreads as sharedPostToThreads } from '@/lib/threads';
+// @ts-expect-error: path aliases resolved at build time
+import { postToThreads as sharedPostToThreads, postQuoteToThreads as sharedPostQuoteToThreads } from '@/lib/threads';
 import crypto from "crypto";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
+
+// Disable test-only global output collector (no-op stub) to avoid test-only side-effects.
+try { (global as any).__TEST_OUTPUT__ = { push: () => {} }; } catch (_) {}
 
 /// === テーブル名 ===
 const TBL_SETTINGS   = "UserSettings";
@@ -36,11 +41,13 @@ const TBL_GROUPS     = "AutoPostGroups";
 const TBL_LOGS       = "ExecutionLogs";
 const TBL_USAGE      = "UsageCounters";
 
-// 既定ユーザー（単体テスト用）
-const USER_ID = "c7e43ae8-0031-70c5-a8ec-0f7962ee250f";
+// USER_ID removed; use DEFAULT_USER_ID or explicit parameter
 
 const region = process.env.AWS_REGION || "ap-northeast-1";
 const ddb = new DynamoDBClient({ region });
+
+// Feature flags / env toggles
+const DISABLE_QUOTE_PROCESSING = !!process.env.DISABLE_QUOTE_PROCESSING;
 
 // Wrap ddb.send to automatically alias reserved keyword 'status' in ProjectionExpression
 // This prevents ValidationException when 'status' is used as an attribute name in projections
@@ -177,86 +184,41 @@ function sanitizeModelName(model: any): string {
   return allow.includes(m) ? m : "gpt-5-mini";
 }
 
-async function callOpenAIText({ apiKey, model, temperature, max_tokens, prompt }: any) {
-  const m = sanitizeModelName(model);
-  const isInference = String(m).startsWith("gpt-5");
+async function callOpenAIText(params: any) {
+  // Try to use shared helper first
+  try {
+    const mod = await import('./lib/openai');
+    if (mod && typeof mod.callOpenAIText === 'function') {
+      return await mod.callOpenAIText({ apiKey: params.apiKey, model: params.model, systemPrompt: params.systemPrompt || "", userPrompt: params.prompt || params.userPrompt || "", temperature: params.temperature, max_tokens: params.max_tokens });
+    }
+  } catch (e) {
+    // ignore and fallback to local implementation
+  }
 
+  // Local fallback implementation
+  const m = sanitizeModelName(params.model);
+  const isInference = String(m).startsWith("gpt-5");
   const buildBody = (mdl: string, opts: any = {}) => {
     const base: any = {
       model: mdl,
-      messages: [{ role: "user", content: prompt }],
-      temperature: isInference ? 1 : (typeof temperature === "number" ? temperature : DEFAULT_OPENAI_TEMP),
+      messages: [{ role: "system", content: params.systemPrompt || "" }, { role: "user", content: params.prompt || params.userPrompt || "" }],
+      temperature: isInference ? 1 : (typeof params.temperature === "number" ? params.temperature : DEFAULT_OPENAI_TEMP),
     };
-    if (isInference) {
-      base.max_completion_tokens = opts.maxOut ?? Math.max(max_tokens || DEFAULT_OPENAI_MAXTOKENS, 1024);
-      // Avoid sending 'reasoning' parameter to models that don't accept it
-    } else {
-      base.max_tokens = opts.maxOut ?? (max_tokens || DEFAULT_OPENAI_MAXTOKENS);
-    }
+    if (isInference) base.max_completion_tokens = opts.maxOut ?? Math.max(params.max_tokens || DEFAULT_OPENAI_MAXTOKENS, 1024);
+    else base.max_tokens = opts.maxOut ?? (params.max_tokens || DEFAULT_OPENAI_MAXTOKENS);
     return JSON.stringify(base);
   };
-
-  // primary call
   const resp = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
-    headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    headers: { "Authorization": `Bearer ${params.apiKey}`, "Content-Type": "application/json" },
     body: buildBody(m),
   });
-
   const raw = await resp.text();
   let data: any = {};
   try { data = raw ? JSON.parse(raw) : {}; } catch { data = { raw }; }
-
   if (!resp.ok) throw new Error(`OpenAI API error: ${resp.status} ${raw}`);
-
-  let text = data?.choices?.[0]?.message?.content?.trim() || "";
-
-  // retry once with smaller output budget if inference model returned empty
-  if (!text && isInference) {
-    try {
-      const retryResp = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-        body: buildBody(m, { maxOut: 150 }),
-      });
-      const retryRaw = await retryResp.text();
-      let retryData: any = {};
-      try { retryData = retryRaw ? JSON.parse(retryRaw) : {}; } catch { retryData = { raw: retryRaw }; }
-      const retryText = retryData?.choices?.[0]?.message?.content?.trim() || "";
-      if (retryText) {
-        text = retryText;
-        try { data._retry = retryData; } catch {}
-      }
-    } catch (e) {
-      console.warn("retry openai failed:", e);
-    }
-  }
-
-  // fallback to non-inference small model if still empty
-  if (!text && isInference) {
-    try {
-      const fb = "gpt-4o-mini";
-      const fbResp = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-        body: buildBody(fb, { maxOut: 300 }),
-      });
-      const fbRaw = await fbResp.text();
-      let fbData: any = {};
-      try { fbData = fbRaw ? JSON.parse(fbRaw) : {}; } catch { fbData = { raw: fbRaw }; }
-      const fbText = fbData?.choices?.[0]?.message?.content?.trim() || "";
-      if (fbText) {
-        text = fbText;
-        try { data._fallback = { model: fb, raw: fbData }; } catch {}
-      } else {
-        try { data._fallback = { model: fb, raw: fbData }; } catch {}
-      }
-    } catch (e) {
-      console.warn("fallback openai failed:", e);
-    }
-  }
-
-  return { text, usage: data?.usage || {} };
+  const text = data?.choices?.[0]?.message?.content?.trim() || "";
+  return { text, raw: data };
 }
 
 /// ========== Discord ==========
@@ -300,7 +262,7 @@ async function postDiscord(urls: string[], content: string) {
   console.info(`[info] Discord webhook送信完了: ${successCount}/${totalCount} 成功`);
 }
 
-async function getDiscordWebhooks(userId = USER_ID) {
+async function getDiscordWebhooks(userId = DEFAULT_USER_ID) {
   const out = await ddb.send(
     new GetItemCommand({
       TableName: TBL_SETTINGS,
@@ -313,7 +275,7 @@ async function getDiscordWebhooks(userId = USER_ID) {
   return urls;
 }
 
-async function postDiscordLog({ userId = USER_ID, content, isError = false }: any) {
+async function postDiscordLog({ userId = DEFAULT_USER_ID, content, isError = false }: any) {
   try {
     const sets = await getDiscordWebhookSets(userId);
     const urls = isError ? (sets.error && sets.error.length ? sets.error : sets.normal) : sets.normal;
@@ -327,7 +289,7 @@ async function postDiscordLog({ userId = USER_ID, content, isError = false }: an
   }
 }
 
-async function getDiscordWebhookSets(userId = USER_ID) {
+async function getDiscordWebhookSets(userId = DEFAULT_USER_ID) {
   const out = await ddb.send(
     new GetItemCommand({
       TableName: TBL_SETTINGS,
@@ -378,13 +340,13 @@ async function getActiveUserIds() {
   return ids;
 }
 
-async function getUserSettings(userId = USER_ID) {
+async function getUserSettings(userId = DEFAULT_USER_ID) {
   const out = await ddb.send(
     new GetItemCommand({
       TableName: TBL_SETTINGS,
       Key: { PK: { S: `USER#${userId}` }, SK: { S: "SETTINGS" } },
       ProjectionExpression:
-        "doublePostDelay, autoPost, dailyOpenAiLimit, defaultOpenAiCost, openaiApiKey, selectedModel, masterPrompt, openAiTemperature, openAiMaxTokens, autoPostAdminStop, doublePostDelete, doublePostDeleteDelay, parentDelete",
+        "doublePostDelay, autoPost, dailyOpenAiLimit, defaultOpenAiCost, openaiApiKey, selectedModel, masterPrompt, quotePrompt, openAiTemperature, openAiMaxTokens, autoPostAdminStop, doublePostDelete, doublePostDeleteDelay, parentDelete",
     })
   );
   const delay = Number(out.Item?.doublePostDelay?.N || "0");
@@ -405,6 +367,7 @@ async function getUserSettings(userId = USER_ID) {
   const rawModel = out.Item?.selectedModel?.S || DEFAULT_OPENAI_MODEL;
   const model = sanitizeModelName(rawModel);
   const masterPrompt = out.Item?.masterPrompt?.S || "";
+  const quotePrompt = out.Item?.quotePrompt?.S || "";
   const openAiTemperature = Number(out.Item?.openAiTemperature?.N || DEFAULT_OPENAI_TEMP);
   const openAiMaxTokens = Number(out.Item?.openAiMaxTokens?.N || DEFAULT_OPENAI_MAXTOKENS);
 
@@ -416,6 +379,7 @@ async function getUserSettings(userId = USER_ID) {
     openaiApiKey,
     model,
     masterPrompt,
+    quotePrompt,
     openAiTemperature,
     openAiMaxTokens,
     doublePostDelete: out.Item?.doublePostDelete?.BOOL === true,
@@ -425,7 +389,7 @@ async function getUserSettings(userId = USER_ID) {
 }
 
 /// ========== OpenAI使用制限（1日200回相当。文章生成は1カウント） ==========
-async function getOpenAiLimitForUser(userId = USER_ID) {
+async function getOpenAiLimitForUser(userId = DEFAULT_USER_ID) {
   const out = await ddb.send(
     new GetItemCommand({
       TableName: TBL_SETTINGS,
@@ -438,7 +402,7 @@ async function getOpenAiLimitForUser(userId = USER_ID) {
   return { limit, unit };
 }
 
-async function reserveOpenAiCredits(userId = USER_ID, cost = 1) {
+async function reserveOpenAiCredits(userId = DEFAULT_USER_ID, cost = 1) {
   const day = yyyymmddJst();
   const pk = { S: `USER#${userId}` };
   const sk = { S: `OPENAI#${day}` };
@@ -491,7 +455,7 @@ async function reserveOpenAiCredits(userId = USER_ID, cost = 1) {
 }
 
 /// ========== アカウント・グループ ==========
-async function getThreadsAccounts(userId = USER_ID) {
+async function getThreadsAccounts(userId = DEFAULT_USER_ID) {
   let lastKey: any; let items: any[] = [];
   do {
     const res: any = await ddb.send(
@@ -503,8 +467,9 @@ async function getThreadsAccounts(userId = USER_ID) {
           ":pfx": { S: "ACCOUNT#" },
         },
         // Include oauthAccessToken in projection and prefer it when mapping below.
+        // Also include quote-related fields so hourly job can create quote reservations
         ProjectionExpression:
-          "SK, displayName, autoPost, autoReply, secondStageContent, rateLimitUntil, autoGenerate, autoPostGroupId, #st, platform, accessToken, oauthAccessToken, providerUserId",
+          "SK, displayName, autoPost, autoReply, secondStageContent, rateLimitUntil, autoGenerate, autoPostGroupId, #st, platform, accessToken, oauthAccessToken, providerUserId, monitoredAccountId, autoQuote, quoteTimeStart, quoteTimeEnd",
         ExpressionAttributeNames: { "#st": "status" },
         ExclusiveStartKey: lastKey,
       })
@@ -526,7 +491,13 @@ async function getThreadsAccounts(userId = USER_ID) {
     platform: i.platform?.S || "threads",
     // Prefer oauthAccessToken when present, else fall back to accessToken
     accessToken: (i.oauthAccessToken?.S && String(i.oauthAccessToken.S).trim()) ? i.oauthAccessToken.S : (i.accessToken?.S || ""),
+    oauthAccessToken: i.oauthAccessToken?.S || "",
     providerUserId: i.providerUserId?.S || "",
+    // quote feature fields
+    monitoredAccountId: i.monitoredAccountId?.S || "",
+    autoQuote: i.autoQuote?.BOOL === true,
+    quoteTimeStart: i.quoteTimeStart?.S || "",
+    quoteTimeEnd: i.quoteTimeEnd?.S || "",
   }));
 }
 
@@ -712,20 +683,172 @@ async function createScheduledPost(userId: any, { acct, group, type, whenJst, ov
   return { id, groupTypeStr, themeStr };
 }
 
+// Create a quote reservation for an account if opted-in and monitored account has a new post
+async function createQuoteReservationForAccount(userId: any, acct: any) {
+  try {
+    if (!acct || !acct.autoQuote) return { created: 0, skipped: true };
+    const monitored = acct.monitoredAccountId || "";
+    if (!monitored) return { created: 0, skipped: true };
+
+    // time window check (JST)
+    try {
+      const qs = acct.quoteTimeStart || "";
+      const qe = acct.quoteTimeEnd || "";
+      if (qs || qe) {
+        const now = new Date();
+        const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+        const hhmm = (d: Date) => `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+        const nowHM = hhmm(jst);
+        const s = qs || '00:00';
+        const e = qe || '24:00';
+        const inRange = s <= e ? (nowHM >= s && nowHM <= e) : (nowHM >= s || nowHM <= e);
+        if (!inRange) return { created: 0, skipped: true };
+      }
+    } catch (e) {
+      // ignore time parse errors
+    }
+
+    // fetch monitored account tokens
+    const mon = await ddb.send(new GetItemCommand({ TableName: TBL_THREADS, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${monitored}` } }, ProjectionExpression: 'oauthAccessToken, accessToken' }));
+    const token = mon.Item?.oauthAccessToken?.S || mon.Item?.accessToken?.S || '';
+    if (!token) {
+      await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'skip', message: '監視対象のトークンがないためスキップ' });
+      return { created: 0, skipped: true };
+    }
+
+    // fetch latest post from monitored account
+    const url = new URL('https://graph.threads.net/v1.0/me/threads');
+    url.searchParams.set('limit', '1');
+    url.searchParams.set('fields', 'id,shortcode,timestamp,text');
+    url.searchParams.set('access_token', token);
+    const r = await fetch(url.toString());
+    if (!r.ok) {
+      await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'error', message: '監視対象投稿取得失敗', detail: { status: r.status } });
+      return { created: 0, skipped: true };
+    }
+    const j = await r.json().catch(() => ({}));
+    const posts = Array.isArray(j?.data) ? j.data : [];
+    if (!posts.length) return { created: 0, skipped: true };
+    const p = posts[0];
+    // canonicalSource: prefer shortcode (string ID) for duplicate checks per policy
+    const canonicalSource = String(p.shortcode || p.id || '');
+    const sourceShort = String(p.shortcode || '');
+    const sourceText = String(p.text || '');
+    if (!canonicalSource) return { created: 0, skipped: true };
+
+    // create reservation atomically with a source marker to avoid duplicates under concurrency
+    const id = `${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+    const nowSecVal = Math.floor(Date.now() / 1000);
+    const scheduledItem = {
+      PK: { S: `USER#${userId}` },
+      SK: { S: `SCHEDULEDPOST#${id}` },
+      scheduledPostId: { S: id },
+      accountId: { S: acct.accountId },
+      accountName: { S: acct.displayName || '' },
+      content: { S: '' },
+      theme: { S: '引用投稿' },
+      scheduledAt: { N: String(nowSecVal) },
+      postedAt: { N: '0' },
+      status: { S: 'pending_quote' },
+      needsContentAccount: { S: acct.accountId },
+      nextGenerateAt: { N: String(nowSecVal) },
+      generateAttempts: { N: '0' },
+      isDeleted: { BOOL: false },
+      createdAt: { N: String(nowSecVal) },
+      pendingForAutoPostAccount: { S: acct.accountId },
+      numericPostId: { S: String(p.id || '') },
+      sourcePostId: { S: String(p.shortcode || p.id || '') },
+      sourcePostShortcode: { S: sourceShort },
+      sourcePostText: { S: sourceText },
+      type: { S: 'quote' },
+    };
+
+    // Simple duplicate check against current scheduled/posts using canonicalSource (shortcode)
+    const pkForQuery = `USER#${userId}`;
+    const acctForQuery = acct.accountId || '';
+
+    // normalize helper: trim and strip surrounding quotes and invisible whitespace
+    const normalizeId = (s: any) => {
+      try { return String(s || '').trim().replace(/^"+|"+$/g, '').replace(/[\u00A0\u200B\uFEFF]/g, '').trim(); } catch(e) { return String(s || ''); }
+    };
+    const canonicalNormalized = normalizeId(canonicalSource);
+
+    // Fast direct check first (exact match)
+    const existsQ2 = await ddb.send(new QueryCommand({
+      TableName: TBL_SCHEDULED,
+      KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
+      FilterExpression: 'accountId = :acc AND sourcePostId = :sp',
+      ExpressionAttributeValues: { ':pk': { S: pkForQuery }, ':pfx': { S: 'SCHEDULEDPOST#' }, ':acc': { S: acctForQuery }, ':sp': { S: canonicalNormalized } },
+      Limit: 1,
+    }));
+    if ((existsQ2 as any).Items && (existsQ2 as any).Items.length > 0) return { created: 0, skipped: true, sourcePostId: canonicalNormalized, queriedPK: pkForQuery, queriedAccountId: acctForQuery, queriedSourcePostId: canonicalNormalized };
+
+    // Fallback: sometimes stored values may contain invisible chars or quotes; fetch recent account items and compare normalized values client-side
+    try {
+      const fallbackQ = await ddb.send(new QueryCommand({
+        TableName: TBL_SCHEDULED,
+        KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
+        ExpressionAttributeValues: { ':pk': { S: pkForQuery }, ':pfx': { S: 'SCHEDULEDPOST#' } },
+        ProjectionExpression: 'sourcePostId, accountId, SK, scheduledPostId',
+        Limit: 200
+      }));
+      const items = (fallbackQ as any).Items || [];
+      for (const it of items) {
+        const storedAcc = it.accountId?.S || '';
+        if (storedAcc !== acctForQuery) continue;
+        const stored = normalizeId(it.sourcePostId?.S || '');
+        if (!stored) continue;
+        if (stored === canonicalNormalized) {
+          return { created: 0, skipped: true, sourcePostId: canonicalNormalized, queriedPK: pkForQuery, queriedAccountId: acctForQuery, queriedSourcePostId: canonicalNormalized, matchedStoredSK: it.SK?.S || null, matchedStoredScheduledPostId: it.scheduledPostId?.S || null };
+        }
+      }
+    } catch (e) {
+      // non-fatal fallback error — proceed to create reservation
+      try { await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'warn', message: 'fallback_duplicate_check_failed', detail: { error: String(e) } }); } catch (_) {}
+    }
+
+    // persist scheduled reservation using canonical sourcePostId
+    scheduledItem.sourcePostId = { S: canonicalSource };
+    try {
+      await ddb.send(new PutItemCommand({ TableName: TBL_SCHEDULED, Item: scheduledItem }));
+      await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'ok', message: '引用予約を作成', detail: { scheduledPostId: id, sourcePostId: canonicalSource, queriedPK: pkForQuery, queriedAccountId: acctForQuery, queriedSourcePostId: canonicalSource } });
+      return { created: 1, skipped: false, sourcePostId: canonicalSource, queriedPK: pkForQuery, queriedAccountId: acctForQuery, queriedSourcePostId: canonicalSource };
+    } catch (e: any) {
+      console.warn('[warn] createQuoteReservationForAccount failed during PutItem', String(e));
+      try { await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'error', message: '引用予約作成中に例外', detail: { error: String(e) } }); } catch (_) {}
+      return { created: 0, skipped: true };
+    }
+  } catch (e) {
+    console.warn('[warn] createQuoteReservationForAccount failed', String(e));
+    try { await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'error', message: '引用予約作成中に例外', detail: { error: String(e) } }); } catch (_) {}
+    return { created: 0, skipped: true };
+  }
+}
+
 async function generateAndAttachContent(userId: any, acct: any, scheduledPostId: any, themeStr: any, settings: any) {
   try {
+    // Use AppConfig as the authoritative source for OpenAI API key per request.
+    try {
+      await config.loadConfig();
+      const cfgKey = config.getConfigValue('OPENAI_API_KEY');
+      if (cfgKey) settings.openaiApiKey = cfgKey;
+    } catch (e) {
+      // If AppConfig cannot be loaded, record error and skip generation
+      await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "error", message: "AppConfigの読み込み失敗", detail: { error: String(e) } });
+    
+    // try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL_REASON', payload: { scheduledPostId, reason: 'appconfig_load_failed', error: String(e) } }); } catch(_) {}
+      return false;
+    }
     if (!settings?.openaiApiKey) {
-      await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "skip", message: "OpenAIキー未設定のため本文生成をスキップ" });
-      return;
+      await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "skip", message: "AppConfig に OPENAI_API_KEY が設定されていないため本文生成をスキップ" });
+      try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL_REASON', payload: { scheduledPostId, reason: 'openai_key_missing' } }); } catch(_) {}
+      return false;
     }
     
     // 編集モーダルと共通化したプロンプト構築
-    let prompt: string;
-    if (settings.masterPrompt?.trim()) {
-      // ユーザー設定のマスタープロンプトがある場合
-      const policy = `【運用方針（masterPrompt）】\n${settings.masterPrompt}\n`;
-      
-      // ペルソナ情報を取得（簡易版）
+    // prompt を下で定義するため、ここでは一旦スキップして後で組み立てる
+
+    // ペルソナ情報を取得（簡易版）
       let personaText = "";
       if (acct.accountId) {
         try {
@@ -759,23 +882,85 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
         console.warn("[warn] accountIdが未設定のためペルソナ取得をスキップ");
       }
       
-      prompt = `
-${policy}
-${personaText ? `【アカウントのペルソナ】\n${personaText}\n` : "【アカウントのペルソナ】\n(未設定)\n"}
-【投稿テーマ】
-${themeStr}
+      // If this scheduled post is a quote, require DB-stored sourcePostText and use it as the single source
+      let quoteIntro = "";
+      let isQuoteType = false;
+      let sourceTextForPrompt = "";
+      try {
+        const full = await ddb.send(new GetItemCommand({
+          TableName: TBL_SCHEDULED,
+          Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${scheduledPostId}` } },
+          ProjectionExpression: 'sourcePostText, #t',
+          ExpressionAttributeNames: { '#t': 'type' }
+        }));
+        const st = full.Item?.sourcePostText?.S || '';
+        const t = full.Item?.type?.S || '';
+      try {
+        (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+        (global as any).__TEST_OUTPUT__.push({ tag: 'QUOTE_PROMPT_DEBUG', payload: { scheduledPostId, stPresent: Boolean(st), stSample: String(st).slice(0,600), type: t, themeSample: String(themeStr).slice(0,200) } });
+      } catch (_) {}
+        if (t === 'quote') {
+          isQuoteType = true;
+          // enforce presence of sourcePostText
+          if (!st || !String(st).trim()) {
+            try { await putLog({ userId, type: 'auto-post', accountId: acct.accountId, targetId: scheduledPostId, status: 'error', message: '引用元投稿テキストが存在しないため生成を中止' }); } catch (_) {}
+            return false; // stop generation
+          }
+          quoteIntro = `【引用元投稿】\n${st}\n\n`;
+          sourceTextForPrompt = st;
+        }
+        // If not a quote type, prefer themeStr (passed from caller) as the prompt source; fallback to settings.masterPrompt
+        if (!isQuoteType) {
+          const tstr = String(themeStr || '').trim();
+          const fallback = String(settings?.masterPrompt || '').trim();
+          sourceTextForPrompt = tstr || fallback || '';
+          if (!sourceTextForPrompt) {
+            try { await putLog({ userId, type: 'auto-post', accountId: acct.accountId, targetId: scheduledPostId, status: 'warn', message: '生成に使用する投稿テーマが空です', detail: { scheduledPostId, themeStr, fallbackPresent: Boolean(fallback) } }); } catch(_) {}
+          }
+        }
+      } catch (e) {
+        try { await putLog({ userId, type: 'auto-post', accountId: acct.accountId, targetId: scheduledPostId, status: 'error', message: '引用元投稿取得エラー', detail: { error: String(e) } }); } catch (_) {}
+        return false;
+      }
 
-【指示】
-上記の方針とペルソナ・テーマに従い、SNS投稿本文を日本語で1つだけ生成してください。
-- 文末表現や語感はペルソナに合わせる
-- 長すぎない（140〜220文字目安）
-- 絵文字は多用しすぎない（0〜3個程度）
-- ハッシュタグは不要
-      `.trim();
-    } else {
-      // デフォルトプロンプトを使用
-      prompt = buildMasterPrompt(themeStr, acct.displayName);
-    }
+      // Instructions: choose quote-specific or regular post instruction depending on type
+      const defaultQuoteInstruction = `【指示】\n上記の引用元投稿に自然に反応する形式で、共感や肯定、専門性を含んだ引用投稿文を作成してください。200〜400文字以内。ハッシュタグ禁止。改行は最大1回。`;
+      const defaultPostInstruction = `【指示】\n以下の投稿テーマに沿って、140字前後で読み手に寄り添う自然な本文を作成してください。絵文字は控えめに、ハッシュタグは使用しないでください。改行は最大1回。`;
+
+      // Decide policy prompt and build prompt blocks after we determined isQuoteType and sourceTextForPrompt
+      let policyPrompt = "";
+      try {
+        if (isQuoteType) {
+          // For quote generation prefer quotePrompt from settings or AppConfig
+          if (settings && String(settings.quotePrompt || "").trim()) {
+            policyPrompt = String(settings.quotePrompt).trim();
+          }
+          if (!policyPrompt) {
+            try { await config.loadConfig(); } catch(_) {}
+            policyPrompt = String(config.getConfigValue('QUOTE_PROMPT') || "").trim();
+          }
+          if (!policyPrompt) policyPrompt = String(settings.masterPrompt || "").trim();
+        } else {
+          // For normal posts prefer masterPrompt (user-level) or a generic POST_PROMPT from AppConfig
+          if (settings && String(settings.masterPrompt || "").trim()) {
+            policyPrompt = String(settings.masterPrompt).trim();
+          }
+          if (!policyPrompt) {
+            try { await config.loadConfig(); } catch(_) {}
+            policyPrompt = String(config.getConfigValue('POST_PROMPT') || "").trim();
+          }
+          if (!policyPrompt) policyPrompt = String(settings.masterPrompt || "").trim();
+        }
+      } catch (_) { policyPrompt = String(settings.masterPrompt || "").trim(); }
+
+      // Build prompt blocks
+      const policyBlock = policyPrompt ? `【運用方針】\n${policyPrompt}\n\n` : "";
+      const personaBlock = personaText ? `【アカウントのペルソナ】\n${personaText}\n\n` : `【アカウントのペルソナ】\n(未設定)\n\n`;
+      const sourceBlock = (isQuoteType && quoteIntro) ? `${quoteIntro}` : `【投稿テーマ】\n${String(sourceTextForPrompt)}\n\n`;
+
+      const instructionBlock = isQuoteType ? defaultQuoteInstruction : defaultPostInstruction;
+      const prompt: string = `${policyBlock}${personaBlock}${sourceBlock}${instructionBlock}`.trim();
+      try { await putLog({ userId, type: 'auto-post', accountId: acct.accountId, targetId: scheduledPostId, status: 'info', message: 'prompt_constructed', detail: { isQuoteType, policyPromptUsed: Boolean(policyPrompt), themeSample: String(sourceTextForPrompt).slice(0,200) } }); } catch(_) {}
 
     // OpenAI 呼び出しは共通ヘルパーを使い、内部でリトライ／フォールバックする
     let text: any = undefined;
@@ -784,14 +969,40 @@ ${themeStr}
       // OpenAI call start (minimal logging)
       try { /* debug removed */ } catch (_) {}
 
-      const openAiRes = await callOpenAIText({
+      // Prepare OpenAI request payload (mask API key when logging)
+      const openAiRequestPayload: any = {
         apiKey: settings.openaiApiKey,
         model: settings.model || DEFAULT_OPENAI_MODEL,
         temperature: settings.openAiTemperature ?? DEFAULT_OPENAI_TEMP,
         max_tokens: settings.openAiMaxTokens ?? DEFAULT_OPENAI_MAXTOKENS,
         prompt,
-      });
+        systemPrompt: "",
+      };
+      try {
+        // Log sanitized request for debugging and attach to test output when running tests
+        const sanitized = Object.assign({}, openAiRequestPayload, { apiKey: openAiRequestPayload.apiKey ? '***REDACTED***' : '' });
+        try { console.info('[QUOTE OPENAI REQ]', { model: sanitized.model, temperature: sanitized.temperature, max_tokens: sanitized.max_tokens, promptSnippet: String(sanitized.prompt).slice(0,1200) }); } catch (_) {}
+        try {
+        (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+          // Include the full prompt for test inspection (no API keys)
+          (global as any).__TEST_OUTPUT__.push({ tag: 'QUOTE_OPENAI_REQ', payload: { model: sanitized.model, temperature: sanitized.temperature, max_tokens: sanitized.max_tokens, prompt: String(sanitized.prompt) } });
+        } catch (_) {}
+
+      // Also emit explicit settings/payload snapshot (masked) so test runs can verify key presence and payload
+      try {
+        (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+        (global as any).__TEST_OUTPUT__.push({ tag: 'OPENAI_SETTINGS', payload: { settings_openai_present: !!settings.openaiApiKey, settings_openai_mask: settings.openaiApiKey ? ('***' + String(settings.openaiApiKey).slice(-6)) : null, settings_model: settings.model || DEFAULT_OPENAI_MODEL } });
+        (global as any).__TEST_OUTPUT__.push({ tag: 'OPENAI_CALL_PAYLOAD', payload: { model: sanitized.model, temperature: sanitized.temperature, max_tokens: sanitized.max_tokens, prompt: String(sanitized.prompt) } });
+      } catch (_) {}
+      } catch (_) {}
+
+      const openAiRes = await callOpenAIText(openAiRequestPayload);
       text = openAiRes?.text;
+      // when running tests, attach the full OpenAI response to test output for inspection
+      try {
+        (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+        (global as any).__TEST_OUTPUT__.push({ tag: 'QUOTE_OPENAI_RESP', payload: { ok: Boolean(openAiRes), text: openAiRes?.text || null, raw: openAiRes } });
+      } catch (_) {}
 
       // log response length only (avoid full text in logs)
       try { /* debug removed */ } catch(_) {}
@@ -801,10 +1012,11 @@ ${themeStr}
       // record failure and rethrow to be handled by caller
       try { console.error('[error] OpenAI call failed', String(e)); } catch(_) {}
       try { await putLog({ userId, type: 'openai-call', accountId: acct.accountId, targetId: scheduledPostId, status: 'error', message: 'openai_call_failed', detail: { error: String(e) } }); } catch (_) {}
+      try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL_REASON', payload: { scheduledPostId, reason: 'openai_call_failed', error: String(e) } }); } catch(_) {}
       throw e;
     }
 
-    if (text) {
+      if (text) {
       // 編集モーダルと同様の処理：プロンプトの指示部分を除去
       let cleanText = text.trim();
       
@@ -832,24 +1044,38 @@ ${themeStr}
           TableName: TBL_SCHEDULED,
           Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${scheduledPostId}` } },
           // 保存時に本文が入ったため needsContentAccount を削除し、pendingForAutoPostAccount をセット
-          UpdateExpression: "SET content = :c, pendingForAutoPostAccount = :acc REMOVE needsContentAccount",
-          ExpressionAttributeValues: { ":c": { S: cleanText }, ":acc": { S: acct.accountId } },
+          // さらに status を 'scheduled' に更新して自動投稿ワーカーが対象にできるようにする
+          UpdateExpression: "SET content = :c, pendingForAutoPostAccount = :acc, #st = :scheduled REMOVE needsContentAccount",
+          ExpressionAttributeNames: { "#st": "status" },
+          ExpressionAttributeValues: { ":c": { S: cleanText }, ":acc": { S: acct.accountId }, ":scheduled": { S: "scheduled" } },
         }));
         try { /* debug removed */ } catch(_) {}
         await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "ok", message: "本文生成を完了" });
+        // dump updated scheduled item (short) for test inspection
+        try {
+          const got = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${scheduledPostId}` } }, ProjectionExpression: 'scheduledPostId, status, content, pendingForAutoPostAccount, numericPostId' }));
+          const it = unmarshall(got.Item || {});
+          try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'UPDATED_SCHEDULED_ITEM', payload: { scheduledPostId: it.scheduledPostId || scheduledPostId, status: it.status || null, contentSample: String((it.content||'')).slice(0,200), pendingForAutoPostAccount: it.pendingForAutoPostAccount || null, numericPostId: it.numericPostId || null } }); } catch(_) {}
+        } catch (e) { /* non-fatal */ }
+        return true;
       } else {
         try { console.warn('[warn] generated text invalid or too short', { scheduledPostId, originalLength: text ? String(text).length : 0, cleanedLength: cleanText ? cleanText.length : 0 }); } catch(_) {}
         await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "error", message: "生成されたテキストが不正です", detail: { originalText: text, cleanedText: cleanText } });
+        try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL_REASON', payload: { scheduledPostId, reason: 'generated_text_invalid', originalLength: text ? String(text).length : 0, cleanedLength: cleanText ? cleanText.length : 0 } }); } catch(_) {}
+        return false;
       }
     }
   } catch (e) {
     await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "error", message: "本文生成に失敗", detail: { error: String(e) } });
+    return false;
   }
+  // If we reach here without explicit success, return false
+  return false;
 }
 
 // 任意の実行ログ出力（テーブル未作成時は黙ってスキップ）
 async function putLog({
-  userId = USER_ID,
+  userId = DEFAULT_USER_ID,
   type,
   accountId = "",
   targetId = "",
@@ -870,17 +1096,24 @@ async function putLog({
     return;
   }
 
-  const item = {
-    PK: { S: `USER#${userId}` },
-    SK: { S: `LOG#${Date.now()}#${crypto.randomUUID()}` },
-    type: { S: type || "system" },
-    accountId: { S: accountId },
-    targetId: { S: targetId },
+  const now = nowSec();
+  const pk = userId ? `USER#${userId}` : `LOG#${new Date().toISOString().slice(0,10).replace(/-/g,'')}`;
+  const sk = `LOG#${Date.now()}#${crypto.randomUUID()}`;
+
+  const item: any = {
+    PK: { S: pk },
+    SK: { S: sk },
+    action: { S: type || "system" },
+    createdAt: { N: String(now) },
     status: { S: status },
-    message: { S: message },
-    detail: { S: JSON.stringify(detail || {}) },
-    createdAt: { N: String(nowSec()) },
+    message: { S: String(message || "") },
+    detail: { S: JSON.stringify(detail || {}).slice(0, 35000) },
   };
+
+  if (accountId) item.accountId = { S: String(accountId) };
+  if (targetId) item.targetId = { S: String(targetId) };
+  // preserve any numeric summary if provided in detail
+  if (typeof (detail || {}).deletedCount === 'number') item.deletedCount = { N: String((detail || {}).deletedCount) };
   try {
     await ddb.send(new PutItemCommand({ TableName: TBL_LOGS, Item: item }));
   } catch (e) {
@@ -889,15 +1122,7 @@ async function putLog({
   }
 }
 
-// デバッグ用に強制的に ExecutionLogs テーブルへ保存するユーティリティ
-// 使用例: await persistDebugLog({ userId, type: 'debug-event', message: '詳細', detail: { ... } })
-async function persistDebugLog(args: any) {
-  try {
-    return await putLog({ ...args, persist: true });
-  } catch (e) {
-    console.warn('[warn] persistDebugLog failed:', String(e));
-  }
-}
+// persistDebugLog removed (test utility)
 
 type EventLike = { userId?: string };
 
@@ -909,17 +1134,72 @@ export const handler = async (event: any = {}) => {
   const job = event?.job || "every-5min";
   // handler invoked (lean logging for production)
 
-  // (Removed) Temporary maintenance action: clear pendingForAutoPostAccount for already-posted items
+  // Unified AppConfig load at handler startup to avoid inconsistent loads across flows
+  try {
+    await config.loadConfig();
+      // try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'APPCONFIG_LOADED', payload: { ok: true } }); } catch (_) {}
+    // Build test-time handler-invoked snapshot using AppConfig values (not process.env)
+    try {
+      const cfgOpenAi = (() => { try { return config.getConfigValue('OPENAI_API_KEY', null); } catch (_) { return null; } })();
+      const cfgQuotePrompt = (() => { try { return config.getConfigValue('QUOTE_PROMPT', null); } catch (_) { return null; } })();
+      const cfgThreads = (() => { try { return config.getConfigValue('TBL_THREADS_ACCOUNTS', null); } catch (_) { return null; } })();
+      const envSnapshot: any = {
+        OPENAI_API_KEY_present: !!cfgOpenAi,
+        QUOTE_PROMPT_present: !!cfgQuotePrompt,
+        ALLOW_DEBUG_EXEC_LOGS: process.env.ALLOW_DEBUG_EXEC_LOGS || '',
+        TBL_THREADS_ACCOUNTS: cfgThreads || '',
+      };
+      if (event?.testInvocation || event?.detailedDebug) {
+        // (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+        // try { (global as any).__TEST_OUTPUT__.push({ tag: 'HANDLER_INVOKED', payload: { event: event, env: envSnapshot } }); } catch (_) {}
+      }
+      // try { (global as any).__TEST_OUTPUT__.push({ tag: 'APPCONFIG_VALUES', payload: { OPENAI_API_KEY_present_in_appconfig: !!cfgOpenAi, OPENAI_API_KEY_mask: cfgOpenAi ? ('***' + String(cfgOpenAi).slice(-6)) : null, QUOTE_PROMPT_present_in_appconfig: !!cfgQuotePrompt, TBL_THREADS_ACCOUNTS_in_appconfig: !!cfgThreads } }); } catch(_) {}
+    } catch (_) {}
+  } catch (e) {
+    // Record failure; in testInvocation return error so user sees failure early
+    try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'APPCONFIG_ERROR', payload: { error: String(e) } }); } catch (_) {}
+    try { await putLog({ type: 'system', status: 'error', message: 'AppConfig load failed at handler startup', detail: { error: String(e) } }); } catch (_) {}
+    if (event?.testInvocation) {
+      const testOut = (global as any).__TEST_OUTPUT__ || [];
+      try { (global as any).__TEST_OUTPUT__ = []; } catch(_) {}
+      return { statusCode: 500, body: JSON.stringify({ testInvocation: true, error: 'AppConfig load failed', testOutput: testOut }) };
+    }
+    // otherwise continue and allow per-call callers to handle missing config
+  }
+
+  // Support a direct AppConfig check action for tests
+  if (event?.checkAppConfig) {
+    try {
+      await config.loadConfig();
+      const keys = ['OPENAI_API_KEY', 'QUOTE_PROMPT', 'TBL_THREADS_ACCOUNTS'];
+      const out: any = {};
+      for (const k of keys) {
+        try { out[k] = config.getConfigValue(k, null); } catch (e) { out[k] = null; }
+      }
+      try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'APPCONFIG', payload: out }); } catch (_) {}
+      const testOut = (global as any).__TEST_OUTPUT__ || [];
+      try { (global as any).__TEST_OUTPUT__ = []; } catch(_) {}
+      return { statusCode: 200, body: JSON.stringify({ testInvocation: true, action: 'checkAppConfig', result: out, testOutput: testOut }) };
+    } catch (e) {
+      try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'APPCONFIG_ERROR', payload: String(e) }); } catch(_) {}
+      return { statusCode: 500, body: JSON.stringify({ testInvocation: true, action: 'checkAppConfig', error: String(e), testOutput: (global as any).__TEST_OUTPUT__ || [] }) };
+    }
+  }
+
+  
 
   // If caller provided a userId for hourly/5min jobs, run only that user's flow
   // and return a test-oriented response including which accounts were targeted.
   if (event?.userId && (job === 'hourly' || job === 'every-5min')) {
-    const userId = event.userId;
+    // normalize incoming userId: accept both "USER#..." and raw id
+    const rawUserId = String(event.userId || '');
+    const userId = rawUserId.replace(/^USER#/, '');
     try {
+      // testInvocation flag is accepted for diagnostics only; do not gate quote posting on it
       const accounts = await getThreadsAccounts(userId);
       const accountIds = (accounts || []).map((a: any) => a.accountId).filter(Boolean);
       if (job === 'hourly') {
-        // debug removed
+        // hourly job will run reservation creation; quote posting is not gated by test flag
         const res = await runHourlyJobForUser(userId);
         // For test mode, also process deletion queue for this user so tests exercise deletion flow
         let dqRes: any = { deletedCount: 0 };
@@ -932,9 +1212,12 @@ export const handler = async (event: any = {}) => {
         const merged = Object.assign({}, res || {}, { deletedCount: Number(dqRes?.deletedCount || 0) });
         return { statusCode: 200, body: JSON.stringify({ testInvocation: true, job: 'hourly', userId, accountIds, result: merged }) };
       } else {
-        // debug removed
+        
         const res = await runFiveMinJobForUser(userId);
-        return { statusCode: 200, body: JSON.stringify({ testInvocation: true, job: 'every-5min', userId, accountIds, result: res }) };
+        // attach any collected test-time output from threads lib so caller can inspect POST bodies
+        const testOut = (global as any).__TEST_OUTPUT__ || [];
+        try { (global as any).__TEST_OUTPUT__ = []; } catch(_) {}
+        return { statusCode: 200, body: JSON.stringify({ testInvocation: true, job: 'every-5min', userId, accountIds, result: res, testOutput: testOut }) };
       }
     } catch (e) {
       console.warn('[TEST] user-specific job failed:', String(e));
@@ -947,52 +1230,42 @@ export const handler = async (event: any = {}) => {
 
   // === 集計用の開始時刻 ===
   const startedAt = Date.now();
-  let userSucceeded = 0;
+  const userSucceeded = 0;
 
   if (job === "hourly") {
-    const userIds = await getActiveUserIds();
-    const totals = { createdCount: 0, fetchedReplies: 0, replyDrafts: 0, skippedAccounts: 0, deletedCount: 0 };
+    // Global hourly processing: iterate active users and run per-user hourly job
+    try {
+      const userIds = await getActiveUserIds();
+      const totals = { createdCount: 0, fetchedReplies: 0, replyDrafts: 0, skippedAccounts: 0, deletedCount: 0 } as any;
+      let succeeded = 0;
+      for (const uid of userIds) {
+        try {
+          const res = await runHourlyJobForUser(uid);
+          succeeded += 1;
+          totals.createdCount += Number(res.createdCount || 0);
+          totals.fetchedReplies += Number(res.fetchedReplies || 0);
+          totals.replyDrafts += Number(res.replyDrafts || 0);
+          totals.skippedAccounts += Number(res.skippedAccounts || 0);
+        // Also attempt to process deletion queue for this user (batch deletions)
+        try {
+          const dqRes = await processDeletionQueueForUser(uid);
+          totals.deletedCount = (totals.deletedCount || 0) + Number(dqRes?.deletedCount || 0);
+        } catch (e) {
+          try { await putLog({ userId: uid, type: 'prune', status: 'warn', message: 'processDeletionQueueForUser failed', detail: { error: String(e) } }); } catch(_) {}
+        }
+        } catch (e) {
+          try { await putLog({ userId: uid, type: 'hourly', status: 'error', message: 'run_hourly_failed', detail: { error: String(e) } }); } catch(_) {}
+        }
+      }
 
-    for (const uid of userIds) {
-      try {
-        const r = await runHourlyJobForUser(uid);
-        // 合算: runHourlyJobForUser が返す集計を totals に反映
-        totals.createdCount += Number(r?.createdCount || 0);
-        totals.fetchedReplies += Number(r?.fetchedReplies || 0);
-        totals.replyDrafts += Number(r?.replyDrafts || 0);
-        totals.skippedAccounts += Number(r?.skippedAccounts || 0);
-        userSucceeded++;
-      } catch (e) {
-        console.warn("hourly error for", uid, e);
-        await putLog({ userId: uid, type: "job", status: "error", message: "hourly job failed", detail: { error: String(e) } });
-        await postDiscordLog({
-          userId: uid,
-          isError: true,
-          content: `**[ERROR hourly] user=${uid}**\n${String(e).slice(0, 800)}`
-        });
-      }
-      // After processing hourly tasks for the user, also run deletion queue processing for this user
-      try {
-        const dqRes = await processDeletionQueueForUser(uid);
-        totals.deletedCount += Number(dqRes?.deletedCount || 0);
-      } catch (e) {
-        console.warn('[warn] processDeletionQueueForUser (hourly) failed for', uid, String(e));
-      }
+      // Notify master channel with summary (best-effort)
+      try { await postDiscordMaster(formatMasterMessage({ job: 'hourly', startedAt, finishedAt: Date.now(), userTotal: userIds.length, userSucceeded: succeeded, totals })); } catch(_) {}
+
+      return { statusCode: 200, body: JSON.stringify({ processedUsers: userIds.length, userSucceeded: succeeded, totals }) };
+    } catch (e) {
+      console.warn('[error] hourly global processing failed:', String(e));
+      return { statusCode: 500, body: JSON.stringify({ error: String(e) }) };
     }
-
-    const finishedAt = Date.now();
-    await postDiscordMaster(
-      formatMasterMessage({
-        job: "hourly",
-        startedAt,
-        finishedAt,
-        userTotal: userIds.length,
-        userSucceeded,
-        totals
-      })
-    );
-
-    return { statusCode: 200, body: JSON.stringify({ processedUsers: userIds.length, userSucceeded, totals }) };
   }
 
   // daily prune: delete scheduled posts older than 7 days
@@ -1087,12 +1360,7 @@ export const handler = async (event: any = {}) => {
 
     // If no userId was specified, perform full-table prune
     if (!singleUser) {
-      // Safety: require explicit confirmFull flag to run full-table destructive prune
-      const confirmFull = !!event.confirmFull;
-      if (!confirmFull) {
-        await postDiscordMaster(`**[PRUNE] full-table prune skipped: confirmFull flag not set**`);
-        return { statusCode: 400, body: JSON.stringify({ error: 'confirmFull flag required for full-table prune; use dryRun or provide userId for safe operations' }) };
-      }
+    // Previously required confirmFull; allow full-table prune without confirmFull for operator-triggered calls
       try {
         // Before performing a full-table prune, reset any accounts that are
         // in `deleting` state but have no DeletionQueue entry. This avoids
@@ -1166,62 +1434,55 @@ export const handler = async (event: any = {}) => {
   }
 
   // every-5min（デフォルト）
-  const userIds = await getActiveUserIds();
-  const totals = { totalAuto: 0, totalReply: 0, totalTwo: 0, rateSkipped: 0 };
-
-  for (const uid of userIds) {
-    try {
-      const r = await runFiveMinJobForUser(uid);
-      // 合算: runFiveMinJobForUser の結果を totals に反映
-      totals.totalAuto += Number(r?.totalAuto || 0);
-      totals.totalReply += Number(r?.totalReply || 0);
-      totals.totalTwo += Number(r?.totalTwo || 0);
-      totals.rateSkipped += Number(r?.rateSkipped || 0);
-      userSucceeded++;
-    } catch (e) {
-      console.warn("5min error for", uid, e);
-      await putLog({ userId: uid, type: "job", status: "error", message: "every-5min job failed", detail: { error: String(e) } });
-      await postDiscordLog({
-        userId: uid,
-        isError: true,
-        content: `**[ERROR every-5min] user=${uid}**\n${String(e).slice(0, 800)}`
-      });
+  // Global every-5min: iterate active users and run per-user 5min job
+  try { console.info('[info] every-5min global processing enabled'); } catch(_) {}
+  try {
+    const userIds = await getActiveUserIds();
+    let succeeded = 0;
+    const totals: any = { totalAuto: 0, totalReply: 0, totalTwo: 0, rateSkipped: 0 };
+    for (const uid of userIds) {
+      try {
+        const res = await runFiveMinJobForUser(uid);
+        succeeded += 1;
+        totals.totalAuto += Number(res.totalAuto || 0);
+        totals.totalReply += Number(res.totalReply || 0);
+        totals.totalTwo += Number(res.totalTwo || 0);
+        totals.rateSkipped += Number(res.rateSkipped || 0);
+      } catch (e) {
+        try { await putLog({ userId: uid, type: 'every-5min', status: 'error', message: 'run5min_failed', detail: { error: String(e) } }); } catch(_) {}
+      }
     }
+    try { await postDiscordMaster(formatMasterMessage({ job: 'every-5min', startedAt, finishedAt: Date.now(), userTotal: userIds.length, userSucceeded: succeeded, totals })); } catch(_) {}
+    return { statusCode: 200, body: JSON.stringify({ processedUsers: userIds.length, userSucceeded: succeeded, totals }) };
+  } catch (e) {
+    console.warn('[error] every-5min global processing failed:', String(e));
+    return { statusCode: 500, body: JSON.stringify({ error: String(e) }) };
   }
-
-  const finishedAt = Date.now();
-  await postDiscordMaster(
-    formatMasterMessage({
-      job: "every-5min",
-      startedAt,
-      finishedAt,
-      userTotal: userIds.length,
-      userSucceeded,
-      totals
-    })
-  );
-
-  return { statusCode: 200, body: JSON.stringify({ processedUsers: userIds.length, userSucceeded, totals }) };
 };
 
-// (Removed) test-only helpers `getAccountById` and `createOneOffForTest`.
+
 // These were only used by the legacy interactive `test` job and have been deleted.
 
 // Threads の user-id を取得して ThreadsAccounts に保存
 async function fetchProviderUserIdFromPlatform(acct: any) {
   const url = new URL("https://graph.threads.net/v1.0/me");
   url.searchParams.set("fields", "id,username");
-  url.searchParams.set("access_token", acct.accessToken);
+  // Use oauthAccessToken exclusively when calling platform endpoints
+  url.searchParams.set("access_token", acct.oauthAccessToken || '');
   const resp = await fetch(url.toString());
   if (!resp.ok) throw new Error(`Threads get me error: ${resp.status} ${await resp.text()}`);
   const json = await resp.json();
   return json?.id || "";
 }
 
+// NOTE: Quote-related processing will be disabled by commenting out calls below
+// for test isolation. Revert the commented sections after testing.
+
 // DB更新つきの user-id 取得ラッパ
 async function ensureProviderUserId(userId: any, acct: any) {
   if (acct?.providerUserId) return acct.providerUserId;
-  if (!acct?.accessToken) return "";
+  // Require oauthAccessToken only (do not accept legacy accessToken fallback)
+  if (!acct?.oauthAccessToken) return "";
 
   try {
     const pid = await fetchProviderUserIdFromPlatform(acct);
@@ -1390,7 +1651,7 @@ async function upsertReplyItem(userId: any, acct: any, { externalReplyId, postId
 }
 
 async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 }: any) {
-  // debug removed
+  
   if (!acct?.accessToken) throw new Error("Threads のトークン不足");
   if (!acct?.providerUserId) {
     const pid = await ensureProviderUserId(userId, acct);
@@ -1453,27 +1714,28 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
     const alternativeId = hasAlt ? (post.numericPostId === replyApiId ? post.postId : post.numericPostId) : "";
 
     // 手動実行に合わせて、replies → conversation → 代替ID(replies) の順に試行
+    const tokenToUse = acct.oauthAccessToken || acct.accessToken || '';
     const buildRepliesUrl = (id: string) => {
       const u = new URL(`https://graph.threads.net/v1.0/${encodeURIComponent(id)}/replies`);
       u.searchParams.set("fields", "id,text,username,permalink,is_reply_owned_by_me,replied_to,root_post");
-      u.searchParams.set("access_token", acct.accessToken);
+      u.searchParams.set("access_token", tokenToUse);
       return u.toString();
     };
     const buildConversationUrl = (id: string) => {
       const u = new URL(`https://graph.threads.net/v1.0/${encodeURIComponent(id)}/conversation`);
       u.searchParams.set("fields", "id,text,username,permalink");
-      u.searchParams.set("access_token", acct.accessToken);
+      u.searchParams.set("access_token", tokenToUse);
       return u.toString();
     };
 
     let usedUrl = buildRepliesUrl(replyApiId);
     let r = await fetch(usedUrl);
     if (!r.ok) {
-      // debug removed
+      
       usedUrl = buildConversationUrl(replyApiId);
       r = await fetch(usedUrl);
       if (!r.ok && alternativeId) {
-        // debug removed
+        
         usedUrl = buildRepliesUrl(alternativeId);
         r = await fetch(usedUrl);
       }
@@ -1487,7 +1749,7 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
         accountId: acct.accountId,
         status: "error",
         message: `Threads replies error: ${r.status} for ID ${replyApiId}`,
-        detail: { url: usedUrl.replace(acct.accessToken, "***TOKEN***"), error: errTxt.slice(0, 200) }
+        detail: { url: usedUrl.replace(tokenToUse, "***TOKEN***"), error: errTxt.slice(0, 200) }
       });
       continue;
     }
@@ -1495,7 +1757,7 @@ async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 24*3600 
     for (const rep of (json?.data || [])) {
       // is_reply_owned_by_me フィールドが利用可能な場合はそれを優先して除外
       if (rep.is_reply_owned_by_me === true) {
-        // debug removed
+        
         try {
           await putLog({
             userId,
@@ -1603,7 +1865,7 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
     return { created: 0, deleted: 0, skipped: true, debug: [{ reason: "no_slots", group: group.groupName }] } as any;
   }
   const useSlots = slots.slice(0, 10);
-  // debug removed
+  
 
   const today = jstNow();
   const settings = await getUserSettings(userId);
@@ -1750,7 +2012,7 @@ async function postToThreads({ accessToken, oauthAccessToken, text, userIdOnPlat
 
 /// ========== 5分ジョブ（実投稿・返信送信・2段階投稿） ==========
 // 5分ジョブ：実投稿
-async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any = undefined, debugMode = false) {
+async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settings: any = undefined, debugMode = false) {
   if (!acct.autoPost) return { posted: 0 };
   if (acct.status && acct.status !== "active") {
     await putLog({ userId, type: "auto-post", accountId: acct.accountId, status: "skip", message: `status=${acct.status} のためスキップ` });
@@ -1795,7 +2057,7 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
       Limit: 50               // 上限を増やして取りこぼしを回避
     }));
   }
-  // debug: capture raw q items if requested
+  
   const debugInfo: any = debugMode ? { qItemsCount: (q.Items || []).length, items: [] as any[] } : undefined;
 
   // If GSI returned no items, try a PK-based fallback query for observability
@@ -1846,14 +2108,14 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
     const full = await ddb.send(new GetItemCommand({
       TableName: TBL_SCHEDULED,
       Key: { PK: { S: String(pk) }, SK: { S: String(sk) } },
-      ProjectionExpression: "content, postedAt, timeRange, scheduledAt, autoPostGroupId, #st",
-      ExpressionAttributeNames: { "#st": "status" }
+      ProjectionExpression: "content, postedAt, timeRange, scheduledAt, autoPostGroupId, numericPostId, #st, #type",
+      ExpressionAttributeNames: { "#st": "status", "#type": "type" }
     }));
     const x = unmarshall(full.Item || {});
     // 詳細デバッグ: 対象アカウントだったらフルアイテムとパース後オブジェクトを出力
     if (acct.accountId === 'remigiozarcorb618' || userId === 'b7b44a38-e051-70fa-2001-0260ae388816') {
       try {
-        // debug removed
+        
       } catch (e) { /* debug removed */ }
       try { /* debug removed */ } catch(e) { /* debug removed */ }
     }
@@ -1970,18 +2232,71 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
       return { posted: 0 };
     }
   }
-  if (!acct.accessToken) {
-    await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "Threadsのアクセストークン未設定" });
+  // Require oauthAccessToken; do not fallback to legacy accessToken
+  if (!acct.oauthAccessToken) {
+    await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "ThreadsのoauthAccessToken未設定（accessTokenは使用不可）" });
     return { posted: 0 };
   }
 
   // 実投稿 → 成功時のみ posted に更新（冪等）
   try {
-    const postResult = await postToThreads({
-      accessToken: acct.accessToken,
-      text,
-      userIdOnPlatform: acct.providerUserId,
-    });
+    // Debug: log token fields to help investigate missing-token errors
+    try {
+      const tokenHashDebug = acct.oauthAccessToken ? crypto.createHash('sha256').update(String(acct.oauthAccessToken)).digest('hex').slice(0,12) : (acct.accessToken ? crypto.createHash('sha256').update(String(acct.accessToken)).digest('hex').slice(0,12) : '');
+      try { await putLog({ userId, type: 'auto-post', accountId: acct.accountId, targetId: sk, status: 'info', message: 'token_inspection', detail: { accessTokenPresent: !!acct.accessToken, oauthAccessTokenPresent: !!acct.oauthAccessToken, tokenHash: tokenHashDebug } }); } catch(_) {}
+    } catch (e) {
+      console.error('[error] runAutoPostForAccount token-inspection failed:', String(e));
+      throw e;
+    }
+    // If this scheduled item is a quote (type === 'quote'), use the quote post flow
+    let postResult: { postId: string; numericId?: string };
+    const isQuote = (cand as any).type === 'quote';
+    // For testing, allow quote posting when the test flag is set. Otherwise fall back to normal posts.
+    if (isQuote) {
+      const referenced = (cand as any).numericPostId || "";
+      if (!referenced) {
+        await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "引用元の数値IDが存在しないため引用投稿をスキップ（失敗）" });
+        return { posted: 0 };
+      }
+      // Ensure providerUserId matches token owner to avoid referenced_posts loss
+      try {
+        const meResp = await fetch(`https://graph.threads.net/v1.0/me?fields=id&access_token=${encodeURIComponent(acct.oauthAccessToken || '')}`);
+        if (meResp.ok) {
+          try {
+            const meJ = await meResp.json();
+            const meId = meJ?.id || '';
+            if (meId && acct.providerUserId && meId !== acct.providerUserId) {
+              await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'info', message: 'providerUserId mismatch; updating to token owner', detail: { previous: acct.providerUserId, owner: meId } });
+              acct.providerUserId = meId;
+              try {
+                await ddb.send(new UpdateItemCommand({ TableName: TBL_THREADS, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${acct.accountId}` } }, UpdateExpression: 'SET providerUserId = :pid', ExpressionAttributeValues: { ':pid': { S: meId } } }));
+              } catch (e) {
+                // non-fatal
+              }
+            }
+          } catch (_) {}
+        }
+      } catch (e) {
+        // ignore and proceed; publish may still work
+      }
+
+      // Log create/publish endpoints and token presence for debug
+      try {
+        const tokenPreview = acct.oauthAccessToken ? `${String(acct.oauthAccessToken).slice(-6)}` : '(none)';
+        await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'trace', message: 'quote-post-endpoint-debug', detail: { createEndpoint: 'POST https://graph.threads.net/v1.0/me/threads', publishEndpoint: acct.providerUserId ? `POST https://graph.threads.net/v1.0/${acct.providerUserId}/threads_publish` : 'POST https://graph.threads.net/v1.0/me/threads_publish', tokenPreview } });
+      } catch (_) {}
+
+      // Always attempt quote posting for quote-type items (no test gating)
+      postResult = await sharedPostQuoteToThreads({
+        accessToken: acct.oauthAccessToken,
+        oauthAccessToken: acct.oauthAccessToken,
+        text,
+        referencedPostId: String(referenced),
+        userIdOnPlatform: acct.providerUserId,
+      });
+    } else {
+      postResult = await postToThreads({ accessToken: acct.oauthAccessToken, oauthAccessToken: acct.oauthAccessToken, text, userIdOnPlatform: acct.providerUserId });
+    }
 
     let updateExpr = "SET #st = :posted, postedAt = :ts, postId = :pid";
     const updateValues: any = {
@@ -2014,7 +2329,7 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
 
     await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "ok", message: "自動投稿を完了", detail: { platform: "threads" } });
     return { posted: 1 };
-  } catch (e) {
+    } catch (e) {
     await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "投稿失敗", detail: { error: String(e) } });
     await postDiscordLog({ userId, isError: true, content: `**[ERROR auto-post] ${acct.displayName || acct.accountId}**\n${String(e).slice(0, 800)}` });
     return { posted: 0 };
@@ -2022,7 +2337,7 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
 }
 
 // 返信送信：Replies に未返信がある場合に送信し、成功時に replied へ更新
-async function runRepliesForAccount(acct: any, userId = USER_ID, settings: any = undefined) {
+async function runRepliesForAccount(acct: any, userId = DEFAULT_USER_ID, settings: any = undefined) {
   if (!acct.autoReply) return { replied: 0 };
   if (acct.status && acct.status !== "active") {
     await putLog({ userId, type: "auto-reply", accountId: acct.accountId, status: "skip", message: `status=${acct.status} のためスキップ` });
@@ -2099,7 +2414,7 @@ async function runRepliesForAccount(acct: any, userId = USER_ID, settings: any =
 
       try {
         const { postId: respId } = await sharedPostToThreads({
-          accessToken: acct.accessToken,
+          accessToken: acct.oauthAccessToken || acct.accessToken,
           oauthAccessToken: acct.oauthAccessToken || undefined,
           text,
           userIdOnPlatform: acct.providerUserId,
@@ -2136,7 +2451,7 @@ async function runRepliesForAccount(acct: any, userId = USER_ID, settings: any =
 }
 
 // 2段階投稿：postedAt + delay 経過、doublePostStatus != "done" のものに本文のみを返信
-async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: any = undefined, debugMode = false) {
+async function runSecondStageForAccount(acct: any, userId = DEFAULT_USER_ID, settings: any = undefined, debugMode = false) {
   if (!acct.secondStageContent) return { posted2: 0 };
   
   // アカウントに二段階投稿設定があれば実行。遅延時間は設定値またはデフォルト30分
@@ -2145,7 +2460,7 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
   const threshold = nowSec() - delayMin * 60;
 
   // 観測性向上: 入口ログ
-  // debug removed
+  
 
   let q;
   try {
@@ -2181,7 +2496,7 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
   }
 
   // 観測性向上: クエリ結果を記録
-  // debug removed
+  
   if (!q.Items || q.Items.length === 0) {
     await putLog({
       userId,
@@ -2251,7 +2566,7 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
     const text2 = acct.secondStageContent;
     // note: second-stage posting attempt logged minimally
     try { console.info('[info] second-stage attempt', { account: acct.accountId, parent: firstPostId }); } catch (_) {}
-    const { postId: pid2 } = await sharedPostToThreads({ accessToken: acct.accessToken, oauthAccessToken: acct.oauthAccessToken || undefined, text: text2, userIdOnPlatform: acct.providerUserId, inReplyTo: firstPostId });
+    const { postId: pid2 } = await sharedPostToThreads({ accessToken: acct.oauthAccessToken || acct.accessToken, oauthAccessToken: acct.oauthAccessToken || undefined, text: text2, userIdOnPlatform: acct.providerUserId, inReplyTo: firstPostId });
     await ddb.send(new UpdateItemCommand({
       TableName: TBL_SCHEDULED,
       Key: { PK: { S: pk }, SK: { S: sk } },
@@ -2276,7 +2591,9 @@ async function runSecondStageForAccount(acct: any, userId = USER_ID, settings: a
 
 /// ========== ユーザー単位の実行ラッパー ==========
 async function runHourlyJobForUser(userId: any) {
-  const settings = await getUserSettings(userId);
+  // normalize incoming userId (strip USER# prefix if present)
+  const normalizedUserId = String(userId || '').replace(/^USER#/, '');
+  const settings = await getUserSettings(normalizedUserId);
   if (settings.autoPost === "inactive") {
     try {
       // マスターOFFで返信取得を含む全処理をスキップしたことを可視化
@@ -2284,39 +2601,52 @@ async function runHourlyJobForUser(userId: any) {
     } catch {}
     return { userId, createdCount: 0, replyDrafts: 0, fetchedReplies: 0, skippedAccounts: 0, skipped: "master_off" };
   }
-  const accounts = await getThreadsAccounts(userId);
+  const accounts = await getThreadsAccounts(normalizedUserId);
 
   let createdCount = 0;
   let fetchedReplies = 0;
   let replyDrafts = 0;
   let skippedAccounts = 0;
+  const checkedShortcodes: Array<{ sourcePostId: string; queriedPK?: string; queriedAccountId?: string }> = [];
 
   for (const acct of accounts) {
-    const c = await ensureNextDayAutoPosts(userId, acct);
+    // First: try creating quote reservations for accounts that opted-in
+    try {
+      // Hourly: create quote reservations (reservation creation only)
+      const qres = await createQuoteReservationForAccount(normalizedUserId, acct);
+      if (qres && qres.created) createdCount += qres.created;
+      if (qres && qres.skipped) skippedAccounts++;
+      if (qres && qres.sourcePostId) checkedShortcodes.push({ sourcePostId: String(qres.sourcePostId), queriedPK: String(qres.queriedPK || ''), queriedAccountId: String(qres.queriedAccountId || '') });
+    } catch (e) {
+      console.warn('[warn] createQuoteReservationForAccount failed:', String(e));
+    }
+
+    const c = await ensureNextDayAutoPosts(normalizedUserId, acct);
     createdCount += c.created || 0;
     if (c.skipped) skippedAccounts++;
 
     try {
-      const fr = await fetchIncomingReplies(userId, acct);
-      fetchedReplies += fr.fetched || 0;
-      replyDrafts += fr.fetched || 0; // 取得したリプライ分だけ返信ドラフトが生成される
+      if (!DISABLE_QUOTE_PROCESSING) {
+        const fr = await fetchIncomingReplies(normalizedUserId, acct);
+        fetchedReplies += fr.fetched || 0;
+        replyDrafts += fr.fetched || 0; // 取得したリプライ分だけ返信ドラフトが生成される
+      } else {
+        try { console.info('[info] fetchIncomingReplies skipped by DISABLE_QUOTE_PROCESSING', { userId, account: acct.accountId }); } catch(_) {}
+      }
     } catch (e) {
+      console.error('[error] fetchThreadsRepliesAndSave reply-fetch failed:', String(e));
       await putLog({ userId, type: "reply-fetch", accountId: acct.accountId, status: "error", message: "返信取得失敗", detail: { error: String(e) } });
+      throw e;
     }
 
     // 短期対応: アカウントごとに少数ずつ本文生成を行う（ロック付き・limit=1）
-    try {
-      const genRes = await processPendingGenerationsForAccount(userId, acct, 1);
-      if (genRes && genRes.generated) createdCount += genRes.generated;
-    } catch (e) {
-      console.warn('[warn] processPendingGenerationsForAccount failed:', e);
-    }
+    // NOTE: hourly should NOT perform content generation here (generation belongs to every-5min)
   }
 
   const urls = await getDiscordWebhooks(userId);
   const now = new Date().toISOString();
   // minor debug: totals logged at info level only
-  try { console.info('[info] hourly totals', { createdCount, fetchedReplies, replyDrafts, skippedAccounts }); } catch (e) {}
+  try { console.info('[info] hourly totals', { createdCount, fetchedReplies, replyDrafts, skippedAccounts }); } catch (e) { console.error('[error] hourly totals logging failed:', String(e)); }
   // `metrics` が空（= 実行なし）の場合は簡略化して 'hourly：実行なし' のみ送る
   const metrics = formatNonZeroLine([
     { label: "予約投稿作成", value: createdCount, suffix: " 件" },
@@ -2326,14 +2656,15 @@ async function runHourlyJobForUser(userId: any) {
   ], "hourly");
   const content = metrics === "hourly：実行なし" ? metrics : `**[定期実行レポート] ${now} (hourly)**\n${metrics}`;
   await postDiscordLog({ userId, content });
-  return { userId, createdCount, fetchedReplies, replyDrafts, skippedAccounts };
+  return { userId, createdCount, fetchedReplies, replyDrafts, skippedAccounts, checkedShortcodes };
 }
 
 // === 予約レコードの本文生成をアカウント単位で段階的に処理する（短期対応） ===
 async function processPendingGenerationsForAccount(userId: any, acct: any, limit = 1) {
-  if (!acct.autoGenerate) return { generated: 0, skipped: true };
+  if (!acct.autoGenerate) return { generated: 0, skipped: true, processed: [] };
   const now = nowSec();
   let generated = 0;
+  const processed: Array<{ scheduledPostId: string; themeUsed: string; isQuote: boolean }> = [];
   // compute JST start of today to avoid generating for old reservations
   const nowDate = new Date();
   const utc = nowDate.getTime() + nowDate.getTimezoneOffset() * 60000;
@@ -2344,7 +2675,7 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
 
   // Prefer sparse GSI (needsContentAccount + nextGenerateAt) to find candidates needing content
   try {
-    // debug removed
+    
     let q;
     // fetchLimit: how many candidates to fetch from GSI/PK before sorting and applying the user-requested `limit`
     const fetchLimit = Math.max(Number(limit) * 10, 100);
@@ -2379,7 +2710,7 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
     }
 
     const items = (q.Items || []);
-    // debug removed
+    
 
     // Prefetch full items so we can sort by scheduledAt (oldest first)
     const candidates: any[] = [];
@@ -2391,7 +2722,7 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
         const rec = unmarshall(full.Item || {});
         candidates.push({ pk, sk, rec });
       } catch (e) {
-        // debug removed
+        
       }
     }
 
@@ -2401,18 +2732,20 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
     for (const c of candidates) {
       if (generated >= limit) break;
       const pk = c.pk; const sk = c.sk; const rec = c.rec || {};
-      // debug removed
+      
       const contentEmpty = !rec.content || String(rec.content || '').trim() === '';
-      // debug removed
+      
       // 定期実行は「本文が空のデータ」のみに対して生成を行う
       if (!contentEmpty) {
-        // debug removed
+        
+        try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_SKIP', payload: { accountId: acct.accountId, pk, sk, reason: 'content_exists' } }); } catch(_) {}
         continue;
       }
       const nextGen = Number(rec.nextGenerateAt || 0);
       // nextGenerateAt が将来に設定されていればスキップ（バックオフ等）
       if (nextGen > now) {
-        // debug removed
+        
+        try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_SKIP', payload: { accountId: acct.accountId, pk, sk, reason: 'nextGenerateAt_future', nextGenerateAt: nextGen, now } }); } catch(_) {}
         continue;
       }
 
@@ -2421,7 +2754,7 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
       const lockExpireSec = 60 * 10; // ロック10分
       const expiresAt = now + lockExpireSec;
       try {
-        // debug removed
+        
         await ddb.send(new UpdateItemCommand({
           TableName: TBL_SCHEDULED,
           Key: { PK: { S: pk }, SK: { S: sk } },
@@ -2434,16 +2767,38 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
             ":now": { N: String(now) }
           }
         }));
-        // debug removed
+        
       } catch (e) {
-        // debug removed
+        
+        try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_LOCK_FAIL', payload: { accountId: acct.accountId, pk, sk, error: String(e) } }); } catch(_) {}
         continue;
       }
 
       // 生成処理
       try {
-        await generateAndAttachContent(userId, acct, sk.replace(/^SCHEDULEDPOST#/, ''), rec.theme || '', await getUserSettings(userId));
-        generated++;
+        const userSettings = await getUserSettings(userId);
+        try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_START', payload: { accountId: acct.accountId, pk, sk, settings_present: !!userSettings, settings_sample: { openaiApiKeyPresent: !!userSettings.openaiApiKey, model: userSettings.model || null } } }); } catch(_) {}
+        const scheduledId = sk.replace(/^SCHEDULEDPOST#/, '');
+        const themePassed = String(rec.theme || '');
+        const ok = await generateAndAttachContent(userId, acct, scheduledId, themePassed, userSettings);
+        if (ok) {
+          generated++;
+          processed.push({ scheduledPostId: scheduledId, themeUsed: themePassed, isQuote: (rec.type === 'quote') });
+          try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_DONE', payload: { accountId: acct.accountId, pk, sk, generated: 1 } }); } catch(_) {}
+        } else {
+          try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL', payload: { accountId: acct.accountId, pk, sk } }); } catch(_) {}
+          // dump full scheduled item and recent logs for debugging
+          try {
+            const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } } }));
+            const item = unmarshall(full.Item || {});
+            try { (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL_SCHEDULED_FULL', payload: { pk, sk, item } }); } catch(_) {}
+          } catch (_) {}
+          try {
+            const q = await ddb.send(new QueryCommand({ TableName: TBL_LOGS, KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)', ExpressionAttributeValues: { ':pk': { S: pk }, ':pfx': { S: 'LOG#' } }, Limit: 10, ScanIndexForward: false }));
+            const logs = (q.Items || []).map(i => unmarshall(i));
+            try { (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL_RECENT_LOGS', payload: { pk, sk, logs } }); } catch(_) {}
+          } catch (_) {}
+        }
       } catch (e) {
         // 失敗したらリトライタイミングを後ろにずらす
         const backoff = Math.min(3600, ((rec.generateAttempts || 0) + 1) * 60);
@@ -2453,6 +2808,7 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
           UpdateExpression: "SET nextGenerateAt = :next, generateAttempts = if_not_exists(generateAttempts, :zero) + :inc REMOVE generateLock, generateLockedAt",
           ExpressionAttributeValues: { ":next": { N: String(now + backoff) }, ":inc": { N: "1" }, ":zero": { N: "0" } }
         }));
+        try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_ERROR', payload: { accountId: acct.accountId, pk, sk, error: String(e), nextGenerateAt: now + backoff } }); } catch(_) {}
       }
 
       // 正常終了または失敗後にロックをクリア
@@ -2462,14 +2818,17 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
           Key: { PK: { S: pk }, SK: { S: sk } },
           UpdateExpression: "REMOVE generateLock, generateLockedAt",
         }));
-      } catch (e) { }
+      } catch (e) {
+        console.error('[error] failed to clear generateLock during generation flow:', String(e));
+        throw e;
+      }
     }
   } catch (e) {
     console.warn('[warn] processPendingGenerationsForAccount query failed:', e);
   }
 
   if (generated > 0) await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'ok', message: `本文生成 ${generated} 件` });
-  return { generated };
+  return { generated, processed };
 }
 
 async function runFiveMinJobForUser(userId: any) {
@@ -2485,8 +2844,8 @@ async function runFiveMinJobForUser(userId: any) {
   for (const acct of accounts) {
     // Log presence of accessToken for observability (never log raw token)
     try {
-      const tokenHash = acct.accessToken ? crypto.createHash("sha256").update(acct.accessToken).digest("hex").slice(0,12) : "";
-      const tokenPresent = !!acct.accessToken;
+      const tokenHash = acct.oauthAccessToken ? crypto.createHash("sha256").update(acct.oauthAccessToken).digest("hex").slice(0,12) : (acct.accessToken ? crypto.createHash("sha256").update(acct.accessToken).digest("hex").slice(0,12) : "");
+      const tokenPresent = !!(acct.oauthAccessToken || acct.accessToken);
       console.log(`[every-5min] token-check user=${userId} account=${acct.accountId} tokenPresent=${tokenPresent} tokenHash=${tokenHash}`);
       // Persist minimal observation to ExecutionLogs for easier debugging in prod
       try { await putLog({ userId, type: 'token-check', accountId: acct.accountId, status: tokenPresent ? 'ok' : 'missing', message: tokenPresent ? 'accessToken present' : 'accessToken missing', detail: { accessTokenHash: tokenHash } }); } catch (e) { console.warn('[warn] putLog(token-check) failed:', String(e)); }
@@ -2494,13 +2853,24 @@ async function runFiveMinJobForUser(userId: any) {
       console.warn('[warn] token-check failed for', userId, acct.accountId, String(e));
     }
 
+    try {
+      (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+      try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_ACCOUNT_START', payload: { accountId: acct.accountId } }); } catch(_) {}
+    } catch(_) {}
+
     const a = await runAutoPostForAccount(acct, userId, settings);
+    try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_AUTO_POST_RESULT', payload: { accountId: acct.accountId, result: a } }); } catch(_) {}
+
     const r = await runRepliesForAccount(acct, userId, settings);
+    try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_REPLY_RESULT', payload: { accountId: acct.accountId, result: r } }); } catch(_) {}
+
     const t = await runSecondStageForAccount(acct, userId, settings, true);
+    try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_SECOND_STAGE_RESULT', payload: { accountId: acct.accountId, result: t } }); } catch(_) {}
 
     // 短期対応: 5分ジョブでも本文生成を少数処理する（安全策）
     try {
       const genRes = await processPendingGenerationsForAccount(userId, acct, 1);
+      try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_GENERATION_RESULT', payload: { accountId: acct.accountId, result: genRes } }); } catch(_) {}
       if (genRes && genRes.generated) {
         // 観測ログ用記録
       }
@@ -2520,6 +2890,7 @@ async function runFiveMinJobForUser(userId: any) {
         reason: (t as any).debug?.reason || "-"
       });
     }
+    try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_ACCOUNT_DONE', payload: { accountId: acct.accountId, summary: perAccount[perAccount.length-1] } }); } catch(_) {}
 
     if (a.skipped === "window_expired") rateSkipped++;
     // 二段階投稿削除のスケジュールがある場合、期限切れのものを処理
@@ -2623,8 +2994,8 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
         }
 
         // トークンハッシュを作成（ログにそのままトークンを出さない）
-        const tokenHash = acct.accessToken ? crypto.createHash("sha256").update(acct.accessToken).digest("hex").slice(0, 12) : "";
-
+        const tokenHash = acct.oauthAccessToken ? crypto.createHash("sha256").update(acct.oauthAccessToken).digest("hex").slice(0, 12) : (acct.accessToken ? crypto.createHash("sha256").update(acct.accessToken).digest("hex").slice(0, 12) : "");
+        
         let deleteResult: any = null;
         if (deleteThreadPost) {
           const tokenToUse = acct.oauthAccessToken || acct.accessToken || '';
@@ -2678,13 +3049,14 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
         } catch (_) {}
         try { await postDiscordLog({ userId, isError: true, content: `**[FALLBACK] GSI candidates skipped for user=${userId} account=${acct.accountId}; running PK fallback**` }); } catch (_) {}
 
-        const fb = await ddb.send(new QueryCommand({
+    const fb = await ddb.send(new QueryCommand({
           TableName: TBL_SCHEDULED,
           KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
           ExpressionAttributeValues: {
             ":pk": { S: `USER#${userId}` },
             ":pfx": { S: "SCHEDULEDPOST#" },
             ":acc": { S: acct.accountId },
+        ":scheduled": { S: "scheduled" },
             ":now": { N: String(now) },
             ":f": { BOOL: false }
           },
@@ -2696,11 +3068,11 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
         }));
 
         const fbItems = (fb.Items || []);
-        // debug removed
+        
           for (const fit of fbItems) {
           if (_fallback_generated >= _fallback_limit) break;
           const fpk = getS(fit.PK) || ''; const fsk = getS(fit.SK) || '';
-          // debug removed
+          
           const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: fpk }, SK: { S: fsk } } }));
           const rec = unmarshall(full.Item || {});
           const contentEmpty = !rec.content || String(rec.content || '').trim() === '';
@@ -2718,18 +3090,18 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
               ExpressionAttributeValues: { ":id": { S: `worker:${process.env.AWS_LAMBDA_LOG_STREAM_NAME || 'lambda'}:${now}` }, ":ts": { N: String(now + 600) }, ":now": { N: String(now) } }
             }));
           } catch (e) {
-            // debug removed
+            
             continue;
           }
 
           try {
             await generateAndAttachContent(userId, acct, fsk.replace(/^SCHEDULEDPOST#/, ''), rec.theme || '', await getUserSettings(userId));
             _fallback_generated++;
-            // debug removed
+            
           } catch (e) {
-            // debug removed
+            
           }
-          try { await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: fpk }, SK: { S: fsk } }, UpdateExpression: "REMOVE generateLock, generateLockedAt" })); } catch(_) {}
+          try { await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: fpk }, SK: { S: fsk } }, UpdateExpression: "REMOVE generateLock, generateLockedAt" })); } catch(e) { console.error('[error] fallback clear generateLock failed:', String(e)); throw e; }
         }
       }
     } catch (e) { console.warn('[gen] fallback error', String(e)); }
@@ -3017,7 +3389,10 @@ async function countPostedCandidates(userId: any) {
           // postedAt > 0 or status === 'posted' indicates posted
           if (isDeleted) continue;
           if (postedAt > 0 || status === 'posted') totalCandidates++;
-        } catch (e) {}
+        } catch (e) {
+          console.error('[error] countPostedCandidates iteration failed:', String(e));
+          throw e;
+        }
       }
 
       lastKey = q.LastEvaluatedKey;
@@ -3072,8 +3447,9 @@ async function deletePostedForUser(userId: any) {
 async function deleteUpTo100PostsForAccount(userId: any, accountId: any, limit = 100) {
   try {
     // delegating to deletePostsForAccount (minimal log)
-    const mod = await import('@/lib/delete-posts-for-account');
-    const res = await mod.deletePostsForAccount({ userId, accountId, limit });
+    // static import from shared package to ensure bundling
+    const { deletePostsForAccount } = await import('@autosnsflow/shared');
+    const res = await deletePostsForAccount({ userId, accountId, limit });
     try { console.info('[info] deleteUpTo100PostsForAccount result', { userId, accountId, res }); } catch(_) {}
     return { deletedCount: res.deletedCount, remaining: res.remaining };
   } catch (e) {

@@ -17,14 +17,13 @@ export async function postToThreads({
 }): Promise<{ postId: string; numericId?: string }> {
   const base = process.env.THREADS_GRAPH_BASE || "https://graph.threads.net/v1.0";
   const textPostAppId = process.env.THREADS_TEXT_APP_ID;
-  // decide token priority globally for this call: prefer oauthAccessToken when available
-  const primaryToken = oauthAccessToken && String(oauthAccessToken).trim() ? oauthAccessToken : (accessToken || '');
+  // Use oauthAccessToken only (no accessToken fallback)
+  const primaryToken = oauthAccessToken && String(oauthAccessToken).trim() ? oauthAccessToken : '';
 
   const create = async () => {
     const body: Record<string, any> = {
       media_type: "TEXT",
       text,
-      access_token: accessToken,
     };
     if (textPostAppId) body.text_post_app_id = textPostAppId;
     
@@ -45,75 +44,19 @@ export async function postToThreads({
 
     // debug output removed
 
-    // try primary token first (uses primaryToken from outer scope)
-    body.access_token = primaryToken;
-    let r = await fetch(endpoint, {
+    if (!primaryToken) throw { type: 'auth_required', needsReauth: true, message: 'oauthAccessToken required for create' };
+    const url = `${endpoint}?access_token=${encodeURIComponent(primaryToken)}`;
+    let r = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-
-    // helper: decide whether a 400 response indicates token/permission-like issue worth retrying with oauth token
-    const shouldRetryOn400 = (txt: string) => {
-      if (!txt) return false;
-      const t = String(txt || '').toLowerCase();
-      return t.includes('unsupported post request') || t.includes('missing permissions') || t.includes('does not support this operation') || t.includes('does not exist');
-    };
-
-    // If initial request failed, try the alternative token once (if available)
-    if (!r.ok) {
-      const alternativeToken = primaryToken === oauthAccessToken ? accessToken : oauthAccessToken;
-      if (alternativeToken && alternativeToken !== primaryToken) {
-          try {
-          // info log removed
-          body.access_token = alternativeToken;
-          const r2 = await fetch(endpoint, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
-          });
-          r = r2;
-        } catch (e) {
-          // fall through to error handling
-        }
-      }
-    }
-
-    // If still not ok, consider retrying on some 400 responses that indicate permission/resource issues
-    if (!r.ok) {
-      const errText = await r.text().catch(() => "");
-      if (r.status === 400 && shouldRetryOn400(errText)) {
-        const alternativeToken = primaryToken === oauthAccessToken ? accessToken : oauthAccessToken;
-        if (alternativeToken && alternativeToken !== primaryToken) {
-          try {
-            // info log removed
-            body.access_token = alternativeToken;
-            const r3 = await fetch(endpoint, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(body),
-            });
-            r = r3;
-          } catch (e) {
-            // fall through
-          }
-        }
-      }
-
-      if (!r.ok) {
-        const finalText = await r.text().catch(() => errText || "");
-        throw new Error(`threads_create_failed: ${r.status} ${finalText}`);
-      }
-    }
-
     const tx = await r.text().catch(() => "");
-    // Log entire me/threads create response for debugging (no webhook)
-    try { /* debug removed */ } catch (_) {}
     if (!r.ok) {
       let parsedErr: any = {};
       try { parsedErr = JSON.parse(tx || '{}').error || {}; } catch (_) { parsedErr = {}; }
       if (parsedErr?.code === 190) {
-        throw { type: 'auth_required', needsReauth: true, status: r.status, code: parsedErr.code, error_subcode: parsedErr.error_subcode || null, message: parsedErr.message || '', fbtrace_id: parsedErr.fbtrace_id || null };
+        throw { type: 'auth_required', needsReauth: true, status: r.status, code: parsedErr.code, message: parsedErr.message || '', fbtrace_id: parsedErr.fbtrace_id || null };
       }
       throw new Error(`threads_create_failed: ${r.status} ${tx}`);
     }
@@ -121,97 +64,26 @@ export async function postToThreads({
     try { j = JSON.parse(tx); } catch {}
     const creationId = j?.id;
     if (!creationId) throw new Error("threads_create_failed: creation_id missing");
+    // log create response for observability
+    try { console.info('[THREADS CREATE]', { creationId, status: r.status, raw: tx.slice(0,800) }); } catch (_) {}
     return creationId as string;
   };
 
-  const publish = async (creationId: string) => {
-    // Publish should call /me/threads_publish (or /{user}/threads_publish) with body { creation_id }
-    const publishEndpoint = userIdOnPlatform
-      ? `${base}/${encodeURIComponent(userIdOnPlatform)}/threads_publish`
-      : `${base}/me/threads_publish`;
-
-    if (!creationId) throw new Error('creation_id missing - cannot publish');
-
-    // Debug logs
-    try {
-      // debug output removed
-    } catch (_) {}
-
-    // Verify token owner best-effort using primaryToken
-    try {
-      if (userIdOnPlatform && primaryToken) {
-        const meResp = await fetch(`${base}/me?access_token=${encodeURIComponent(primaryToken)}`);
-        if (meResp.ok) {
-          const meJson = await meResp.json().catch(() => ({}));
-          const meId = meJson?.id;
-          if (meId && String(meId) !== String(userIdOnPlatform)) {
-            throw new Error(`access token owner mismatch: tokenOwner=${meId} expected=${userIdOnPlatform}`);
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('[WARN] token owner check failed', e);
-    }
-
-    // Publish with retries for 5xx (exponential backoff up to 2 retries)
+    const publish = async (creationId: string) => {
+    // Always publish via /me/threads_publish to ensure create/publish user context matches token owner
+    const publishEndpoint = `${base}/me/threads_publish`;
+    if (!creationId) throw new Error('creation_id missing');
+    if (!primaryToken) throw { type: 'auth_required', needsReauth: true, message: 'oauthAccessToken required for publish' };
     const urlWithToken = `${publishEndpoint}?access_token=${encodeURIComponent(primaryToken)}`;
-    const maxRetries = 2;
-    let attempt = 0;
-    let lastRespText = '';
-    while (true) {
-      attempt++;
-      try {
-        const resp = await fetch(urlWithToken, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ creation_id: creationId }),
-        });
-        lastRespText = await resp.text().catch(() => '');
-
-        // send debug to discord
-        try { /* debug removed */ } catch (_) {}
-
-        if (resp.ok) {
-          let parsed: any = {};
-          try { parsed = JSON.parse(lastRespText || '{}'); } catch {}
-          const postId = parsed?.id || creationId;
-          // debug output removed
-          return postId as string;
-        }
-
-        // 4xx -> abort and log
-        if (resp.status >= 400 && resp.status < 500) {
-          try {
-            const err = JSON.parse(lastRespText || '{}').error || {};
-            const reason = String(err?.message || '').replace(/\s+/g, ' ').trim();
-            const code = err?.code || '';
-            const sub = err?.error_subcode || '';
-            const fb = err?.fbtrace_id || '';
-            console.warn(`[THREADS ERROR] publish failed status=${resp.status} code=${code} subcode=${sub} fbtrace_id=${fb} reason=${reason}`);
-            if (err?.code === 190) {
-              throw { type: 'auth_required', needsReauth: true, status: resp.status, code: err.code, error_subcode: err.error_subcode || null, message: err.message || reason, fbtrace_id: err.fbtrace_id || null };
-            }
-          } catch (e) {
-            console.warn(`[THREADS ERROR] publish failed status=${resp.status} body=${String(lastRespText).slice(0,200)}`);
-          }
-          throw new Error(`Threads publish failed ${resp.status} ${String(lastRespText).slice(0,200)}`);
-        }
-
-        // 5xx retryable
-        if (resp.status >= 500 && attempt <= maxRetries + 1) {
-          const backoff = 200 * Math.pow(2, attempt - 1);
-          await new Promise((r) => setTimeout(r, backoff));
-          continue;
-        }
-
-        throw new Error(`Threads publish failed ${resp.status} ${String(lastRespText).slice(0,200)}`);
-      } catch (e) {
-        if (attempt > maxRetries) throw e;
-        const backoff = 200 * Math.pow(2, attempt - 1);
-        await new Promise((r) => setTimeout(r, backoff));
-        continue;
-      }
-    }
+    const resp = await fetch(urlWithToken, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ creation_id: creationId }) });
+    const txt = await resp.text().catch(() => '');
+    if (!resp.ok) throw new Error(`threads_quote_publish_failed: ${resp.status} ${txt}`);
+    let parsed: any = {};
+    try { parsed = JSON.parse(txt); } catch {}
+    const postId = parsed?.id || creationId;
+    // log publish response
+    try { console.info('[THREADS PUBLISH]', { postId, status: resp.status, raw: txt.slice(0,800) }); } catch (_) {}
+    return postId as string;
   };
 
   const creationId = await create();
@@ -282,56 +154,64 @@ export async function postQuoteToThreads({
   if (!referencedPostId) throw new Error('referencedPostId required');
   // reuse create/publish flow but include referenced_posts in creation body
   const base = process.env.THREADS_GRAPH_BASE || "https://graph.threads.net/v1.0";
-  const primaryToken = oauthAccessToken && String(oauthAccessToken).trim() ? oauthAccessToken : (accessToken || '');
+  // Use oauthAccessToken only; no fallback to accessToken
+  const primaryToken = oauthAccessToken && String(oauthAccessToken).trim() ? oauthAccessToken : '';
 
   const create = async () => {
-    const body: Record<string, any> = {
-      media_type: "TEXT",
-      text,
-      access_token: accessToken,
-      referenced_posts: JSON.stringify([{ id: referencedPostId, reference_type: 'QUOTE' }]),
-    };
-    if (process.env.THREADS_TEXT_APP_ID) body.text_post_app_id = process.env.THREADS_TEXT_APP_ID;
-
+    if (!primaryToken) throw { type: 'auth_required', needsReauth: true, message: 'oauthAccessToken required for quote create' };
+    // Per Threads behaviour, referenced_posts must be sent as a JSON string in form-encoded or multipart body.
+    // Use application/x-www-form-urlencoded and put referenced_posts as JSON string.
     const endpoint = `${base}/me/threads`;
-    body.access_token = primaryToken;
-    let r = await fetch(endpoint, {
+    // Include quote_post_id in query string as some API behaviors expect the referenced post id
+    // to be present in the request URL. Keep access_token in query string for consistency.
+    const url = `${endpoint}?access_token=${encodeURIComponent(primaryToken)}&quote_post_id=${encodeURIComponent(referencedPostId)}`;
+    const form = new URLSearchParams();
+    form.append('media_type', 'TEXT');
+    form.append('text', text);
+    if (process.env.THREADS_TEXT_APP_ID) form.append('text_post_app_id', process.env.THREADS_TEXT_APP_ID);
+    // Log sanitized request (no tokens)
+    try {
+      const sanitizedBody = { media_type: 'TEXT', text: String(text).slice(0,2000) };
+      console.info('[THREADS QUOTE CREATE REQ]', { endpoint: url.replace(primaryToken, '***'), body: sanitizedBody });
+      try {
+      } catch (_) {}
+    } catch (_) {}
+    const r = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: form.toString(),
     });
-
-    if (!r.ok) {
-      const alt = primaryToken === oauthAccessToken ? accessToken : oauthAccessToken;
-      if (alt && alt !== primaryToken) {
-        try {
-          body.access_token = alt;
-          const r2 = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-          r = r2;
-        } catch {}
-      }
-    }
-
-    if (!r.ok) {
-      const txt = await r.text().catch(() => '');
-      throw new Error(`threads_quote_create_failed: ${r.status} ${txt}`);
-    }
     const tx = await r.text().catch(() => '');
+    // Log response
+    try { console.info('[THREADS QUOTE CREATE RESP]', { status: r.status, raw: tx.slice(0,2000) }); } catch (_) {}
+    try {
+    } catch (_) {}
+    if (!r.ok) throw new Error(`threads_quote_create_failed: ${r.status} ${tx}`);
     let j: any = {};
     try { j = JSON.parse(tx); } catch {}
     const creationId = j?.id;
     if (!creationId) throw new Error('threads_quote_create_failed: creation_id missing');
+    try { console.info('[THREADS QUOTE CREATE]', { creationId, status: r.status }); } catch (_) {}
     return creationId as string;
   };
 
   const publish = async (creationId: string) => {
+    if (!primaryToken) throw { type: 'auth_required', needsReauth: true, message: 'oauthAccessToken required for publish' };
     const publishEndpoint = userIdOnPlatform
       ? `${base}/${encodeURIComponent(userIdOnPlatform)}/threads_publish`
       : `${base}/me/threads_publish`;
     if (!creationId) throw new Error('creation_id missing');
-    const urlWithToken = `${publishEndpoint}?access_token=${encodeURIComponent(primaryToken)}`;
-    const resp = await fetch(urlWithToken, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ creation_id: creationId }) });
+    // Send creation_id as query parameter (no JSON body) to match API expectations
+    const urlWithToken = `${publishEndpoint}?access_token=${encodeURIComponent(primaryToken)}&creation_id=${encodeURIComponent(creationId)}`;
+    // Log publish request (no body)
+    try { console.info('[THREADS QUOTE PUBLISH REQ]', { endpoint: urlWithToken.replace(primaryToken, '***') }); } catch (_) {}
+    try {
+    } catch (_) {}
+    const resp = await fetch(urlWithToken, { method: 'POST' });
     const txt = await resp.text().catch(() => '');
+    try { console.info('[THREADS QUOTE PUBLISH RESP]', { status: resp.status, raw: txt.slice(0,2000) }); } catch (_) {}
+    try {
+    } catch (_) {}
     if (!resp.ok) throw new Error(`threads_quote_publish_failed: ${resp.status} ${txt}`);
     let parsed: any = {};
     try { parsed = JSON.parse(txt); } catch {}
