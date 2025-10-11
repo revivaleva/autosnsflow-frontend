@@ -2681,6 +2681,17 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
           try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_DONE', payload: { accountId: acct.accountId, pk, sk, generated: 1 } }); } catch(_) {}
         } else {
           try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL', payload: { accountId: acct.accountId, pk, sk } }); } catch(_) {}
+          // dump full scheduled item and recent logs for debugging
+          try {
+            const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } } }));
+            const item = unmarshall(full.Item || {});
+            try { (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL_SCHEDULED_FULL', payload: { pk, sk, item } }); } catch(_) {}
+          } catch (_) {}
+          try {
+            const q = await ddb.send(new QueryCommand({ TableName: TBL_LOGS, KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)', ExpressionAttributeValues: { ':pk': { S: pk }, ':pfx': { S: 'LOG#' } }, Limit: 10, ScanIndexForward: false }));
+            const logs = (q.Items || []).map(i => unmarshall(i));
+            try { (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL_RECENT_LOGS', payload: { pk, sk, logs } }); } catch(_) {}
+          } catch (_) {}
         }
       } catch (e) {
         // 失敗したらリトライタイミングを後ろにずらす
