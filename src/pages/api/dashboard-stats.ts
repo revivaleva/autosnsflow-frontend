@@ -204,6 +204,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       // ignore
     }
 
+    // normalize message for deduplication (remove variable IDs, LOG tokens, URLs, uuids, long numbers)
+    function normalizeMessage(msg: string) {
+      try {
+        let s = String(msg || "");
+        s = s.replace(/LOG#\S+/ig, '');
+        s = s.replace(/\s+for ID\s+\S+/ig, '');
+        s = s.replace(/ID:\s*\S+/ig, '');
+        s = s.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ig, '');
+        s = s.replace(/https?:\/\/\S+/ig, '');
+        s = s.replace(/\d{3,}/g, '#');
+        s = s.replace(/\s+/g, ' ').trim().toLowerCase();
+        return s;
+      } catch (e) {
+        return String(msg || '').trim().toLowerCase();
+      }
+    }
+
     // Enrich
     const enriched = recentErrors.map(re => {
       let displayName = '';
@@ -217,10 +234,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         if (!accountId && postInfo.accountSk) accountId = postInfo.accountSk.replace(/^ACCOUNT#/, '');
         if (!displayName && postInfo.accountSk) displayName = accountIdToDisplay[postInfo.accountSk] || accountIdToDisplay[accountId] || '';
       }
-      return Object.assign({}, re, { displayName: displayName || undefined, accountId: accountId || undefined, scheduledAt: postInfo?.scheduledAt, contentSummary: postInfo?.content ? (postInfo.content.length > 200 ? postInfo.content.slice(0,200) + '…' : postInfo.content) : undefined });
+      const normalizedMessage = normalizeMessage(re.message || '');
+      return Object.assign({}, re, { displayName: displayName || undefined, accountId: accountId || undefined, scheduledAt: postInfo?.scheduledAt, contentSummary: postInfo?.content ? (postInfo.content.length > 200 ? postInfo.content.slice(0,200) + '…' : postInfo.content) : undefined, normalizedMessage });
     });
 
     enriched.sort((a,b) => b.at - a.at);
+
+    // Deduplicate: reply 系は ID が毎回変わるため message をキーに統一する
+    const seen = new Set<string>();
+    const unique: typeof enriched = [];
+    for (const e of enriched) {
+      const msgKey = (e as any).normalizedMessage || String(e.message || '');
+      const key = e.type === 'reply' ? `${e.type}|${msgKey}` : `${e.type}|${e.id}|${msgKey}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      unique.push(e);
+    }
 
     return res.status(200).json({
       accountCount,
@@ -232,7 +261,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       failedPostCount,
       todaysRemainingScheduled,
       monthSuccessRate,
-      recentErrors: enriched.slice(0,20),
+      recentErrors: unique.slice(0,20),
     });
   } catch (e: any) {
     const code = e?.statusCode || (e?.message === "Unauthorized" ? 401 : 500);

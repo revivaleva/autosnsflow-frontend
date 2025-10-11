@@ -1,0 +1,28 @@
+# プロジェクトTODO（pjtodo.mdc）
+
+以下はこの作業で検出・処理した項目と、保留中の作業です。
+
+- **完了**: テスト出力の無効化（`__TEST_OUTPUT__` を noop 化）
+- **完了**: コメント化された未使用 import の削除/整理
+- **完了**: `persistDebugLog` ユーティリティの削除
+- **完了**: テスト用定数 `USER_ID` の削除（`DEFAULT_USER_ID` に統一）
+- **完了**: 明らかなデバッグ用出力（token-check の一部）を削除
+- **完了**: 空の catch を CloudWatch へ出力して再スローする形に置換
+
+---
+
+- **保留 / 未完了**:
+  - **Fix prompt construction order in `generateAndAttachContent`**
+    - 概要: `prompt` を `policyBlock` 等の宣言より前に参照しているため、順序を正しく組み直す。
+  - **Remove remaining `__TEST_OUTPUT__` pushes or replace with noop**
+    - 概要: 残存する `__TEST_OUTPUT__` への個別 push を完全削除または noop へ統一する。
+  - **Resolve `@/lib/delete-posts-for-account` import**
+    - 概要: 該当モジュールが見つからないため、パス修正・スタブ追加・あるいは `@ts-expect-error` を付与する必要がある。
+  - **Convert `userSucceeded` to `const` where not reassigned**
+    - 概要: 再代入が不要な変数を `const` に変更して lint 指摘を解消する。
+  - **Audit and remove non-essential debug `console.*` calls**
+    - 概要: 本番に不要な info/verbose ログを削除または低いログレベルへ統合する。
+
+---
+
+保留にする旨の指示を受けています。次にどのタスクを優先して実行するか指定してください。
