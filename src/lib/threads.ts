@@ -163,19 +163,20 @@ export async function postQuoteToThreads({
     // Per Threads behaviour, referenced_posts must be sent as a JSON string in form-encoded or multipart body.
     // Use application/x-www-form-urlencoded and put referenced_posts as JSON string.
     const endpoint = `${base}/me/threads`;
-    const url = `${endpoint}?access_token=${encodeURIComponent(primaryToken)}`;
+    // Include quote_post_id in query string as some API behaviors expect the referenced post id
+    // to be present in the request URL. Keep access_token in query string for consistency.
+    const url = `${endpoint}?access_token=${encodeURIComponent(primaryToken)}&quote_post_id=${encodeURIComponent(referencedPostId)}`;
     const form = new URLSearchParams();
     form.append('media_type', 'TEXT');
     form.append('text', text);
-    form.append('referenced_posts', JSON.stringify([{ id: referencedPostId, reference_type: 'QUOTE' }]));
     if (process.env.THREADS_TEXT_APP_ID) form.append('text_post_app_id', process.env.THREADS_TEXT_APP_ID);
     // Log sanitized request (no tokens)
     try {
-      const sanitizedBody = { media_type: 'TEXT', text: String(text).slice(0,2000), referenced_posts: JSON.stringify([{ id: referencedPostId, reference_type: 'QUOTE' }]) };
+      const sanitizedBody = { media_type: 'TEXT', text: String(text).slice(0,2000) };
       console.info('[THREADS QUOTE CREATE REQ]', { endpoint: url.replace(primaryToken, '***'), body: sanitizedBody });
       try {
         (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
-        (global as any).__TEST_OUTPUT__.push({ tag: 'THREADS_QUOTE_CREATE_REQ', endpoint: String(endpoint).replace(primaryToken, '***'), body: sanitizedBody });
+        (global as any).__TEST_OUTPUT__.push({ tag: 'THREADS_QUOTE_CREATE_REQ', endpoint: String(url).replace(primaryToken, '***'), body: sanitizedBody });
       } catch (_) {}
     } catch (_) {}
     const r = await fetch(url, {
@@ -205,14 +206,15 @@ export async function postQuoteToThreads({
       ? `${base}/${encodeURIComponent(userIdOnPlatform)}/threads_publish`
       : `${base}/me/threads_publish`;
     if (!creationId) throw new Error('creation_id missing');
-    const urlWithToken = `${publishEndpoint}?access_token=${encodeURIComponent(primaryToken)}`;
-    // Log publish request
-    try { console.info('[THREADS QUOTE PUBLISH REQ]', { endpoint: urlWithToken.replace(primaryToken, '***'), body: { creation_id: creationId } }); } catch (_) {}
+    // Send creation_id as query parameter (no JSON body) to match API expectations
+    const urlWithToken = `${publishEndpoint}?access_token=${encodeURIComponent(primaryToken)}&creation_id=${encodeURIComponent(creationId)}`;
+    // Log publish request (no body)
+    try { console.info('[THREADS QUOTE PUBLISH REQ]', { endpoint: urlWithToken.replace(primaryToken, '***') }); } catch (_) {}
     try {
       (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
-      (global as any).__TEST_OUTPUT__.push({ tag: 'THREADS_QUOTE_PUBLISH_REQ', endpoint: String(publishEndpoint).replace(primaryToken, '***'), body: { creation_id: creationId } });
+      (global as any).__TEST_OUTPUT__.push({ tag: 'THREADS_QUOTE_PUBLISH_REQ', endpoint: String(urlWithToken).replace(primaryToken, '***') });
     } catch (_) {}
-    const resp = await fetch(urlWithToken, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ creation_id: creationId }) });
+    const resp = await fetch(urlWithToken, { method: 'POST' });
     const txt = await resp.text().catch(() => '');
     try { console.info('[THREADS QUOTE PUBLISH RESP]', { status: resp.status, raw: txt.slice(0,2000) }); } catch (_) {}
     try {

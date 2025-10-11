@@ -2195,6 +2195,34 @@ async function runAutoPostForAccount(acct: any, userId = USER_ID, settings: any 
         await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "引用元の数値IDが存在しないため引用投稿をスキップ（失敗）" });
         return { posted: 0 };
       }
+      // Ensure providerUserId matches token owner to avoid referenced_posts loss
+      try {
+        const meResp = await fetch(`https://graph.threads.net/v1.0/me?fields=id&access_token=${encodeURIComponent(acct.oauthAccessToken || '')}`);
+        if (meResp.ok) {
+          try {
+            const meJ = await meResp.json();
+            const meId = meJ?.id || '';
+            if (meId && acct.providerUserId && meId !== acct.providerUserId) {
+              await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'info', message: 'providerUserId mismatch; updating to token owner', detail: { previous: acct.providerUserId, owner: meId } });
+              acct.providerUserId = meId;
+              try {
+                await ddb.send(new UpdateItemCommand({ TableName: TBL_THREADS, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${acct.accountId}` } }, UpdateExpression: 'SET providerUserId = :pid', ExpressionAttributeValues: { ':pid': { S: meId } } }));
+              } catch (e) {
+                // non-fatal
+              }
+            }
+          } catch (_) {}
+        }
+      } catch (e) {
+        // ignore and proceed; publish may still work
+      }
+
+      // Log create/publish endpoints and token presence for debug
+      try {
+        const tokenPreview = acct.oauthAccessToken ? `${String(acct.oauthAccessToken).slice(-6)}` : '(none)';
+        await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'trace', message: 'quote-post-endpoint-debug', detail: { createEndpoint: 'POST https://graph.threads.net/v1.0/me/threads', publishEndpoint: acct.providerUserId ? `POST https://graph.threads.net/v1.0/${acct.providerUserId}/threads_publish` : 'POST https://graph.threads.net/v1.0/me/threads_publish', tokenPreview } });
+      } catch (_) {}
+
       // Always attempt quote posting for quote-type items (no test gating)
       postResult = await sharedPostQuoteToThreads({
         accessToken: acct.oauthAccessToken,
