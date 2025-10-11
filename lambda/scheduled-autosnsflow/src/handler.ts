@@ -2546,7 +2546,7 @@ async function runHourlyJobForUser(userId: any) {
   let fetchedReplies = 0;
   let replyDrafts = 0;
   let skippedAccounts = 0;
-  const checkedShortcodes: string[] = [];
+  const checkedShortcodes: Array<{ sourcePostId: string; queriedPK?: string; queriedAccountId?: string }> = [];
 
   for (const acct of accounts) {
     // First: try creating quote reservations for accounts that opted-in
@@ -2555,7 +2555,7 @@ async function runHourlyJobForUser(userId: any) {
       const qres = await createQuoteReservationForAccount(userId, acct);
       if (qres && qres.created) createdCount += qres.created;
       if (qres && qres.skipped) skippedAccounts++;
-      if (qres && qres.sourcePostId) checkedShortcodes.push(String(qres.sourcePostId));
+      if (qres && qres.sourcePostId) checkedShortcodes.push({ sourcePostId: String(qres.sourcePostId), queriedPK: String(qres.queriedPK || ''), queriedAccountId: String(qres.queriedAccountId || '') });
     } catch (e) {
       console.warn('[warn] createQuoteReservationForAccount failed:', String(e));
     }
