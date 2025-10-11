@@ -27,19 +27,8 @@ import { postToThreads as sharedPostToThreads, postQuoteToThreads as sharedPostQ
 import crypto from "crypto";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
 
-// Disable test-only global output collector by installing a resilient no-op collector.
-// This prevents scattered test pushes from emitting debug data without changing every call site.
-try {
-  (function() {
-    let internal: any[] = [];
-      configurable: true,
-      enumerable: true,
-      get() { return internal; },
-      set(v) { internal = Array.isArray(v) ? v : []; internal.push = () => {}; }
-    });
-    // initialize and ensure push is a no-op
-  })();
-} catch (_) {}
+// Disable test-only global output collector (no-op stub) to avoid test-only side-effects.
+try { (global as any).__TEST_OUTPUT__ = { push: () => {} }; } catch (_) {}
 
 /// === テーブル名 ===
 const TBL_SETTINGS   = "UserSettings";
@@ -847,10 +836,12 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
       // If AppConfig cannot be loaded, record error and skip generation
       await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "error", message: "AppConfigの読み込み失敗", detail: { error: String(e) } });
     
+    // try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL_REASON', payload: { scheduledPostId, reason: 'appconfig_load_failed', error: String(e) } }); } catch(_) {}
       return false;
     }
     if (!settings?.openaiApiKey) {
       await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "skip", message: "AppConfig に OPENAI_API_KEY が設定されていないため本文生成をスキップ" });
+      try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL_REASON', payload: { scheduledPostId, reason: 'openai_key_missing' } }); } catch(_) {}
       return false;
     }
     
@@ -905,6 +896,8 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
         const st = full.Item?.sourcePostText?.S || '';
         const t = full.Item?.type?.S || '';
       try {
+        (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+        (global as any).__TEST_OUTPUT__.push({ tag: 'QUOTE_PROMPT_DEBUG', payload: { scheduledPostId, stPresent: Boolean(st), stSample: String(st).slice(0,600), type: t, themeSample: String(themeStr).slice(0,200) } });
       } catch (_) {}
         if (t === 'quote') {
           isQuoteType = true;
@@ -921,10 +914,9 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
         return false;
       }
 
-      // quoteInstruction: always use a concise instruction block here.
-      // The detailed policyPrompt (user/AppConfig/master) is already included above and
-      // should not be duplicated in the instruction section to avoid repetition.
+      // Instructions: choose quote-specific or regular post instruction depending on type
       const defaultQuoteInstruction = `【指示】\n上記の引用元投稿に自然に反応する形式で、共感や肯定、専門性を含んだ引用投稿文を作成してください。200〜400文字以内。ハッシュタグ禁止。改行は最大1回。`;
+      const defaultPostInstruction = `【指示】\n以下の投稿テーマに沿って、140字前後で読み手に寄り添う自然な本文を作成してください。絵文字は控えめに、ハッシュタグは使用しないでください。改行は最大1回。`;
 
       // Prefer user settings quotePrompt, else AppConfig QUOTE_PROMPT, else masterPrompt
       let policyPrompt = "";
@@ -947,8 +939,9 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
       const personaBlock = personaText ? `【アカウントのペルソナ】\n${personaText}\n\n` : `【アカウントのペルソナ】\n(未設定)\n\n`;
   const sourceBlock = (isQuoteType && quoteIntro) ? `${quoteIntro}` : `【投稿テーマ】\n${String(sourceTextForPrompt)}\n\n`;
 
-      // Build the prompt from the previously prepared blocks
-      const prompt: string = `${policyBlock}${personaBlock}${sourceBlock}${defaultQuoteInstruction}`.trim();
+      // Build the prompt from the previously prepared blocks and appropriate instruction
+      const instructionBlock = isQuoteType ? defaultQuoteInstruction : defaultPostInstruction;
+      const prompt: string = `${policyBlock}${personaBlock}${sourceBlock}${instructionBlock}`.trim();
       try { await putLog({ userId, type: 'auto-post', accountId: acct.accountId, targetId: scheduledPostId, status: 'info', message: 'prompt_constructed', detail: { isQuoteType, policyPromptUsed: Boolean(policyPrompt), themeSample: String(sourceTextForPrompt).slice(0,200) } }); } catch(_) {}
 
     // OpenAI 呼び出しは共通ヘルパーを使い、内部でリトライ／フォールバックする
@@ -972,11 +965,16 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
         const sanitized = Object.assign({}, openAiRequestPayload, { apiKey: openAiRequestPayload.apiKey ? '***REDACTED***' : '' });
         try { console.info('[QUOTE OPENAI REQ]', { model: sanitized.model, temperature: sanitized.temperature, max_tokens: sanitized.max_tokens, promptSnippet: String(sanitized.prompt).slice(0,1200) }); } catch (_) {}
         try {
+        (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
           // Include the full prompt for test inspection (no API keys)
+          (global as any).__TEST_OUTPUT__.push({ tag: 'QUOTE_OPENAI_REQ', payload: { model: sanitized.model, temperature: sanitized.temperature, max_tokens: sanitized.max_tokens, prompt: String(sanitized.prompt) } });
         } catch (_) {}
 
       // Also emit explicit settings/payload snapshot (masked) so test runs can verify key presence and payload
       try {
+        (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+        (global as any).__TEST_OUTPUT__.push({ tag: 'OPENAI_SETTINGS', payload: { settings_openai_present: !!settings.openaiApiKey, settings_openai_mask: settings.openaiApiKey ? ('***' + String(settings.openaiApiKey).slice(-6)) : null, settings_model: settings.model || DEFAULT_OPENAI_MODEL } });
+        (global as any).__TEST_OUTPUT__.push({ tag: 'OPENAI_CALL_PAYLOAD', payload: { model: sanitized.model, temperature: sanitized.temperature, max_tokens: sanitized.max_tokens, prompt: String(sanitized.prompt) } });
       } catch (_) {}
       } catch (_) {}
 
@@ -984,6 +982,8 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
       text = openAiRes?.text;
       // when running tests, attach the full OpenAI response to test output for inspection
       try {
+        (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+        (global as any).__TEST_OUTPUT__.push({ tag: 'QUOTE_OPENAI_RESP', payload: { ok: Boolean(openAiRes), text: openAiRes?.text || null, raw: openAiRes } });
       } catch (_) {}
 
       // log response length only (avoid full text in logs)
@@ -994,6 +994,7 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
       // record failure and rethrow to be handled by caller
       try { console.error('[error] OpenAI call failed', String(e)); } catch(_) {}
       try { await putLog({ userId, type: 'openai-call', accountId: acct.accountId, targetId: scheduledPostId, status: 'error', message: 'openai_call_failed', detail: { error: String(e) } }); } catch (_) {}
+      try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL_REASON', payload: { scheduledPostId, reason: 'openai_call_failed', error: String(e) } }); } catch(_) {}
       throw e;
     }
 
@@ -1036,11 +1037,13 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
         try {
           const got = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${scheduledPostId}` } }, ProjectionExpression: 'scheduledPostId, status, content, pendingForAutoPostAccount, numericPostId' }));
           const it = unmarshall(got.Item || {});
+          try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'UPDATED_SCHEDULED_ITEM', payload: { scheduledPostId: it.scheduledPostId || scheduledPostId, status: it.status || null, contentSample: String((it.content||'')).slice(0,200), pendingForAutoPostAccount: it.pendingForAutoPostAccount || null, numericPostId: it.numericPostId || null } }); } catch(_) {}
         } catch (e) { /* non-fatal */ }
         return true;
       } else {
         try { console.warn('[warn] generated text invalid or too short', { scheduledPostId, originalLength: text ? String(text).length : 0, cleanedLength: cleanText ? cleanText.length : 0 }); } catch(_) {}
         await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "error", message: "生成されたテキストが不正です", detail: { originalText: text, cleanedText: cleanText } });
+        try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL_REASON', payload: { scheduledPostId, reason: 'generated_text_invalid', originalLength: text ? String(text).length : 0, cleanedLength: cleanText ? cleanText.length : 0 } }); } catch(_) {}
         return false;
       }
     }
@@ -1109,6 +1112,7 @@ export const handler = async (event: any = {}) => {
   // Unified AppConfig load at handler startup to avoid inconsistent loads across flows
   try {
     await config.loadConfig();
+      // try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'APPCONFIG_LOADED', payload: { ok: true } }); } catch (_) {}
     // Build test-time handler-invoked snapshot using AppConfig values (not process.env)
     try {
       const cfgOpenAi = (() => { try { return config.getConfigValue('OPENAI_API_KEY', null); } catch (_) { return null; } })();
@@ -1121,12 +1125,18 @@ export const handler = async (event: any = {}) => {
         TBL_THREADS_ACCOUNTS: cfgThreads || '',
       };
       if (event?.testInvocation || event?.detailedDebug) {
+        // (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+        // try { (global as any).__TEST_OUTPUT__.push({ tag: 'HANDLER_INVOKED', payload: { event: event, env: envSnapshot } }); } catch (_) {}
       }
+      // try { (global as any).__TEST_OUTPUT__.push({ tag: 'APPCONFIG_VALUES', payload: { OPENAI_API_KEY_present_in_appconfig: !!cfgOpenAi, OPENAI_API_KEY_mask: cfgOpenAi ? ('***' + String(cfgOpenAi).slice(-6)) : null, QUOTE_PROMPT_present_in_appconfig: !!cfgQuotePrompt, TBL_THREADS_ACCOUNTS_in_appconfig: !!cfgThreads } }); } catch(_) {}
     } catch (_) {}
   } catch (e) {
     // Record failure; in testInvocation return error so user sees failure early
+    try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'APPCONFIG_ERROR', payload: { error: String(e) } }); } catch (_) {}
     try { await putLog({ type: 'system', status: 'error', message: 'AppConfig load failed at handler startup', detail: { error: String(e) } }); } catch (_) {}
     if (event?.testInvocation) {
+      const testOut = (global as any).__TEST_OUTPUT__ || [];
+      try { (global as any).__TEST_OUTPUT__ = []; } catch(_) {}
       return { statusCode: 500, body: JSON.stringify({ testInvocation: true, error: 'AppConfig load failed', testOutput: testOut }) };
     }
     // otherwise continue and allow per-call callers to handle missing config
@@ -1141,8 +1151,13 @@ export const handler = async (event: any = {}) => {
       for (const k of keys) {
         try { out[k] = config.getConfigValue(k, null); } catch (e) { out[k] = null; }
       }
+      try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'APPCONFIG', payload: out }); } catch (_) {}
+      const testOut = (global as any).__TEST_OUTPUT__ || [];
+      try { (global as any).__TEST_OUTPUT__ = []; } catch(_) {}
       return { statusCode: 200, body: JSON.stringify({ testInvocation: true, action: 'checkAppConfig', result: out, testOutput: testOut }) };
     } catch (e) {
+      try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'APPCONFIG_ERROR', payload: String(e) }); } catch(_) {}
+      return { statusCode: 500, body: JSON.stringify({ testInvocation: true, action: 'checkAppConfig', error: String(e), testOutput: (global as any).__TEST_OUTPUT__ || [] }) };
     }
   }
 
@@ -1175,6 +1190,8 @@ export const handler = async (event: any = {}) => {
         
         const res = await runFiveMinJobForUser(userId);
         // attach any collected test-time output from threads lib so caller can inspect POST bodies
+        const testOut = (global as any).__TEST_OUTPUT__ || [];
+        try { (global as any).__TEST_OUTPUT__ = []; } catch(_) {}
         return { statusCode: 200, body: JSON.stringify({ testInvocation: true, job: 'every-5min', userId, accountIds, result: res, testOutput: testOut }) };
       }
     } catch (e) {
@@ -2695,12 +2712,14 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
       // 定期実行は「本文が空のデータ」のみに対して生成を行う
       if (!contentEmpty) {
         
+        try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_SKIP', payload: { accountId: acct.accountId, pk, sk, reason: 'content_exists' } }); } catch(_) {}
         continue;
       }
       const nextGen = Number(rec.nextGenerateAt || 0);
       // nextGenerateAt が将来に設定されていればスキップ（バックオフ等）
       if (nextGen > now) {
         
+        try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_SKIP', payload: { accountId: acct.accountId, pk, sk, reason: 'nextGenerateAt_future', nextGenerateAt: nextGen, now } }); } catch(_) {}
         continue;
       }
 
@@ -2725,24 +2744,30 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
         
       } catch (e) {
         
+        try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_LOCK_FAIL', payload: { accountId: acct.accountId, pk, sk, error: String(e) } }); } catch(_) {}
         continue;
       }
 
       // 生成処理
       try {
         const userSettings = await getUserSettings(userId);
+        try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_START', payload: { accountId: acct.accountId, pk, sk, settings_present: !!userSettings, settings_sample: { openaiApiKeyPresent: !!userSettings.openaiApiKey, model: userSettings.model || null } } }); } catch(_) {}
         const ok = await generateAndAttachContent(userId, acct, sk.replace(/^SCHEDULEDPOST#/, ''), rec.theme || '', userSettings);
         if (ok) {
           generated++;
+          try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_DONE', payload: { accountId: acct.accountId, pk, sk, generated: 1 } }); } catch(_) {}
         } else {
+          try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL', payload: { accountId: acct.accountId, pk, sk } }); } catch(_) {}
           // dump full scheduled item and recent logs for debugging
           try {
             const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } } }));
             const item = unmarshall(full.Item || {});
+            try { (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL_SCHEDULED_FULL', payload: { pk, sk, item } }); } catch(_) {}
           } catch (_) {}
           try {
             const q = await ddb.send(new QueryCommand({ TableName: TBL_LOGS, KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)', ExpressionAttributeValues: { ':pk': { S: pk }, ':pfx': { S: 'LOG#' } }, Limit: 10, ScanIndexForward: false }));
             const logs = (q.Items || []).map(i => unmarshall(i));
+            try { (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL_RECENT_LOGS', payload: { pk, sk, logs } }); } catch(_) {}
           } catch (_) {}
         }
       } catch (e) {
@@ -2754,6 +2779,7 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
           UpdateExpression: "SET nextGenerateAt = :next, generateAttempts = if_not_exists(generateAttempts, :zero) + :inc REMOVE generateLock, generateLockedAt",
           ExpressionAttributeValues: { ":next": { N: String(now + backoff) }, ":inc": { N: "1" }, ":zero": { N: "0" } }
         }));
+        try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_ERROR', payload: { accountId: acct.accountId, pk, sk, error: String(e), nextGenerateAt: now + backoff } }); } catch(_) {}
       }
 
       // 正常終了または失敗後にロックをクリア
@@ -2799,17 +2825,23 @@ async function runFiveMinJobForUser(userId: any) {
     }
 
     try {
+      (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+      try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_ACCOUNT_START', payload: { accountId: acct.accountId } }); } catch(_) {}
     } catch(_) {}
 
     const a = await runAutoPostForAccount(acct, userId, settings);
+    try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_AUTO_POST_RESULT', payload: { accountId: acct.accountId, result: a } }); } catch(_) {}
 
     const r = await runRepliesForAccount(acct, userId, settings);
+    try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_REPLY_RESULT', payload: { accountId: acct.accountId, result: r } }); } catch(_) {}
 
     const t = await runSecondStageForAccount(acct, userId, settings, true);
+    try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_SECOND_STAGE_RESULT', payload: { accountId: acct.accountId, result: t } }); } catch(_) {}
 
     // 短期対応: 5分ジョブでも本文生成を少数処理する（安全策）
     try {
       const genRes = await processPendingGenerationsForAccount(userId, acct, 1);
+      try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_GENERATION_RESULT', payload: { accountId: acct.accountId, result: genRes } }); } catch(_) {}
       if (genRes && genRes.generated) {
         // 観測ログ用記録
       }
@@ -2829,6 +2861,7 @@ async function runFiveMinJobForUser(userId: any) {
         reason: (t as any).debug?.reason || "-"
       });
     }
+    try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_ACCOUNT_DONE', payload: { accountId: acct.accountId, summary: perAccount[perAccount.length-1] } }); } catch(_) {}
 
     if (a.skipped === "window_expired") rateSkipped++;
     // 二段階投稿削除のスケジュールがある場合、期限切れのものを処理
