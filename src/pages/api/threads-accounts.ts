@@ -67,6 +67,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         updatedAt: it.updatedAt,
 
         accessToken: it.accessToken, // [KEEP]
+        oauthAccessToken: it.oauthAccessToken || "", // add oauthAccessToken so frontend can use oauth token where needed
         // providerUserId may not be present on the declared type from backend-core
         // so access it defensively to avoid TypeScript build errors.
         providerUserId: (it as any).providerUserId || (it as any).provider_user_id || "", // [ADD] リプライ取得に必要
@@ -104,7 +105,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             TableName: TBL,
             Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${acc.accountId}` } },
             // include fields so fallback read returns the attribute when present
-            ProjectionExpression: 'clientId, clientSecret, #st, monitoredAccountId, autoQuote, quoteTimeStart, quoteTimeEnd',
+            ProjectionExpression: 'clientId, clientSecret, oauthAccessToken, #st, monitoredAccountId, autoQuote, quoteTimeStart, quoteTimeEnd',
             ExpressionAttributeNames: { '#st': 'status' },
           }));
           const it: any = (out as any).Item || {};
