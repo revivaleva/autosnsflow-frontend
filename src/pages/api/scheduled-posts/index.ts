@@ -108,6 +108,8 @@ function mapItem(it: any) {
     // 引用投稿用のメタフィールド
     sourcePostId: getS("sourcePostId"),
     sourcePostShortcode: getS("sourcePostShortcode"),
+    // 引用元の本文（quote生成で必要）
+    sourcePostText: getS("sourcePostText"),
     // type: 'quote'など
     type: getS("type"),
     scheduledAt: getN("scheduledAt"),

@@ -672,8 +672,15 @@ export default function ScheduledPostsTable() {
 
               const deleted = !!post.isDeleted;
               const accountIsDeleting = accountsDeletingMap[post.accountId] === true;
+              // Failure indicators from backend: postAttempts, lastPostError, permanentFailure
+              const failureCount = Number((post as any).postAttempts || 0);
+              const lastError = (post as any).lastPostError || (post as any).lastPostErrorMessage || '';
+              const permFailure = !!(post as any).permanentFailure;
+              const hasFailure = failureCount > 0 || !!lastError || permFailure;
+              const rowClass = deleted ? 'bg-gray-100 text-gray-500' : hasFailure ? 'bg-red-50' : '';
+              const rowTitle = lastError ? `投稿失敗: ${String(lastError).slice(0,200)}` : undefined;
               return (
-                <tr key={post.scheduledPostId} className={deleted ? 'bg-gray-100 text-gray-500' : ''}>
+                <tr key={post.scheduledPostId} className={rowClass} title={rowTitle}>
                   <td className="border p-1" onClick={() => { if (!deleted) toggleSelect(post.scheduledPostId); }} style={{ cursor: deleted ? 'default' : 'pointer' }}>
                     {!deleted && (
                       <input type="checkbox" checked={selectedIds.includes(post.scheduledPostId)} onChange={(e) => { e.stopPropagation(); toggleSelect(post.scheduledPostId); }} />
@@ -848,7 +855,7 @@ export default function ScheduledPostsTable() {
                   </td>
                   
                   <td className="border p-1 space-x-1">
-                    {post.status !== "posted" && !post.isDeleted && (
+                    {post.status !== "posted" && !post.isDeleted && (post as any).type !== 'quote' && (
                       <button
                         className={`text-white px-2 py-1 rounded ${
                           isPosting || accountIsDeleting ? "bg-green-300 cursor-not-allowed" : "bg-green-500 hover:bg-green-600"
@@ -876,7 +883,7 @@ export default function ScheduledPostsTable() {
                         {secondStagePostingId === post.scheduledPostId ? "実行中…" : "二段階投稿"}
                       </button>
                     )}
-                    {post.status !== "posted" && !post.isDeleted && (
+                    {post.status !== "posted" && !post.isDeleted && (post as any).type !== 'quote' && (
                       <button
                         className="bg-yellow-500 text-white px-2 py-1 rounded hover:bg-yellow-600"
                         onClick={() => openEdit(post.scheduledPostId)}
