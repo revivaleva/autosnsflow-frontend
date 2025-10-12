@@ -379,6 +379,11 @@ async function fetchIncomingReplies(userId: string, acct: any) {
   }
   
   try {
+    // Observability: log whether acct contains tokens/providerUserId so we can trace "token missing" cases
+    try {
+      await putLog({ userId, type: 'reply-fetch', accountId: acct.accountId, status: 'probe', message: 'acct-token-check', detail: { hasAccessToken: !!acct.accessToken, hasOauthAccessToken: !!acct.oauthAccessToken, hasProviderUserId: !!acct.providerUserId } });
+    } catch (e) { console.warn('[warn] putLog(token-check) failed:', e); }
+
     const r = await fetchThreadsRepliesAndSave({ acct, userId });
     // debug output removed
     return { 
