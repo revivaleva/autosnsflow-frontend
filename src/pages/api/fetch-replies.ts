@@ -182,33 +182,36 @@ export async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 2
       scheduledPostId: item.scheduledPostId?.S || "",
     };
 
-    // リプライ取得用のIDを決定（数字IDのみを許可する）
-    const isNumericPostId = post.numericPostId && /^\d+$/.test(post.numericPostId);
-    const isNumericMainPostId = post.postId && /^\d+$/.test(post.postId);
+  // Prepare postInfo early so skip-paths can record logs
+  const postInfo: any = {
+    postId: post.postId || "空",
+    numericPostId: post.numericPostId || "空",
+    replyApiId: null,
+    content: (post.content || "").substring(0, 100),
+    postedAt: post.postedAt || "空",
+    hasReplyApiId: false,
+    apiLog: ""
+  };
 
-    let replyApiId: string | null = null;
-    if (isNumericPostId) {
-      replyApiId = post.numericPostId;
-    } else if (isNumericMainPostId) {
-      replyApiId = post.postId;
-    } else {
-      // Non-numeric IDs are skipped to avoid unsupported API requests
-      postInfo.apiLog = 'SKIP: リプライ取得用の数値IDが存在しないためスキップ';
-      postsInfo.push(postInfo);
-      continue;
-    }
+  // リプライ取得用のIDを決定（数字IDのみを許可する）
+  const isNumericPostId = post.numericPostId && /^\d+$/.test(post.numericPostId);
+  const isNumericMainPostId = post.postId && /^\d+$/.test(post.postId);
 
-    // debug output removed
+  let replyApiId: string | null = null;
+  if (isNumericPostId) {
+    replyApiId = post.numericPostId;
+  } else if (isNumericMainPostId) {
+    replyApiId = post.postId;
+  } else {
+    // Non-numeric IDs are skipped to avoid unsupported API requests
+    postInfo.apiLog = 'SKIP: リプライ取得用の数値IDが存在しないためスキップ';
+    postsInfo.push(postInfo);
+    continue;
+  }
 
-    const postInfo: any = {
-      postId: post.postId || "空",
-      numericPostId: post.numericPostId || "空",
-      replyApiId: replyApiId || "空",
-      content: (post.content || "").substring(0, 100),
-      postedAt: post.postedAt || "空",
-      hasReplyApiId: !!replyApiId,
-      apiLog: ""
-    };
+  // attach resolved replyApiId to postInfo
+  postInfo.replyApiId = replyApiId || "空";
+  postInfo.hasReplyApiId = !!replyApiId;
 
     if (!replyApiId) {
       postInfo.apiLog = "SKIP: リプライ取得用ID無し";
