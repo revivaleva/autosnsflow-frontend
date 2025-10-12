@@ -1295,7 +1295,10 @@ export const handler = async (event: any = {}) => {
     if (!singleUser) {
       try {
         preFilterTotal = await countAllScheduledPosts();
-        await postDiscordMaster(`**[PRUNE] pre-filter total items across table: ${preFilterTotal}**`);
+        // Also compute total ExecutionLogs table size for visibility
+        let preFilterLogTotal = 0;
+        try { preFilterLogTotal = await countAllExecutionLogs(); } catch (e) { preFilterLogTotal = 0; }
+        await postDiscordMaster(`**[PRUNE] pre-filter total items across table: ${preFilterTotal}, ExecutionLogs total: ${preFilterLogTotal}**`);
       } catch (e) {
         console.warn('[warn] countAllScheduledPosts failed:', e);
       }
@@ -1431,8 +1434,11 @@ export const handler = async (event: any = {}) => {
         // also perform full-table execution logs prune
         let allLogDeleted = 0;
         try { allLogDeleted = await pruneOldExecutionLogsAll(); } catch (_) { allLogDeleted = 0; }
+        // also remove orphan (non-user) ExecutionLogs entries that TTL may have missed
+        let orphanLogDeleted = 0;
+        try { orphanLogDeleted = await pruneOrphanExecutionLogsAll(); } catch (_) { orphanLogDeleted = 0; }
         const finishedAt = Date.now();
-        const t = { candidates: totalCandidates, scanned: totalScanned, deleted: allDeleted, preFilterTotal, logDeleted: allLogDeleted } as any;
+        const t = { candidates: totalCandidates, scanned: totalScanned, deleted: allDeleted, preFilterTotal, logDeleted: allLogDeleted, orphanLogDeleted } as any;
         await postDiscordMaster(formatMasterMessage({ job: "daily-prune", startedAt, finishedAt, userTotal: userIds.length, userSucceeded, totals: t }));
         return { statusCode: 200, body: JSON.stringify({ deleted: allDeleted, logDeleted: allLogDeleted, preFilterTotal }) };
       } catch (e) {
@@ -3202,6 +3208,50 @@ async function pruneOldExecutionLogsAll() {
   }
 }
 
+// Scan full ExecutionLogs table and delete items whose PK is not user-scoped (do not start with 'USER#')
+// Uses the same retention logic (EXECUTION_LOGS_PRUNE_DELAY_DAYS) so TTL has time to run first.
+async function pruneOrphanExecutionLogsAll() {
+  try {
+    try { await config.loadConfig(); } catch(_) {}
+    const retentionDays = Number(config.getConfigValue('RETENTION_DAYS') || '7') || 7;
+    const execPruneDays = Number(config.getConfigValue('EXECUTION_LOGS_PRUNE_DELAY_DAYS') || String(retentionDays + 1)) || (retentionDays + 1);
+    const thresholdSec = Math.floor(Date.now() / 1000) - (execPruneDays * 24 * 60 * 60);
+    const orphanLimit = Number(config.getConfigValue('ORPHAN_EXEC_LOGS_PRUNE_LIMIT') || process.env.ORPHAN_EXEC_LOGS_PRUNE_LIMIT || '10000') || 10000;
+
+    let lastKey: any = undefined;
+    let totalDeleted = 0;
+    do {
+      const s = await ddb.send(new ScanCommand({ TableName: TBL_LOGS, ProjectionExpression: 'PK,SK,createdAt', ExclusiveStartKey: lastKey, Limit: 1000 }));
+      const its = (s as any).Items || [];
+      for (const it of its) {
+        try {
+          const pk = getS(it.PK) || '';
+          // skip user-scoped logs
+          if (pk && pk.startsWith('USER#')) continue;
+          const createdAt = Number(it.createdAt?.N || 0);
+          if (createdAt && createdAt <= thresholdSec) {
+            await ddb.send(new DeleteItemCommand({ TableName: TBL_LOGS, Key: { PK: it.PK, SK: it.SK } }));
+            totalDeleted++;
+            if (totalDeleted >= orphanLimit) break;
+          }
+        } catch (e) {
+          console.warn('[warn] prune orphan log delete failed for item', e);
+        }
+      }
+      lastKey = (s as any).LastEvaluatedKey;
+      if (totalDeleted >= orphanLimit) break;
+    } while (lastKey);
+
+    if (totalDeleted > 0) {
+      await putLog({ type: 'prune', status: 'info', message: `古いオーファン実行ログ ${totalDeleted} 件を削除しました` });
+    }
+    return totalDeleted;
+  } catch (e) {
+    console.warn('[warn] pruneOrphanExecutionLogsAll failed:', e);
+    throw e;
+  }
+}
+
 // 指定ユーザーのRepliesを削除する（RETENTION_DAYS を参照、物理削除のみ）
 async function pruneOldReplies(userId: any) {
   try {
@@ -3319,6 +3369,23 @@ async function countAllScheduledPosts() {
     return total;
   } catch (e) {
     console.warn('[warn] countAllScheduledPosts failed:', e);
+    throw e;
+  }
+}
+
+// Count all items in ExecutionLogs table
+async function countAllExecutionLogs() {
+  try {
+    let lastKey: any = undefined;
+    let total = 0;
+    do {
+      const q = await ddb.send(new ScanCommand({ TableName: TBL_LOGS, ProjectionExpression: 'PK', ExclusiveStartKey: lastKey, Limit: 1000 }));
+      total += (q.Count || 0);
+      lastKey = q.LastEvaluatedKey;
+    } while (lastKey);
+    return total;
+  } catch (e) {
+    console.warn('[warn] countAllExecutionLogs failed:', e);
     throw e;
   }
 }

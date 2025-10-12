@@ -41,3 +41,9 @@
   - T007: Add pjspec documentation for auto-post retry and selection behavior (pending)
   - T008: Mark development status in pjtodo.mdc and list new tasks (pending)
   - T009: Write unit/integration tests for candidate selection and retry logic (pending)
+  - T010: Disable editing and immediate posting for quote scheduled posts in UI (completed)
+    - 概要: ユーザーが引用投稿の編集・即時投稿を行えないようにフロントで制限を追加。理由は引用元データが確実に渡されないための暫定対応。
+    - 影響範囲: `src/app/scheduled-posts/ScheduledPostsTable.tsx`
+  - T011: Re-enable quote editing and immediate posting after adding reliable sourcePostText flow (pending)
+    - 概要: `sourcePostText` を確実に保存・配信する仕組みを整えた後、引用投稿の編集・即時投稿を再度有効化する（モーダル初期化と送信前バリデーションを追加）。
+    - 依存: T003/T001 による DB 保存/レスポンス修正とフロント側バリデーションの実装
