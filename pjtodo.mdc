@@ -26,3 +26,18 @@
 ---
 
 保留にする旨の指示を受けています。次にどのタスクを優先して実行するか指定してください。
+
+- **開発中**: 自動投稿の再試行・候補選択改善
+  - 概要: 5分ジョブで引用投稿と通常投稿の取り扱いを改善し、失敗時に詰まらないようにする。現在タスクを分割して実装中。
+  - 影響範囲: `lambda/scheduled-autosnsflow/src/handler.ts`, `src/app/scheduled-posts/ScheduledPostsTable.tsx`, `pjspec.mdc` (新規)
+
+- **新規タスク（この作業で作成）**:
+  - T001: Add failure metadata to scheduled record and update on post failure (in_progress)
+  - T002: Modify runAutoPostForAccount to post one quote and one normal per run (pending)
+  - T003: Change selection to prioritize newer quotes over failed older ones (pending)
+  - T004: Make posting loop continue on per-candidate errors (do not return) (pending)
+  - T005: Skip or deprioritize reservations with postAttempts >= 3 or permanentFailure (pending)
+  - T006: Update ScheduledPostsTable to color reservations with failures (pending)
+  - T007: Add pjspec documentation for auto-post retry and selection behavior (pending)
+  - T008: Mark development status in pjtodo.mdc and list new tasks (pending)
+  - T009: Write unit/integration tests for candidate selection and retry logic (pending)

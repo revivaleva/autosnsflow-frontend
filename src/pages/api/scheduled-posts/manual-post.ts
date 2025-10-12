@@ -79,7 +79,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     let postId: string = '';
     let numericId: string | undefined;
     if (scheduledType === 'quote') {
-      const referenced = it.sourcePostId?.S || it.sourcePostShortcode?.S || '';
+      // Use numericPostId field only. If it's not present, fail early.
+      const referenced = it.numericPostId?.S || '';
       if (!referenced) return res.status(400).json({ error: 'missing_referenced_post_id_for_quote' });
       const quoteResult = await postQuoteToThreads({
         accessToken: oauthAccessToken || accessToken,
