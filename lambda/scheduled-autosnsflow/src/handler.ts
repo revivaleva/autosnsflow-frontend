@@ -1344,6 +1344,11 @@ export const handler = async (event: any = {}) => {
           totalDeleted += Number(dl || 0);
           totalLogDeleted += Number(dl || 0);
         } catch (e) { console.warn('[warn] pruneOldExecutionLogs failed for', uid, e); }
+        // Replies（返信）も削除
+        try {
+          const dr = await pruneOldReplies(uid);
+          totalDeleted += Number(dr || 0);
+        } catch (e) { console.warn('[warn] pruneOldReplies failed for', uid, e); }
       } catch (e) {
         console.warn("[warn] daily-prune failed for", uid, e);
         await putLog({ userId: uid, type: "prune", status: "error", message: "daily prune failed", detail: { error: String(e) } });
@@ -2098,13 +2103,12 @@ async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settin
     }
   }
 
-  let cand = null;
+  // Collect candidate items (scheduled, not posted, not expired)
+  const candidates: any[] = [];
   let iterIndex = 0;
   for (const it of (q.Items || [])) {
     const pk = getS(it.PK) || '';
     const sk = getS(it.SK) || '';
-
-    // 本体を取得して status/postedAt/timeRange を確認
     const full = await ddb.send(new GetItemCommand({
       TableName: TBL_SCHEDULED,
       Key: { PK: { S: String(pk) }, SK: { S: String(sk) } },
@@ -2112,228 +2116,120 @@ async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settin
       ExpressionAttributeNames: { "#st": "status", "#type": "type" }
     }));
     const x = unmarshall(full.Item || {});
-    // 詳細デバッグ: 対象アカウントだったらフルアイテムとパース後オブジェクトを出力
-    if (acct.accountId === 'remigiozarcorb618' || userId === 'b7b44a38-e051-70fa-2001-0260ae388816') {
-      try {
-        
-      } catch (e) { /* debug removed */ }
-      try { /* debug removed */ } catch(e) { /* debug removed */ }
-    }
     const postedZero = !x.postedAt || x.postedAt === 0 || x.postedAt === "0";
     const stOK = (x.status || "") === "scheduled";
-
-    // timeRange がある場合は失効チェック
     const notExpired = !x.timeRange || (() => {
       const endJst = rangeEndOfDayJst(x.timeRange, jstFromEpoch(Number(x.scheduledAt || 0)));
       return !endJst || nowSec() <= toEpochSec(endJst);
     })();
 
-    if (debugMode && (debugInfo.items as any[]).length < 6) {
-      (debugInfo.items as any[]).push({
-        idx: iterIndex,
-        pk, sk,
-        status: x.status,
-        postedAt: x.postedAt,
-        scheduledAt: x.scheduledAt,
-        timeRange: x.timeRange,
-        stOK, postedZero, notExpired,
-      });
+    if (stOK && postedZero && notExpired) {
+      candidates.push({ pk, sk, ...x });
+      await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "probe", message: "candidate queued", detail: { scheduledAt: x.scheduledAt, timeRange: x.timeRange } });
+      if (debugMode && (debugInfo.items as any[]).length < 6) {
+        (debugInfo.items as any[]).push({ idx: iterIndex, pk, sk, status: x.status, postedAt: x.postedAt, scheduledAt: x.scheduledAt, timeRange: x.timeRange, stOK, postedZero, notExpired });
+      }
+    } else if (stOK && postedZero && !notExpired) {
+      await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "skip", message: `時刻範囲(${x.timeRange})を過ぎたため投稿せず失効` });
+      if (debugMode) {
+        if (!debugInfo.skips) debugInfo.skips = [];
+        debugInfo.skips.push({ sk, reason: 'window_expired', scheduledAt: x.scheduledAt, timeRange: x.timeRange });
+      }
     }
     iterIndex++;
-
-    if (stOK && postedZero && notExpired) {
-      cand = { pk, sk, ...x };
-      await putLog({
-        userId,
-        type: "auto-post",
-        accountId: acct.accountId,
-        targetId: sk,
-        status: "probe",
-        message: "candidate found",
-        detail: { scheduledAt: x.scheduledAt, timeRange: x.timeRange }
-      });
-      if (debugMode) {
-        debugInfo.candidate = { pk, sk, scheduledAt: x.scheduledAt, timeRange: x.timeRange, hasContent: !!x.content };
-      }
-      break;
-    } else {
-      // notExpired が false の場合、時刻範囲を過ぎている可能性がある
-      if (stOK && postedZero && !notExpired) {
-        await putLog({
-          userId,
-          type: "auto-post",
-          accountId: acct.accountId,
-          targetId: sk,
-          status: "skip",
-          message: `時刻範囲(${x.timeRange})を過ぎたため投稿せず失効`
-        });
-        if (debugMode) {
-          if (!debugInfo.skips) debugInfo.skips = [];
-          debugInfo.skips.push({ sk, reason: 'window_expired', scheduledAt: x.scheduledAt, timeRange: x.timeRange });
-        }
-      }
-    }
   }
 
-  // 候補が無ければ今回は投稿なし
-  if (!cand) return debugMode ? { posted: 0, debug: debugInfo } : { posted: 0 };
+  if (!candidates || candidates.length === 0) return debugMode ? { posted: 0, debug: debugInfo } : { posted: 0 };
 
-  // 以降の処理で使う値（従来の q.Items[0] 由来の値を置き換える）
-  const pk = cand.pk;
-  const sk = cand.sk;
-  const text = (cand as any).content || "";
-  const range = (cand as any).timeRange || "";
-  const scheduledAtSec = Number((cand as any).scheduledAt || 0);
-
-  // 本文が空ならスキップ（次回リトライ）
-  if (!text) {
-    await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "skip", message: "本文が未生成のためスキップ" });
-    if (debugMode) {
-      debugInfo.reason = 'no_content';
-      debugInfo.scheduledAt = scheduledAtSec;
-      debugInfo.textLength = text ? text.length : 0;
-      return { posted: 0, debug: debugInfo };
-    }
-    return { posted: 0 };
-  }
-
-  // 予約の時刻範囲を超過していたら失効
-  if (range && scheduledAtSec > 0) {
-    const schDateJst = jstFromEpoch(scheduledAtSec);
-    const endJst = rangeEndOfDayJst(range, schDateJst);
-    if (endJst && nowSec() > toEpochSec(endJst)) {
-      try {
-        await ddb.send(new UpdateItemCommand({
-          TableName: TBL_SCHEDULED,
-          Key: { PK: { S: pk }, SK: { S: sk } },
-          UpdateExpression: "SET #st = :expired, expiredAt = :ts, expireReason = :rsn",
-          ConditionExpression: "#st = :scheduled",
-          ExpressionAttributeNames: { "#st": "status" },
-          ExpressionAttributeValues: {
-            ":expired":   { S: "expired" },
-            ":scheduled": { S: "scheduled" },
-            ":ts":        { N: String(nowSec()) },
-            ":rsn":       { S: "time-window-passed" },
-          },
-        }));
-        await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "skip", message: `時刻範囲(${range})を過ぎたため投稿せず失効` });
-      } catch (e) {
-        await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "失効処理に失敗", detail: { error: String(e) } });
-      }
-      return { posted: 0, skipped: "window_expired" };
-    }
-  }
-
-  // Threads の user-id を未保持なら取得して保存
-  if (!acct.providerUserId) {
-    const pid = await ensureProviderUserId(userId, acct);
-    if (!pid) {
-      await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "ThreadsのユーザーID未取得のため投稿不可" });
-      return { posted: 0 };
-    }
-  }
-  // Require oauthAccessToken; do not fallback to legacy accessToken
-  if (!acct.oauthAccessToken) {
-    await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "ThreadsのoauthAccessToken未設定（accessTokenは使用不可）" });
-    return { posted: 0 };
-  }
-
-  // 実投稿 → 成功時のみ posted に更新（冪等）
-  try {
-    // Debug: log token fields to help investigate missing-token errors
-    try {
-      const tokenHashDebug = acct.oauthAccessToken ? crypto.createHash('sha256').update(String(acct.oauthAccessToken)).digest('hex').slice(0,12) : (acct.accessToken ? crypto.createHash('sha256').update(String(acct.accessToken)).digest('hex').slice(0,12) : '');
-      try { await putLog({ userId, type: 'auto-post', accountId: acct.accountId, targetId: sk, status: 'info', message: 'token_inspection', detail: { accessTokenPresent: !!acct.accessToken, oauthAccessTokenPresent: !!acct.oauthAccessToken, tokenHash: tokenHashDebug } }); } catch(_) {}
-    } catch (e) {
-      console.error('[error] runAutoPostForAccount token-inspection failed:', String(e));
-      throw e;
-    }
-    // If this scheduled item is a quote (type === 'quote'), use the quote post flow
-    let postResult: { postId: string; numericId?: string };
+  // Attempt to post up to 1 quote and 1 normal per run
+  let postedQuote = 0;
+  let postedNormal = 0;
+  const attemptPostCandidate = async (cand: any) => {
+    const pk = cand.pk; const sk = cand.sk; const text = cand.content || '';
     const isQuote = (cand as any).type === 'quote';
-    // For testing, allow quote posting when the test flag is set. Otherwise fall back to normal posts.
-    if (isQuote) {
-      const referenced = (cand as any).numericPostId || "";
-      if (!referenced) {
-        await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "引用元の数値IDが存在しないため引用投稿をスキップ（失敗）" });
-        return { posted: 0 };
+    const scheduledAtSec = Number(cand.scheduledAt || 0);
+
+    // Skip if text empty
+    if (!text) {
+      await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "skip", message: "本文が未生成のためスキップ" });
+      return { ok: false };
+    }
+
+    // Skip expired
+    if (cand.timeRange && scheduledAtSec > 0) {
+      const schDateJst = jstFromEpoch(scheduledAtSec);
+      const endJst = rangeEndOfDayJst(cand.timeRange, schDateJst);
+      if (endJst && nowSec() > toEpochSec(endJst)) {
+        try {
+          await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } }, UpdateExpression: "SET #st = :expired, expiredAt = :ts, expireReason = :rsn", ConditionExpression: "#st = :scheduled", ExpressionAttributeNames: { "#st": "status" }, ExpressionAttributeValues: { ":expired": { S: "expired" }, ":scheduled": { S: "scheduled" }, ":ts": { N: String(nowSec()) }, ":rsn": { S: "time-window-passed" } } }));
+          await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "skip", message: `時刻範囲(${cand.timeRange})を過ぎたため投稿せず失効` });
+        } catch (e) { await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "失効処理に失敗", detail: { error: String(e) } }); }
+        return { ok: false };
       }
-      // Ensure providerUserId matches token owner to avoid referenced_posts loss
-      try {
-        const meResp = await fetch(`https://graph.threads.net/v1.0/me?fields=id&access_token=${encodeURIComponent(acct.oauthAccessToken || '')}`);
-        if (meResp.ok) {
-          try {
-            const meJ = await meResp.json();
-            const meId = meJ?.id || '';
-            if (meId && acct.providerUserId && meId !== acct.providerUserId) {
-              await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'info', message: 'providerUserId mismatch; updating to token owner', detail: { previous: acct.providerUserId, owner: meId } });
-              acct.providerUserId = meId;
-              try {
-                await ddb.send(new UpdateItemCommand({ TableName: TBL_THREADS, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${acct.accountId}` } }, UpdateExpression: 'SET providerUserId = :pid', ExpressionAttributeValues: { ':pid': { S: meId } } }));
-              } catch (e) {
-                // non-fatal
-              }
-            }
-          } catch (_) {}
+    }
+
+    // Ensure providerUserId and token
+    if (!acct.providerUserId) {
+      const pid = await ensureProviderUserId(userId, acct);
+      if (!pid) { await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "ThreadsのユーザーID未取得のため投稿不可" }); return { ok: false }; }
+    }
+    if (!acct.oauthAccessToken) { await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "ThreadsのoauthAccessToken未設定（accessTokenは使用不可）" }); return { ok: false }; }
+
+    try {
+      // perform post
+      let postResult: any;
+      if (isQuote) {
+        const referenced = cand.numericPostId || '';
+        if (!referenced) {
+          await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "引用元の数値IDが存在しないため引用投稿をスキップ（失敗）" });
+          await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } }, UpdateExpression: "SET postAttempts = if_not_exists(postAttempts, :zero) + :inc, lastPostError = :err, lastPostAttemptAt = :ts, permanentFailure = :t", ExpressionAttributeValues: { ":zero": { N: "0" }, ":inc": { N: "1" }, ":err": { S: "referenced_post_missing" }, ":ts": { N: String(nowSec()) }, ":t": { BOOL: true } } }));
+          return { ok: false };
         }
-      } catch (e) {
-        // ignore and proceed; publish may still work
+        postResult = await sharedPostQuoteToThreads({ accessToken: acct.oauthAccessToken, oauthAccessToken: acct.oauthAccessToken, text, referencedPostId: String(referenced), userIdOnPlatform: acct.providerUserId });
+      } else {
+        postResult = await postToThreads({ accessToken: acct.oauthAccessToken, oauthAccessToken: acct.oauthAccessToken, text, userIdOnPlatform: acct.providerUserId });
       }
 
-      // Log create/publish endpoints and token presence for debug
-      try {
-        const tokenPreview = acct.oauthAccessToken ? `${String(acct.oauthAccessToken).slice(-6)}` : '(none)';
-        await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'trace', message: 'quote-post-endpoint-debug', detail: { createEndpoint: 'POST https://graph.threads.net/v1.0/me/threads', publishEndpoint: acct.providerUserId ? `POST https://graph.threads.net/v1.0/${acct.providerUserId}/threads_publish` : 'POST https://graph.threads.net/v1.0/me/threads_publish', tokenPreview } });
-      } catch (_) {}
-
-      // Always attempt quote posting for quote-type items (no test gating)
-      postResult = await sharedPostQuoteToThreads({
-        accessToken: acct.oauthAccessToken,
-        oauthAccessToken: acct.oauthAccessToken,
-        text,
-        referencedPostId: String(referenced),
-        userIdOnPlatform: acct.providerUserId,
-      });
-    } else {
-      postResult = await postToThreads({ accessToken: acct.oauthAccessToken, oauthAccessToken: acct.oauthAccessToken, text, userIdOnPlatform: acct.providerUserId });
-    }
-
-    let updateExpr = "SET #st = :posted, postedAt = :ts, postId = :pid";
-    const updateValues: any = {
-      ":posted":   { S: "posted" },
-      ":scheduled":{ S: "scheduled" },
-      ":ts":       { N: String(nowSec()) },
-      ":pid":      { S: postResult.postId || "" },
-    };
-
-    // 数字IDも保存（リンク用IDと異なる場合）
-    if (postResult.numericId && postResult.numericId !== postResult.postId) {
-      updateExpr += ", numericPostId = :nid";
-      updateValues[":nid"] = { S: postResult.numericId };
-    }
-
-    // 二段階投稿の初期化
-    if (acct.secondStageContent && acct.secondStageContent.trim()) {
-      updateExpr += ", doublePostStatus = :waiting";
-      updateValues[":waiting"] = { S: "waiting" };
-    }
-
-    await ddb.send(new UpdateItemCommand({
-      TableName: TBL_SCHEDULED,
-      Key: { PK: { S: pk }, SK: { S: sk } },
-      UpdateExpression: updateExpr,
-      ConditionExpression: "#st = :scheduled",
-      ExpressionAttributeNames: { "#st": "status" },
-      ExpressionAttributeValues: updateValues,
-    }));
-
-    await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "ok", message: "自動投稿を完了", detail: { platform: "threads" } });
-    return { posted: 1 };
+      // Save posted state
+      const nowTs = nowSec();
+      const updateExprParts: string[] = ["#st = :posted", "postedAt = :ts", "postId = :pid"];
+      const updateValues: any = { ":posted": { S: "posted" }, ":ts": { N: String(nowTs) }, ":pid": { S: postResult.postId || "" } };
+      if (postResult.numericId && postResult.numericId !== postResult.postId) { updateExprParts.push("numericPostId = :nid"); updateValues[":nid"] = { S: postResult.numericId }; }
+      if (acct.secondStageContent && acct.secondStageContent.trim()) { updateExprParts.push("doublePostStatus = :waiting"); updateValues[":waiting"] = { S: "waiting" }; }
+      await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } }, UpdateExpression: `SET ${updateExprParts.join(', ')}`, ConditionExpression: "#st = :scheduled", ExpressionAttributeNames: { "#st": "status" }, ExpressionAttributeValues: updateValues }));
+      await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "ok", message: "自動投稿を完了", detail: { platform: "threads" } });
+      return { ok: true, type: isQuote ? 'quote' : 'normal' };
     } catch (e) {
-    await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "投稿失敗", detail: { error: String(e) } });
-    await postDiscordLog({ userId, isError: true, content: `**[ERROR auto-post] ${acct.displayName || acct.accountId}**\n${String(e).slice(0, 800)}` });
-    return { posted: 0 };
+      try { await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } }, UpdateExpression: "SET postAttempts = if_not_exists(postAttempts, :zero) + :inc, lastPostError = :err, lastPostAttemptAt = :ts", ExpressionAttributeValues: { ":zero": { N: "0" }, ":inc": { N: "1" }, ":err": { S: String((e as any)?.message || String(e)).slice(0,1000) }, ":ts": { N: String(nowSec()) } } })); } catch (_) {}
+      await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "投稿失敗", detail: { error: String(e) } });
+      await postDiscordLog({ userId, isError: true, content: `**[ERROR auto-post] ${acct.displayName || acct.accountId}**\n${String(e).slice(0,800)}` });
+      return { ok: false };
+    }
+  };
+
+  let postedCount = 0;
+  for (const c of candidates) {
+    if (postedQuote >= 1 && postedNormal >= 1) break;
+    if ((c.type === 'quote' && postedQuote >= 1) || (c.type !== 'quote' && postedNormal >= 1)) continue;
+    const res = await attemptPostCandidate(c);
+    if (res.ok) {
+      postedCount++;
+      if (res.type === 'quote') postedQuote++; else postedNormal++;
+    }
   }
+
+  if (postedCount > 0) {
+    if (debugMode) { if (!debugInfo.summary) debugInfo.summary = {}; debugInfo.summary.posted = postedCount; }
+    return debugMode ? { posted: postedCount, debug: debugInfo } : { posted: postedCount };
+  }
+
+  // no candidates succeeded
+  const hadWindowExpired = !!(debugInfo && Array.isArray((debugInfo as any).skips) && (debugInfo as any).skips.length > 0);
+  if (hadWindowExpired) {
+    if (debugMode) return { posted: 0, skipped: "window_expired", debug: debugInfo } as any;
+    return { posted: 0, skipped: "window_expired" } as any;
+  }
+  return debugMode ? { posted: 0, debug: debugInfo } : { posted: 0 };
 }
 
 // 返信送信：Replies に未返信がある場合に送信し、成功時に replied へ更新
@@ -3110,15 +3006,19 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
   }
 }
 
-// 指定ユーザーの予約投稿で、scheduledAt が 7 日以上前かつ未投稿のものを物理削除する
+// 指定ユーザーの予約投稿で、scheduledAt が RETENTION_DAYS 前より古い未投稿のものを物理削除する
 async function pruneOldScheduledPosts(userId: any) {
   try {
-    const sevenDaysAgo = Math.floor(Date.now() / 1000) - (7 * 24 * 60 * 60);
+    // Ensure AppConfig loaded and read RETENTION_DAYS
+    try { await config.loadConfig(); } catch(_) {}
+    const retentionDays = Number(config.getConfigValue('RETENTION_DAYS') || '7') || 7;
+    const thresholdSec = Math.floor(Date.now() / 1000) - (retentionDays * 24 * 60 * 60);
     // Use GSI if available for account-based queries, otherwise scan PK
     let lastKey: any = undefined;
     let totalDeleted = 0;
     // Per-Threads-account deletion limit to avoid large single-run deletes
-    const perAccountLimit = Number(process.env.PER_ACCOUNT_PRUNE_LIMIT || 20);
+    try { await config.loadConfig(); } catch(_) {}
+    const perAccountLimit = Number(config.getConfigValue('PER_ACCOUNT_PRUNE_LIMIT') || process.env.PER_ACCOUNT_PRUNE_LIMIT || '20') || 20;
     // track deletes per Threads accountId (accountId field inside scheduled items)
     const deletedByAccount: Record<string, number> = {};
     do {
@@ -3140,7 +3040,7 @@ async function pruneOldScheduledPosts(userId: any) {
           const scheduledAt = normalizeEpochSec(getN(it.scheduledAt) || 0);
           // NOTE: per request, do not filter by status or isDeleted — delete purely by scheduledAt age
           if (!scheduledAt) continue;
-          if (scheduledAt <= sevenDaysAgo) {
+          if (scheduledAt <= thresholdSec) {
             const acctId = getS(it.accountId) || "__unknown__";
             const cur = deletedByAccount[acctId] || 0;
             if (cur >= perAccountLimit) {
@@ -3175,10 +3075,13 @@ async function pruneOldScheduledPosts(userId: any) {
   }
 }
 
-// 指定ユーザーの実行ログ（ExecutionLogs）で、createdAt が 7 日以上前のものを削除する
+// 指定ユーザーの実行ログ（ExecutionLogs）で、createdAt が RETENTION_DAYS 前より古いものを削除する
 async function pruneOldExecutionLogs(userId: any) {
   try {
-    const sevenDaysAgo = Math.floor(Date.now() / 1000) - (7 * 24 * 60 * 60);
+    try { await config.loadConfig(); } catch(_) {}
+    const retentionDays = Number(config.getConfigValue('RETENTION_DAYS') || '7') || 7;
+    const thresholdSec = Math.floor(Date.now() / 1000) - (retentionDays * 24 * 60 * 60);
+    const perUserLogLimit = Number(config.getConfigValue('EXECUTION_LOGS_PRUNE_LIMIT') || process.env.EXECUTION_LOGS_PRUNE_LIMIT || '1000') || 1000;
     let lastKey: any = undefined;
     let totalDeleted = 0;
     do {
@@ -3197,9 +3100,10 @@ async function pruneOldExecutionLogs(userId: any) {
       for (const it of (q.Items || [])) {
         try {
           const createdAt = Number(it.createdAt?.N || 0);
-          if (createdAt && createdAt <= sevenDaysAgo) {
+          if (createdAt && createdAt <= thresholdSec) {
             await ddb.send(new DeleteItemCommand({ TableName: TBL_LOGS, Key: { PK: it.PK, SK: it.SK } }));
             totalDeleted++;
+            if (totalDeleted >= perUserLogLimit) break;
           }
         } catch (e) {
           console.warn('[warn] prune log delete failed for item', e);
@@ -3267,6 +3171,52 @@ async function pruneOldExecutionLogsAll() {
     return totalDeleted;
   } catch (e) {
     console.warn('[warn] pruneOldExecutionLogsAll failed:', e);
+    throw e;
+  }
+}
+
+// 指定ユーザーのRepliesを削除する（RETENTION_DAYS を参照、物理削除のみ）
+async function pruneOldReplies(userId: any) {
+  try {
+    try { await config.loadConfig(); } catch(_) {}
+    const retentionDays = Number(config.getConfigValue('RETENTION_DAYS') || '7') || 7;
+    const thresholdSec = Math.floor(Date.now() / 1000) - (retentionDays * 24 * 60 * 60);
+    let lastKey: any = undefined;
+    let totalDeleted = 0;
+    do {
+      const q = await ddb.send(new QueryCommand({
+        TableName: TBL_REPLIES,
+        KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+        ExpressionAttributeValues: {
+          ":pk": { S: `USER#${userId}` },
+          ":pfx": { S: "REPLY#" },
+        },
+        ProjectionExpression: "PK,SK,createdAt",
+        Limit: 1000,
+        ExclusiveStartKey: lastKey,
+      }));
+
+      for (const it of (q.Items || [])) {
+        try {
+          const createdAt = Number(it.createdAt?.N || 0);
+          if (createdAt && createdAt <= thresholdSec) {
+            await ddb.send(new DeleteItemCommand({ TableName: TBL_REPLIES, Key: { PK: it.PK, SK: it.SK } }));
+            totalDeleted++;
+          }
+        } catch (e) {
+          console.warn('[warn] prune reply delete failed for item', e);
+        }
+      }
+
+      lastKey = q.LastEvaluatedKey;
+    } while (lastKey);
+
+    if (totalDeleted > 0) {
+      await putLog({ userId, type: "prune", status: "info", message: `古いReplies ${totalDeleted} 件を削除しました` });
+    }
+    return totalDeleted;
+  } catch (e) {
+    console.warn('[warn] pruneOldReplies failed:', e);
     throw e;
   }
 }
@@ -3447,8 +3397,14 @@ async function deletePostedForUser(userId: any) {
 async function deleteUpTo100PostsForAccount(userId: any, accountId: any, limit = 100) {
   try {
     // delegating to deletePostsForAccount (minimal log)
-    // static import from shared package to ensure bundling
-    const { deletePostsForAccount } = await import('@autosnsflow/shared');
+    // dynamic import with graceful fallback if package not available in this build
+    let deletePostsForAccount: any = null;
+    try {
+      const pkgName = '@autosnsflow' + '/shared';
+      const pkg: any = await import(pkgName).catch(() => null);
+      if (pkg && pkg.deletePostsForAccount) deletePostsForAccount = pkg.deletePostsForAccount;
+    } catch (_) { deletePostsForAccount = null; }
+    if (!deletePostsForAccount) throw new Error('shared.deletePostsForAccount_missing');
     const res = await deletePostsForAccount({ userId, accountId, limit });
     try { console.info('[info] deleteUpTo100PostsForAccount result', { userId, accountId, res }); } catch(_) {}
     return { deletedCount: res.deletedCount, remaining: res.remaining };
