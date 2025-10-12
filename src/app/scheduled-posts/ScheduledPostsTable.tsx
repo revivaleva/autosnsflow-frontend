@@ -855,7 +855,7 @@ export default function ScheduledPostsTable() {
                   </td>
                   
                   <td className="border p-1 space-x-1">
-                    {post.status !== "posted" && !post.isDeleted && (
+                    {post.status !== "posted" && !post.isDeleted && (post as any).type !== 'quote' && (
                       <button
                         className={`text-white px-2 py-1 rounded ${
                           isPosting || accountIsDeleting ? "bg-green-300 cursor-not-allowed" : "bg-green-500 hover:bg-green-600"
@@ -883,7 +883,7 @@ export default function ScheduledPostsTable() {
                         {secondStagePostingId === post.scheduledPostId ? "実行中…" : "二段階投稿"}
                       </button>
                     )}
-                    {post.status !== "posted" && !post.isDeleted && (
+                    {post.status !== "posted" && !post.isDeleted && (post as any).type !== 'quote' && (
                       <button
                         className="bg-yellow-500 text-white px-2 py-1 rounded hover:bg-yellow-600"
                         onClick={() => openEdit(post.scheduledPostId)}
