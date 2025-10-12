@@ -3510,14 +3510,26 @@ async function deleteUpTo100PostsForAccount(userId: any, accountId: any, limit =
             fetchUserReplies: async () => [],
             getTokenForAccount: async ({ userId, accountId }: any) => { try { const it = await ddb.send(new GetItemCommand({ TableName: TBL_THREADS, Key: { PK: { S: `USER#${uid}` }, SK: { S: `ACCOUNT#${aid}` } }, ProjectionExpression: 'oauthAccessToken' })); return it.Item?.oauthAccessToken?.S || null; } catch (_) { return null; } },
             deleteThreadsPostWithToken: async ({ postId, token }: any) => {
+              // Inline minimal implementation: call Threads DELETE endpoint with provided token
+              if (!postId) throw new Error('postId_required');
+              if (!token) throw new Error('token_required');
               try {
-                const pmod = await import('path').catch(() => null);
-                const p = pmod && (pmod.default || pmod) as any;
-                const modPath = p.resolve(__dirname, '..', '..', '..', 'src', 'lib', 'threads-delete.js');
-                const dyn = await import(`file://${modPath}`).catch(() => null);
-                if (dyn && dyn.deleteThreadsPostWithToken) return await dyn.deleteThreadsPostWithToken({ postId, token });
-              } catch (_) {}
-              throw new Error('deleteThreadsPostWithToken_missing');
+                const base = process.env.THREADS_GRAPH_BASE || 'https://graph.threads.net/v1.0';
+                const url = `${base}/${encodeURIComponent(postId)}?access_token=${encodeURIComponent(token)}`;
+                const resp = await fetch(url, { method: 'DELETE' } as any);
+                const text = await resp.text().catch(() => '');
+                let json: any = {};
+                try { json = text ? JSON.parse(text) : {}; } catch { json = { raw: text }; }
+                if (!resp.ok) {
+                  const errMsg = `threads_delete_failed: ${resp.status} ${JSON.stringify(json)}`;
+                  console.warn('[warn] deleteThreadsPostWithToken failed', { postId, status: resp.status, body: String(text).slice(0,200) });
+                  throw new Error(errMsg);
+                }
+                return { ok: true, status: resp.status, body: json };
+              } catch (e) {
+                try { console.warn('[warn] inline deleteThreadsPostWithToken threw', String(e)); } catch(_) {}
+                throw e;
+              }
             },
             queryScheduled: async ({ userId, accountId, postId }: any) => { const q = await ddb.send(new QueryCommand({ TableName: TBL_SCHEDULED, IndexName: GSI_POS_BY_ACC_TIME, KeyConditionExpression: 'accountId = :acc', ExpressionAttributeValues: { ':acc': { S: aid } }, ProjectionExpression: 'PK, SK, postId, numericPostId' })); return (q.Items || []).map((it: any) => ({ PK: getS(it.PK), SK: getS(it.SK), postId: getS(it.postId) || getS(it.numericPostId) })); },
             deleteScheduledItem: async ({ PK, SK }: any) => { await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: PK }, SK: { S: SK } } })); },
