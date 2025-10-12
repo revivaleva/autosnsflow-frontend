@@ -1368,9 +1368,9 @@ export const handler = async (event: any = {}) => {
     if (dryRun) {
       const finishedAt = Date.now();
       // build totals object expected by formatMasterMessage
-      const t = { candidates: totalCandidates, scanned: totalScanned, deleted: 0, preFilterTotal } as any;
+      const t = { candidates: totalCandidates, scanned: totalScanned, deleted: 0, preFilterTotal, logCandidates: totalLogCandidates } as any;
       await postDiscordMaster(formatMasterMessage({ job: "daily-prune", startedAt, finishedAt, userTotal: userIds.length, userSucceeded: 0, totals: t }));
-      return { statusCode: 200, body: JSON.stringify({ dryRun: true, preFilterTotal, candidates: totalCandidates, scanned: totalScanned }) };
+      return { statusCode: 200, body: JSON.stringify({ dryRun: true, preFilterTotal, candidates: totalCandidates, scanned: totalScanned, logCandidates: totalLogCandidates }) };
     }
 
     // If no userId was specified, perform full-table prune
