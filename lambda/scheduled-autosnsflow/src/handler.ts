@@ -3492,136 +3492,44 @@ async function deletePostedForUser(userId: any) {
 // Delete up to `limit` posted items for a given user/account. Returns { deletedCount, remaining }
 async function deleteUpTo100PostsForAccount(userId: any, accountId: any, limit = 100) {
   try {
-    // delegating to deletePostsForAccount (minimal log)
-    // dynamic import with graceful fallback if package not available in this build
+    // Try adapter-style deletePostsForAccountWithAdapters from packages/shared/dist only.
     let deletePostsForAccount: any = null;
     try {
-      // Preferred: import packaged shared module if available in bundle
-      const pkgName = '@autosnsflow' + '/shared';
-      const pkg: any = await import(pkgName).catch(() => null);
-      if (pkg && pkg.deletePostsForAccount) deletePostsForAccount = pkg.deletePostsForAccount;
-    } catch (_) { deletePostsForAccount = null; }
-
-    // Fallback 1: try to load local packages/shared/dist (useful in repo-based deploys)
-    if (!deletePostsForAccount) {
-      try {
-      const localPkg = await import('../../../packages/shared/dist').catch(() => null);
-      if (localPkg) {
-        const p: any = localPkg;
-        // try named export, then adapter export, then default
-        if (typeof p.deletePostsForAccount === 'function') deletePostsForAccount = p.deletePostsForAccount;
-        else if (typeof p.deletePostsForAccountWithAdapters === 'function') {
-          // wrap adapter-style function into expected deletePostsForAccount signature
-          const fn = p.deletePostsForAccountWithAdapters;
-          deletePostsForAccount = async ({ userId, accountId, limit }: any) => {
-            // build adapters that the shared implementation expects using local helpers
-            const adapters: any = {
-            fetchThreadsPosts: async (opts: any) => {
-                // minimal fallback: attempt a GSI query on ScheduledPosts to approximate posted threads
-                try {
-                  const q = await ddb.send(new QueryCommand({ TableName: TBL_SCHEDULED, IndexName: GSI_POS_BY_ACC_TIME, KeyConditionExpression: 'accountId = :acc', ExpressionAttributeValues: { ':acc': { S: accountId }, ':min': { N: '0' } }, ProjectionExpression: 'postId,numericPostId,id,content', Limit: opts?.limit || 100 }));
-                  const items = (q.Items || []).map((it: any) => ({ id: getS(it.postId) || getS(it.numericPostId) || '', content: getS(it.content) || '' }));
-                  return items;
-                } catch (_) { return []; }
-              },
-              getTokenForAccount: async ({ userId, accountId }: any) => {
-                // read ThreadsAccounts table
-                try {
-                  const it = await ddb.send(new GetItemCommand({ TableName: TBL_THREADS, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } }, ProjectionExpression: 'oauthAccessToken' }));
-                  return it.Item?.oauthAccessToken?.S || null;
-                } catch (_) { return null; }
-              },
-              deleteThreadsPostWithToken: async ({ postId, token }: any) => {
-                // use local helper implementation present in src/lib/threads-delete.ts
-                try {
-                  // require local implementation by path to avoid TS rootDir issues at build
-                  try {
-                    const pmod = await import('path').catch(() => null);
-                    const p = pmod && (pmod.default || pmod) as any;
-                    const modPath = p.resolve(__dirname, '..', '..', '..', 'src', 'lib', 'threads-delete.js');
-                    const url = `file://${modPath}`;
-                    const dyn = await import(url).catch(() => null);
-                    const mmod = dyn || null;
-                    if (mmod && mmod.deleteThreadsPostWithToken) return await mmod.deleteThreadsPostWithToken({ postId, token });
-                  } catch (_) {}
-                } catch (_) {}
-                throw new Error('deleteThreadsPostWithToken_missing');
-              },
-              queryScheduled: async ({ userId, accountId, postId }: any) => {
-                const q = await ddb.send(new QueryCommand({ TableName: TBL_SCHEDULED, IndexName: GSI_POS_BY_ACC_TIME, KeyConditionExpression: 'accountId = :acc', ExpressionAttributeValues: { ':acc': { S: accountId } }, ProjectionExpression: 'PK, SK' }));
-                return (q.Items || []).map((it: any) => ({ PK: getS(it.PK), SK: getS(it.SK) }));
-              },
-              deleteScheduledItem: async ({ PK, SK }: any) => {
-                await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: PK }, SK: { S: SK } } }));
-              },
-              getScheduledAccount: async ({ userId, accountId }: any) => {
-                const it = await ddb.send(new GetItemCommand({ TableName: TBL_THREADS, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } }, ProjectionExpression: 'providerUserId' }));
-                return { providerUserId: it.Item?.providerUserId?.S };
-              },
-              fetchUserReplies: async () => [] ,
-              putLog: (entry: any) => putLog(entry),
-            };
-            const r = await fn({ userId, accountId, limit }, adapters);
-            return { deletedCount: r.deletedCount || 0, remaining: r.remaining };
+      const pkg: any = await import('../../../packages/shared/dist').catch(() => null);
+      const adapterFn = pkg?.deletePostsForAccountWithAdapters || (pkg?.default && pkg.default.deletePostsForAccountWithAdapters) || pkg?.default;
+      if (adapterFn && typeof adapterFn === 'function') {
+        deletePostsForAccount = async ({ userId: uid, accountId: aid, limit: lim }: any) => {
+          const fn = adapterFn;
+          const adapters: any = {
+            fetchThreadsPosts: async ({ userId, accountId, limit }: any) => {
+              try {
+                const q = await ddb.send(new QueryCommand({ TableName: TBL_SCHEDULED, IndexName: GSI_POS_BY_ACC_TIME, KeyConditionExpression: 'accountId = :acc', ExpressionAttributeValues: { ':acc': { S: aid } }, ProjectionExpression: 'postId,numericPostId,content', Limit: Number(limit || 100) }));
+                return (q.Items || []).map((it: any) => ({ id: getS(it.postId) || getS(it.numericPostId) || '', content: getS(it.content) || '' }));
+              } catch (_) { return []; }
+            },
+            fetchUserReplies: async () => [],
+            getTokenForAccount: async ({ userId, accountId }: any) => { try { const it = await ddb.send(new GetItemCommand({ TableName: TBL_THREADS, Key: { PK: { S: `USER#${uid}` }, SK: { S: `ACCOUNT#${aid}` } }, ProjectionExpression: 'oauthAccessToken' })); return it.Item?.oauthAccessToken?.S || null; } catch (_) { return null; } },
+            deleteThreadsPostWithToken: async ({ postId, token }: any) => {
+              try {
+                const pmod = await import('path').catch(() => null);
+                const p = pmod && (pmod.default || pmod) as any;
+                const modPath = p.resolve(__dirname, '..', '..', '..', 'src', 'lib', 'threads-delete.js');
+                const dyn = await import(`file://${modPath}`).catch(() => null);
+                if (dyn && dyn.deleteThreadsPostWithToken) return await dyn.deleteThreadsPostWithToken({ postId, token });
+              } catch (_) {}
+              throw new Error('deleteThreadsPostWithToken_missing');
+            },
+            queryScheduled: async ({ userId, accountId, postId }: any) => { const q = await ddb.send(new QueryCommand({ TableName: TBL_SCHEDULED, IndexName: GSI_POS_BY_ACC_TIME, KeyConditionExpression: 'accountId = :acc', ExpressionAttributeValues: { ':acc': { S: aid } }, ProjectionExpression: 'PK, SK, postId, numericPostId' })); return (q.Items || []).map((it: any) => ({ PK: getS(it.PK), SK: getS(it.SK), postId: getS(it.postId) || getS(it.numericPostId) })); },
+            deleteScheduledItem: async ({ PK, SK }: any) => { await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: PK }, SK: { S: SK } } })); },
+            getScheduledAccount: async ({ userId, accountId }: any) => { const it = await ddb.send(new GetItemCommand({ TableName: TBL_THREADS, Key: { PK: { S: `USER#${uid}` }, SK: { S: `ACCOUNT#${aid}` } }, ProjectionExpression: 'providerUserId' })); return { providerUserId: it.Item?.providerUserId?.S }; },
+            putLog: (entry: any) => putLog(entry),
           };
-        } else if (p.default) {
-          const d: any = p.default;
-          if (typeof d.deletePostsForAccount === 'function') deletePostsForAccount = d.deletePostsForAccount;
-          else if (typeof d.deletePostsForAccountWithAdapters === 'function') {
-            const fn = d.deletePostsForAccountWithAdapters;
-            deletePostsForAccount = async ({ userId, accountId, limit }: any) => {
-              const adapters: any = { putLog: (entry: any) => putLog(entry) };
-              const r = await fn({ userId, accountId, limit }, adapters);
-              return { deletedCount: r.deletedCount || 0, remaining: r.remaining };
-            };
-          }
-        }
+          const r = await fn({ userId: uid, accountId: aid, limit: lim }, adapters);
+          return { deletedCount: r.deletedCount || 0, remaining: r.remaining };
+        };
       }
-      } catch (_) { /* ignore */ }
-    }
-
-    // Note: no further fallback to frontend src to avoid rootDir/tsconfig issues in lambda build
-
-    if (!deletePostsForAccount) {
-      // Fallback simple deletion: delete posted ScheduledPosts records for this account up to limit.
-      try {
-        const q = await ddb.send(new QueryCommand({
-          TableName: TBL_SCHEDULED,
-          IndexName: GSI_POS_BY_ACC_TIME,
-          KeyConditionExpression: "accountId = :acc",
-          ExpressionAttributeNames: { "#st": "status" },
-          ExpressionAttributeValues: {
-            ":acc": { S: accountId },
-            ":zero": { N: "0" },
-            ":posted": { S: "posted" }
-          },
-          FilterExpression: "(attribute_exists(postedAt) AND postedAt > :zero) OR #st = :posted",
-          ProjectionExpression: "PK, SK",
-          Limit: Number((limit || 100) + 1)
-        }));
-        const items = (q.Items || []) as any[];
-        let toDel = items;
-        let remaining = false;
-        if (items.length > (limit || 100)) {
-          toDel = items.slice(0, Number(limit || 100));
-          remaining = true;
-        }
-        let deletedCount = 0;
-        for (const it of toDel) {
-          try {
-            await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: it.PK, SK: it.SK } }));
-            deletedCount++;
-          } catch (e) {
-            try { console.warn('[warn] fallback delete failed for item', String(e)); } catch(_) {}
-          }
-        }
-        try { console.info('[info] fallback deleteUpTo100PostsForAccount result', { userId, accountId, deletedCount, remaining }); } catch(_) {}
-        return { deletedCount, remaining } as any;
-      } catch (e) {
-        try { console.warn('[warn] fallback deleteUpTo100PostsForAccount failed', String(e)); } catch(_) {}
-        throw new Error('delete_fallback_failed');
-      }
-    }
+    } catch (_) { deletePostsForAccount = null; }
+    if (!deletePostsForAccount) throw new Error('shared.deletePostsForAccount_missing');
     const res = await deletePostsForAccount({ userId, accountId, limit });
     try { console.info('[info] deleteUpTo100PostsForAccount result', { userId, accountId, res }); } catch(_) {}
     return { deletedCount: res.deletedCount, remaining: res.remaining };
