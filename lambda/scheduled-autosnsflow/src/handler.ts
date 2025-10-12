@@ -2225,6 +2225,8 @@ async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settin
       const nowTs = nowSec();
       const updateExprParts: string[] = ["#st = :posted", "postedAt = :ts", "postId = :pid"];
       const updateValues: any = { ":posted": { S: "posted" }, ":ts": { N: String(nowTs) }, ":pid": { S: postResult.postId || "" } };
+      // Ensure :scheduled is present for the ConditionExpression check
+      updateValues[":scheduled"] = { S: "scheduled" };
       if (postResult.numericId && postResult.numericId !== postResult.postId) { updateExprParts.push("numericPostId = :nid"); updateValues[":nid"] = { S: postResult.numericId }; }
       if (acct.secondStageContent && acct.secondStageContent.trim()) { updateExprParts.push("doublePostStatus = :waiting"); updateValues[":waiting"] = { S: "waiting" }; }
       await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } }, UpdateExpression: `SET ${updateExprParts.join(', ')}`, ConditionExpression: "#st = :scheduled", ExpressionAttributeNames: { "#st": "status" }, ExpressionAttributeValues: updateValues }));
