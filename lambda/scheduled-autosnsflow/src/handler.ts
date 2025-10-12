@@ -1114,6 +1114,16 @@ async function putLog({
   if (targetId) item.targetId = { S: String(targetId) };
   // preserve any numeric summary if provided in detail
   if (typeof (detail || {}).deletedCount === 'number') item.deletedCount = { N: String((detail || {}).deletedCount) };
+  // Set TTL attr for new logs so DynamoDB TTL can remove them automatically if enabled.
+  try { await config.loadConfig(); } catch (_) {}
+  try {
+    const retentionDays = Number(config.getConfigValue('RETENTION_DAYS') || process.env.RETENTION_DAYS || '7') || 7;
+    if (retentionDays > 0) {
+      const ttlAt = now + (retentionDays * 24 * 60 * 60);
+      item.ttlAt = { N: String(ttlAt) };
+    }
+  } catch (_) {}
+
   try {
     await ddb.send(new PutItemCommand({ TableName: TBL_LOGS, Item: item }));
   } catch (e) {
@@ -1274,7 +1284,7 @@ export const handler = async (event: any = {}) => {
     // Options:
     // - event.dryRun (boolean): true = do not delete, only count and log candidates
     // - event.userId (string): if provided, only run for that user
-    const dryRun = !!event.dryRun;
+    const dryRun = !!event.dryRun || !!event?.testInvocation || !!event?.dryRun;
     const singleUser = event.userId || null;
     const deletePosted = !!event.deletePosted; // if true, perform deletion of posted records
     const confirmPostedDelete = !!event.confirm; // safety: require confirm=true to actually delete posted items
@@ -2124,7 +2134,10 @@ async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settin
     })();
 
     if (stOK && postedZero && notExpired) {
-      candidates.push({ pk, sk, ...x });
+      // deprioritize items with permanentFailure or high postAttempts
+      const attempts = Number(x.postAttempts || 0);
+      const permFail = !!x.permanentFailure;
+      candidates.push({ pk, sk, attempts, permFail, scheduledAt: Number(x.scheduledAt || 0), ...x });
       await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "probe", message: "candidate queued", detail: { scheduledAt: x.scheduledAt, timeRange: x.timeRange } });
       if (debugMode && (debugInfo.items as any[]).length < 6) {
         (debugInfo.items as any[]).push({ idx: iterIndex, pk, sk, status: x.status, postedAt: x.postedAt, scheduledAt: x.scheduledAt, timeRange: x.timeRange, stOK, postedZero, notExpired });
@@ -2140,6 +2153,18 @@ async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settin
   }
 
   if (!candidates || candidates.length === 0) return debugMode ? { posted: 0, debug: debugInfo } : { posted: 0 };
+
+  // Sort candidates: prefer lower attempts, prefer newer scheduledAt for quotes
+  candidates.sort((a, b) => {
+    // permanentFailure last
+    if (a.permFail !== b.permFail) return a.permFail ? 1 : -1;
+    // fewer attempts first
+    if (a.attempts !== b.attempts) return a.attempts - b.attempts;
+    // For quote type prefer newer scheduledAt (descending)
+    if ((a.type === 'quote') && (b.type === 'quote')) return Number(b.scheduledAt || 0) - Number(a.scheduledAt || 0);
+    // fallback: older scheduled first
+    return Number(a.scheduledAt || 0) - Number(b.scheduledAt || 0);
+  });
 
   // Attempt to post up to 1 quote and 1 normal per run
   let postedQuote = 0;
@@ -3012,7 +3037,9 @@ async function pruneOldScheduledPosts(userId: any) {
     // Ensure AppConfig loaded and read RETENTION_DAYS
     try { await config.loadConfig(); } catch(_) {}
     const retentionDays = Number(config.getConfigValue('RETENTION_DAYS') || '7') || 7;
-    const thresholdSec = Math.floor(Date.now() / 1000) - (retentionDays * 24 * 60 * 60);
+    // ExecutionLogs normal prune should wait one extra day to avoid racing with TTL
+    const execPruneDays = Number(config.getConfigValue('EXECUTION_LOGS_PRUNE_DELAY_DAYS') || String(retentionDays + 1)) || (retentionDays + 1);
+    const thresholdSec = Math.floor(Date.now() / 1000) - (execPruneDays * 24 * 60 * 60);
     // Use GSI if available for account-based queries, otherwise scan PK
     let lastKey: any = undefined;
     let totalDeleted = 0;
