@@ -108,8 +108,18 @@ export async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 2
   // debug output removed
   
   // support oauthAccessToken as the canonical token field
-  if (!acct?.accessToken && !acct?.oauthAccessToken) throw new Error("Threads のトークン不足");
-  if (!acct?.providerUserId) throw new Error("Threads のユーザーID取得失敗");
+  const hasAccessToken = !!acct?.accessToken;
+  const hasOauthAccessToken = !!acct?.oauthAccessToken;
+  const hasProviderUserId = !!acct?.providerUserId;
+  if (!hasAccessToken && !hasOauthAccessToken) {
+    // Log minimal, non-sensitive probe to server console for debugging (do not print tokens)
+    console.warn(`[WARN] fetchThreadsRepliesAndSave - token missing for account: ${acct?.accountId || 'unknown'}`, { hasAccessToken, hasOauthAccessToken, acctKeys: Object.keys(acct || {}) });
+    throw new Error("Threads のトークン不足");
+  }
+  if (!hasProviderUserId) {
+    console.warn(`[WARN] fetchThreadsRepliesAndSave - providerUserId missing for account: ${acct?.accountId || 'unknown'}`, { hasProviderUserId, acctKeys: Object.keys(acct || {}) });
+    throw new Error("Threads のユーザーID取得失敗");
+  }
   
   const since = nowSec() - lookbackSec;
   let saved = 0;
