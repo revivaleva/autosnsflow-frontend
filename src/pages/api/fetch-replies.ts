@@ -151,17 +151,20 @@ export async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 2
       scheduledPostId: item.scheduledPostId?.S || "",
     };
 
-    // リプライ取得用のIDを決定（数字ID優先）
+    // リプライ取得用のIDを決定（数字IDのみを許可する）
     const isNumericPostId = post.numericPostId && /^\d+$/.test(post.numericPostId);
     const isNumericMainPostId = post.postId && /^\d+$/.test(post.postId);
-    
-    let replyApiId: string;
+
+    let replyApiId: string | null = null;
     if (isNumericPostId) {
       replyApiId = post.numericPostId;
     } else if (isNumericMainPostId) {
       replyApiId = post.postId;
     } else {
-      replyApiId = post.numericPostId || post.postId;
+      // Non-numeric IDs are skipped to avoid unsupported API requests
+      postInfo.apiLog = 'SKIP: リプライ取得用の数値IDが存在しないためスキップ';
+      postsInfo.push(postInfo);
+      continue;
     }
 
     // debug output removed
