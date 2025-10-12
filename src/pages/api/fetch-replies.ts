@@ -108,9 +108,30 @@ export async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 2
   // debug output removed
   
   // support oauthAccessToken as the canonical token field
-  const hasAccessToken = !!acct?.accessToken;
-  const hasOauthAccessToken = !!acct?.oauthAccessToken;
-  const hasProviderUserId = !!acct?.providerUserId;
+  let hasAccessToken = !!acct?.accessToken;
+  let hasOauthAccessToken = !!acct?.oauthAccessToken;
+  let hasProviderUserId = !!acct?.providerUserId;
+
+  // If tokens or providerUserId are missing, try a DynamoDB fallback read for this account
+  if (!hasAccessToken && !hasOauthAccessToken) {
+    try {
+      const out = await ddb.send(new GetItemCommand({
+        TableName: process.env.TBL_THREADS_ACCOUNTS || 'ThreadsAccounts',
+        Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${acct?.accountId || ''}` } },
+        ProjectionExpression: 'accessToken, oauthAccessToken, providerUserId'
+      }));
+      const it: any = (out as any).Item || {};
+      if (it.accessToken && it.accessToken.S) acct.accessToken = it.accessToken.S;
+      if (it.oauthAccessToken && it.oauthAccessToken.S) acct.oauthAccessToken = it.oauthAccessToken.S;
+      if (it.providerUserId && it.providerUserId.S) acct.providerUserId = it.providerUserId.S;
+    } catch (e) {
+      console.warn('[WARN] fetchThreadsRepliesAndSave - fallback account read failed', e);
+    }
+    hasAccessToken = !!acct?.accessToken;
+    hasOauthAccessToken = !!acct?.oauthAccessToken;
+    hasProviderUserId = !!acct?.providerUserId;
+  }
+
   if (!hasAccessToken && !hasOauthAccessToken) {
     // Log minimal, non-sensitive probe to server console for debugging (do not print tokens)
     console.warn(`[WARN] fetchThreadsRepliesAndSave - token missing for account: ${acct?.accountId || 'unknown'}`, { hasAccessToken, hasOauthAccessToken, acctKeys: Object.keys(acct || {}) });
