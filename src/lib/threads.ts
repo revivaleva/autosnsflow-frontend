@@ -121,10 +121,11 @@ export async function postToThreads({
   }
   // debug output removed
   
-  // 数字IDを取得（投稿詳細から）
+  // 数字IDを取得（投稿詳細から） — oauthAccessToken（primaryToken）を使用
   let numericId: string | undefined;
   try {
-    const detailUrl = `${base}/${encodeURIComponent(postId)}?fields=id&access_token=${encodeURIComponent(accessToken)}`;
+    const tokenForDetail = primaryToken || accessToken || '';
+    const detailUrl = `${base}/${encodeURIComponent(postId)}?fields=id&access_token=${encodeURIComponent(tokenForDetail)}`;
     const detailRes = await fetch(detailUrl);
     if (detailRes.ok) {
       const detailJson = await detailRes.json();
@@ -174,6 +175,8 @@ export async function postQuoteToThreads({
       const sanitizedBody = { media_type: 'TEXT', text: String(text).slice(0,2000) };
       console.info('[THREADS QUOTE CREATE REQ]', { endpoint: url.replace(primaryToken, '***'), body: sanitizedBody });
       try {
+        (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+        (global as any).__TEST_OUTPUT__.push({ tag: 'THREADS_QUOTE_CREATE_REQ', endpoint: String(url).replace(primaryToken, '***'), body: sanitizedBody });
       } catch (_) {}
     } catch (_) {}
     const r = await fetch(url, {
@@ -185,6 +188,8 @@ export async function postQuoteToThreads({
     // Log response
     try { console.info('[THREADS QUOTE CREATE RESP]', { status: r.status, raw: tx.slice(0,2000) }); } catch (_) {}
     try {
+      (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+      (global as any).__TEST_OUTPUT__.push({ tag: 'THREADS_QUOTE_CREATE_RESP', status: r.status, raw: String(tx).slice(0,2000) });
     } catch (_) {}
     if (!r.ok) throw new Error(`threads_quote_create_failed: ${r.status} ${tx}`);
     let j: any = {};
@@ -206,11 +211,15 @@ export async function postQuoteToThreads({
     // Log publish request (no body)
     try { console.info('[THREADS QUOTE PUBLISH REQ]', { endpoint: urlWithToken.replace(primaryToken, '***') }); } catch (_) {}
     try {
+      (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+      (global as any).__TEST_OUTPUT__.push({ tag: 'THREADS_QUOTE_PUBLISH_REQ', endpoint: String(urlWithToken).replace(primaryToken, '***') });
     } catch (_) {}
     const resp = await fetch(urlWithToken, { method: 'POST' });
     const txt = await resp.text().catch(() => '');
     try { console.info('[THREADS QUOTE PUBLISH RESP]', { status: resp.status, raw: txt.slice(0,2000) }); } catch (_) {}
     try {
+      (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+      (global as any).__TEST_OUTPUT__.push({ tag: 'THREADS_QUOTE_PUBLISH_RESP', status: resp.status, raw: String(txt).slice(0,2000) });
     } catch (_) {}
     if (!resp.ok) throw new Error(`threads_quote_publish_failed: ${resp.status} ${txt}`);
     let parsed: any = {};
