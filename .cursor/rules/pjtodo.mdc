@@ -13,6 +13,8 @@
 
 - `Deprecate accessToken usage: remove all checks/fallbacks and prefer oauthAccessToken` — pending
  - `Deprecate accessToken usage: remove all checks/fallbacks and prefer oauthAccessToken` — in_progress
+ - `Fix ThreadsAccounts token field name/expiry handling (threads-delete)` — completed
+   - Description: Correct ProjectionExpression and ensure expiry field `oauthTokenExpiresAt` is referenced; mark for wider grep for similar name mismatches.
  - `Design and implement token auto-refresh worker` — pending
  - `Mark accounts with missing/expired oauthAccessToken as reauth_required and show UI badge` — pending
  - `Fix: ensure normal posts use normal prompts, not quote prompts` — pending
