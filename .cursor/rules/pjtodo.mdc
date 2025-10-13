@@ -36,6 +36,14 @@
   - **期限**: 次回リリース直前のリファクタ作業内で削除する
   - **理由**: デバッグ用エンドポイントはセキュリティリスクとメンテナンスコストを増やすため、本番へは含めない
 
+### テスト向けデバッグの掃除（今回の追加）
+
+- `Remove __TEST_OUTPUT__ pushes or gate them behind __TEST_CAPTURE__ flag` — pending
+  - 概要: テスト時にのみ収集する `__TEST_OUTPUT__` への push を無効化または環境フラグでのみ有効化する。Lambda の先頭で noop 化済みだが、各 push を削除またはガードする。 (担当: 実装者)
+
+- `Remove unnecessary console.info/debug logs from lambda handler` — pending
+  - 概要: 調査用に追加した多数の `console.info` / `console.warn` を整理し、本番に不要な出力を削除または `ALLOW_DEBUG_EXEC_LOGS` によるガードで制御する。 (担当: 実装者)
+
 （詳細は `.cursor/rules/pjspec.mdc` とソースの TODO コメントを参照）
 
 
