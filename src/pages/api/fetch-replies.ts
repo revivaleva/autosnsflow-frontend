@@ -19,19 +19,6 @@ const nowSec = () => Math.floor(Date.now() / 1000);
 export async function upsertReplyItem(userId: string, acct: any, { externalReplyId, postId, text, createdAt, originalPost }: any) {
   const sk = `REPLY#${externalReplyId}`;
 
-  // 既存チェック
-  try {
-    const existing = await ddb.send(new GetItemCommand({
-      TableName: TBL_REPLIES,
-      Key: { PK: { S: `USER#${userId}` }, SK: { S: sk } },
-    }));
-    if (existing.Item) {
-      return false; // 既に存在する
-    }
-  } catch (e) {
-    // debug output removed
-  }
-
   // AI生成による返信内容の作成
   let responseContent = "";
   
@@ -87,7 +74,12 @@ export async function upsertReplyItem(userId: string, acct: any, { externalReply
       ConditionExpression: "attribute_not_exists(SK)",
     }));
     return true;
-  } catch {
+  } catch (e: any) {
+    // If item already exists, treat as duplicate (no-op). Otherwise log and return false.
+    if (e?.name === 'ConditionalCheckFailedException') {
+      return false;
+    }
+    console.warn('[WARN] upsertReplyItem failed:', String(e).substring(0,200));
     return false;
   }
 }
