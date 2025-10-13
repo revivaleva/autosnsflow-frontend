@@ -291,17 +291,8 @@ export async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 2
 
         // Ownership check: compare reply's account identifier(s) to reservation.accountId only.
         // Use simple accountId match (username or id fields) and avoid expensive DB reads per reply.
-        const replyOwnerCandidates = [
-          rep.username,
-          rep.user?.username,
-          rep.from?.username,
-          rep.author?.username,
-          rep.user?.id,
-          rep.from?.id,
-          rep.author?.id,
-        ].map(x => (x == null ? "" : String(x)));
-
-        const replyOwnerMatch = replyOwnerCandidates.some(x => x && x === acct.accountId);
+        // Compare only by username (reservation.accountId holds the username)
+        const replyOwnerMatch = !!(rep.username && String(rep.username) === String(acct.accountId));
 
         // If API says owned_by_me, only exclude when replyOwnerMatch is true.
         // If API says owned_by_me but owner doesn't match, log a single warning per account per run.
@@ -313,7 +304,7 @@ export async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 2
             // log mismatch only once per account per invocation to reduce log volume
             if (!((global as any).__replyFetchFlagMismatchLogged || {})[acct.accountId]) {
               try {
-                await putLog({ userId, type: "reply-fetch-flag-mismatch", accountId: acct.accountId, status: "warn", message: "is_reply_owned_by_me=true だが accountId が一致しないため保存対象とする", detail: { replyId: rep.id, replyOwnerCandidates, accountId: acct.accountId } });
+                await putLog({ userId, type: "reply-fetch-flag-mismatch", accountId: acct.accountId, status: "warn", message: "is_reply_owned_by_me=true だが username が一致しないため保存対象とする", detail: { replyId: rep.id, username: rep.username || null, accountId: acct.accountId } });
                 (global as any).__replyFetchFlagMismatchLogged = (global as any).__replyFetchFlagMismatchLogged || {};
                 (global as any).__replyFetchFlagMismatchLogged[acct.accountId] = true;
               } catch (e) { console.warn('[warn] putLog failed for flag mismatch (owned_by_me):', e); }
