@@ -421,8 +421,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(405).json({ error: "Method Not Allowed" });
     }
 
+    // リクエストボディ (optional)
+    const body = (req.body && typeof req.body === 'object') ? req.body as any : {};
+    const requestedAccountId = body?.accountId ? String(body.accountId) : null;
+    const summaryOnly = !!body?.summaryOnly;
+
     // ユーザーのThreadsアカウントを取得
-    const accounts = await fetchThreadsAccountsFull(userId);
+    let accounts = await fetchThreadsAccountsFull(userId);
+
+    // single-account リクエストがあれば絞り込み（見つからなければ空配列で処理される）
+    if (requestedAccountId) {
+      const found = (accounts || []).find(a => a.accountId === requestedAccountId);
+      accounts = found ? [found] : [];
+    }
 
     // autoReply が有効なアカウントのみ処理対象とする
     const eligibleAccounts = (accounts || []).filter(a => !!a.autoReply);
@@ -462,6 +473,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     };
 
     // debug output removed
+
+    if (summaryOnly) {
+      const summaryResults = results.map((r: any) => ({
+        accountId: r.accountId,
+        fetched: r.fetched || 0,
+        error: r.error ? String(r.error).slice(0, 140) : null
+      }));
+      return res.status(200).json({
+        ok: true,
+        totalFetched,
+        results: summaryResults,
+        accounts: accounts.length,
+        message: `${totalFetched}件のリプライを取得しました（${accounts.length}アカウント中）`
+      });
+    }
 
     return res.status(200).json({
       ok: true,

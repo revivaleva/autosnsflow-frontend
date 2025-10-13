@@ -2,16 +2,11 @@
 // [MOD] personaMode による厳密な使い分け。互換の input.persona は削除。
 import './_init';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { DynamoDBClient, GetItemCommand } from '@aws-sdk/client-dynamodb';
+import { GetItemCommand } from '@aws-sdk/client-dynamodb';
+import { createDynamoClient } from '@/lib/ddb';
 import jwt from 'jsonwebtoken';
 
-const client = new DynamoDBClient({
-  region: process.env.NEXT_PUBLIC_AWS_REGION,
-  credentials: {
-    accessKeyId: process.env.AUTOSNSFLOW_ACCESS_KEY_ID!,
-    secretAccessKey: process.env.AUTOSNSFLOW_SECRET_ACCESS_KEY!,
-  }
-});
+const client = createDynamoClient();
 
 function getCookie(req: NextApiRequest, name: string): string | null {
   const cookie = req.headers.cookie;

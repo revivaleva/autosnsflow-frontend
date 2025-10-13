@@ -207,66 +207,40 @@ export default function RepliesList() {
   // [ADD] リプライ手動取得関数
   const fetchReplies = async () => {
     if (fetchingReplies) return;
-    
+
     setFetchingReplies(true);
     try {
-      // client debug: リプライ取得開始 (開発時のみ手元で出力してください)
-      const response = await fetch("/api/fetch-replies", { 
+      const response = await fetch("/api/fetch-replies", {
         method: "POST",
-        credentials: "include" 
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ summaryOnly: true })
       });
-      const data = await response.json();
 
-      
-      if (data.ok) {
-        const results = data.results || [];
-        const detailMsg = results.length > 0 ? 
-          results.map((r: any) => {
-            const parts = [`${r.displayName || r.accountId}: リプライ${r.fetched}件取得`];
-            if (r.postsFound !== undefined) parts.push(`投稿${r.postsFound}件発見`);
-            if (r.postsWithPostId !== undefined) parts.push(`postId有り${r.postsWithPostId}件`);
-            if (r.error) parts.push(`エラー: ${r.error}`);
-            
-            // 投稿内容とAPI結果を追加
-            if (r.postsInfo && r.postsInfo.length > 0) {
-              const postsDetail = r.postsInfo.map((p: any, i: number) => 
-                `[${i+1}] ${p.hasPostId ? 'ID:' + p.postId.substring(0, 8) + '...' : 'ID無し'} "${p.content}" → ${p.apiLog || '未処理'}`
-              ).join('\n  ');
-              parts.push(`\n  対象投稿:\n  ${postsDetail}`);
-            }
-            
-            // API詳細ログを追加
-            if (r.apiLogs && r.apiLogs.length > 0) {
-              const apiDetail = r.apiLogs.map((log: any, i: number) => {
-                const parts = [
-                  `[${i+1}] postId: ${log.postId?.substring(0, 8)}...`,
-                  `Status: ${log.status || 'N/A'}`,
-                  `Found: ${log.repliesFound || 0}件`
-                ];
-                if (log.error) parts.push(`Error: ${log.error}`);
-                if (log.response) parts.push(`Response: ${log.response}`);
-                return parts.join(' / ');
-              }).join('\n  ');
-              parts.push(`\n  API詳細:\n  ${apiDetail}`);
-            }
-            
-            return parts.join(' / ');
-          }).join('\n\n') : 
-          '処理対象アカウントなし';
-
-        const summary = data.debug ? 
-          `\n\n📊 全体サマリー:\n投稿${data.debug.totalPostsFound || 0}件発見 / postId有り${data.debug.totalPostsWithPostId || 0}件 / リプライ${data.debug.totalFetched || 0}件取得` : 
-          '';
-        
-        alert(`✅ ${data.message}\n\n${detailMsg}${summary}`);
-        // 取得後に一覧を再読み込み
-        await loadReplies();
-      } else {
-        alert(`❌ リプライ取得に失敗しました: ${data.message || data.error}`);
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        const short = (text || response.statusText || "error").toString().slice(0, 200);
+        alert(`❌ リプライ取得に失敗しました: ${short}`);
+        return;
       }
+
+      const data = await response.json().catch(() => ({}));
+      const total = data.totalFetched || 0;
+      const firstError = Array.isArray(data.results)
+        ? data.results.find((r: any) => r.error)?.error || null
+        : null;
+
+      if (firstError) {
+        alert(`❌ リプライ取得に失敗しました: ${String(firstError).slice(0,200)}`);
+      } else {
+        alert(`✅ 取得件数: ${total}`);
+      }
+
+      // 取得後に一覧を再読み込み
+      await loadReplies();
     } catch (error: any) {
       console.error("[CLIENT] リプライ取得エラー:", error);
-      alert(`❌ リプライ取得エラー: ${error.message}`);
+      alert(`❌ リプライ取得エラー: ${String(error).slice(0,200)}`);
     } finally {
       setFetchingReplies(false);
     }

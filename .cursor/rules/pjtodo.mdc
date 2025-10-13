@@ -29,6 +29,12 @@
  - `Run staging smoke tests for dashboard error dedupe` — pending
    - Verify deduplication and normalizedMessage/detailSignature effectiveness
 
+- `Configure Lambda reserved concurrency for scheduled-autosnsflow (temporary)` — pending
+  - 概要: Lambda の予約同時実行を `1` に設定し、every-5min 実行時の二重投稿を一時的に防止する。運用影響（全ユーザーのスループット低下）を理解した上で適用すること。
+
+- `Implement postingLock in runAutoPostForAccount to prevent duplicate external posts` — pending
+  - 概要: 投稿前に条件付き UpdateItem で `postingLock` を設定し、ロック取得に成功したワーカーのみが Threads へ投稿する。投稿後はロックを解除することで、Lambda の並列実行があっても同一予約件の二重投稿を防止する。
+
 ### 一時デバッグ用ソースの掃除
 
 - note: デバッグ用に追加した `src/pages/api/debug/run-pending-quote.ts` や `src/pages/api/debug/run-auto-posts-remigio.ts` のようなエンドポイントは、本番反映前に不要になります。これらはローカル確認用・デバッグ用に追加したソースです。予定としては以下を行ってください:
