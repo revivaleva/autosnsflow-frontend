@@ -123,7 +123,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     
     // Debug: log publish numeric and update values before DB update
     try {
-      console.info('[DBG manual-post] publish numeric', { publishedNumeric: (quoteResult as any)?.publishedNumeric || (normal as any)?.publishedNumeric, numericId });
+      const publishedNumericValue = (typeof quoteResult !== 'undefined' && (quoteResult as any)?.publishedNumeric) ? (quoteResult as any).publishedNumeric : ((typeof normal !== 'undefined' && (normal as any)?.publishedNumeric) ? (normal as any).publishedNumeric : undefined);
+      console.info('[DBG manual-post] publish numeric', { publishedNumeric: publishedNumericValue, numericId });
       console.info('[DBG manual-post] updateValues(before)', values);
     } catch (e) { console.warn('[DBG manual-post] debug log failed', e); }
 
