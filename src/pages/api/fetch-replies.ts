@@ -429,11 +429,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // ユーザーのThreadsアカウントを取得
     const accounts = await fetchThreadsAccountsFull(userId);
-    
+
+    // autoReply が有効なアカウントのみ処理対象とする
+    const eligibleAccounts = (accounts || []).filter(a => !!a.autoReply);
+    const skippedAccounts = (accounts || []).filter(a => !a.autoReply).map(a => a.accountId);
+
+    if (skippedAccounts.length > 0) {
+      try {
+        await putLog({ userId, type: 'reply-fetch-skip', status: 'info', message: 'skip accounts with autoReply=OFF', detail: { skippedAccounts } });
+      } catch (e) { console.warn('[warn] putLog(skip accounts) failed:', e); }
+    }
+
     let totalFetched = 0;
     const results = [];
 
-    for (const acct of accounts) {
+    for (const acct of eligibleAccounts) {
       const result = await fetchIncomingReplies(userId, acct);
       results.push({
         accountId: acct.accountId,
