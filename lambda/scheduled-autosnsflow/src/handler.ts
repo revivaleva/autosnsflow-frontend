@@ -2230,17 +2230,21 @@ async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settin
       // Use only the published numericId (from publish response). Do not use creationId.
       // Save only the numeric ID returned by publish (publishedNumeric). No fallbacks.
       const resolvedNumericId = (postResult as any).publishedNumeric || undefined;
+      // Debug: log postResult and resolvedNumericId before DB update
+      try {
+        console.info('[DBG auto-post] postResult', { postResult });
+        console.info('[DBG auto-post] resolvedNumericId', resolvedNumericId);
+        console.info('[DBG auto-post] updateExprParts(before numeric)', updateExprParts, 'updateValues(before numeric)', updateValues);
+      } catch (e) { console.warn('[DBG auto-post] logging failed', e); }
+
       if (resolvedNumericId) {
-        // always save numericPostId as creationId when provided
-        if (String(resolvedNumericId) !== String(postResult.postId)) {
-          updateExprParts.push("numericPostId = :nid");
-          updateValues[":nid"] = { S: String(resolvedNumericId) };
-        } else {
-          // If postId is already numeric and equals resolved id, still save to numericPostId
-          updateExprParts.push("numericPostId = :nid");
-          updateValues[":nid"] = { S: String(resolvedNumericId) };
-        }
+        updateExprParts.push("numericPostId = :nid");
+        updateValues[":nid"] = { S: String(resolvedNumericId) };
       }
+
+      try {
+        console.info('[DBG auto-post] updateExprParts(final)', updateExprParts, 'updateValues(final)', updateValues);
+      } catch (e) { console.warn('[DBG auto-post] logging failed 2', e); }
       if (acct.secondStageContent && acct.secondStageContent.trim()) { updateExprParts.push("doublePostStatus = :waiting"); updateValues[":waiting"] = { S: "waiting" }; }
       await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } }, UpdateExpression: `SET ${updateExprParts.join(', ')}`, ConditionExpression: "#st = :scheduled", ExpressionAttributeNames: { "#st": "status" }, ExpressionAttributeValues: updateValues }));
       await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "ok", message: "自動投稿を完了", detail: { platform: "threads" } });

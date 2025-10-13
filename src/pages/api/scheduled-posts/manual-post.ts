@@ -121,11 +121,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     };
     const sets = ["#st = :posted", "postedAt = :ts", "postId = :pid"];
     
-    // numericIdがあれば保存
+    // Debug: log publish numeric and update values before DB update
+    try {
+      console.info('[DBG manual-post] publish numeric', { publishedNumeric: (quoteResult as any)?.publishedNumeric || (normal as any)?.publishedNumeric, numericId });
+      console.info('[DBG manual-post] updateValues(before)', values);
+    } catch (e) { console.warn('[DBG manual-post] debug log failed', e); }
+
+    // numericIdがあれば保存（publishedNumeric のみ）
     if (numericId) {
       values[":nid"] = { S: numericId };
       sets.push("numericPostId = :nid");
     }
+
+    try {
+      console.info('[DBG manual-post] updateValues(final)', values, 'sets', sets);
+    } catch (e) { console.warn('[DBG manual-post] debug log failed 2', e); }
     
     if (permalink?.url) {
       sets.push("postUrl = :purl");
