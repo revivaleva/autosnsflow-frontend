@@ -191,7 +191,7 @@ export async function postToThreads({
     }
   }
   
-  return { postId, numericId };
+  return { postId, numericId, creationId };
 }
 
 export async function postQuoteToThreads({

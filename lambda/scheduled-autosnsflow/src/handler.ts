@@ -2145,16 +2145,16 @@ async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settin
       const permFail = !!x.permanentFailure;
       candidates.push({ pk, sk, attempts, permFail, scheduledAt: Number(x.scheduledAt || 0), ...x });
       await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "probe", message: "candidate queued", detail: { scheduledAt: x.scheduledAt, timeRange: x.timeRange } });
-      if (debugMode && (debugInfo.items as any[]).length < 6) {
+    if (debugMode && (debugInfo.items as any[]).length < 6) {
         (debugInfo.items as any[]).push({ idx: iterIndex, pk, sk, status: x.status, postedAt: x.postedAt, scheduledAt: x.scheduledAt, timeRange: x.timeRange, stOK, postedZero, notExpired });
       }
     } else if (stOK && postedZero && !notExpired) {
       await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "skip", message: `時刻範囲(${x.timeRange})を過ぎたため投稿せず失効` });
-      if (debugMode) {
-        if (!debugInfo.skips) debugInfo.skips = [];
-        debugInfo.skips.push({ sk, reason: 'window_expired', scheduledAt: x.scheduledAt, timeRange: x.timeRange });
+        if (debugMode) {
+          if (!debugInfo.skips) debugInfo.skips = [];
+          debugInfo.skips.push({ sk, reason: 'window_expired', scheduledAt: x.scheduledAt, timeRange: x.timeRange });
+        }
       }
-    }
     iterIndex++;
   }
 
@@ -2181,17 +2181,17 @@ async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settin
     const scheduledAtSec = Number(cand.scheduledAt || 0);
 
     // Skip if text empty
-    if (!text) {
-      await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "skip", message: "本文が未生成のためスキップ" });
+  if (!text) {
+    await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "skip", message: "本文が未生成のためスキップ" });
       return { ok: false };
     }
 
     // Skip expired
     if (cand.timeRange && scheduledAtSec > 0) {
-      const schDateJst = jstFromEpoch(scheduledAtSec);
+    const schDateJst = jstFromEpoch(scheduledAtSec);
       const endJst = rangeEndOfDayJst(cand.timeRange, schDateJst);
-      if (endJst && nowSec() > toEpochSec(endJst)) {
-        try {
+    if (endJst && nowSec() > toEpochSec(endJst)) {
+      try {
           await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } }, UpdateExpression: "SET #st = :expired, expiredAt = :ts, expireReason = :rsn", ConditionExpression: "#st = :scheduled", ExpressionAttributeNames: { "#st": "status" }, ExpressionAttributeValues: { ":expired": { S: "expired" }, ":scheduled": { S: "scheduled" }, ":ts": { N: String(nowSec()) }, ":rsn": { S: "time-window-passed" } } }));
           await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "skip", message: `時刻範囲(${cand.timeRange})を過ぎたため投稿せず失効` });
         } catch (e) { await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "失効処理に失敗", detail: { error: String(e) } }); }
@@ -2200,8 +2200,8 @@ async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settin
     }
 
     // Ensure providerUserId and token
-    if (!acct.providerUserId) {
-      const pid = await ensureProviderUserId(userId, acct);
+  if (!acct.providerUserId) {
+    const pid = await ensureProviderUserId(userId, acct);
       if (!pid) { await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "ThreadsのユーザーID未取得のため投稿不可" }); return { ok: false }; }
     }
     if (!acct.oauthAccessToken) { await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "ThreadsのoauthAccessToken未設定（accessTokenは使用不可）" }); return { ok: false }; }
@@ -2209,17 +2209,17 @@ async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settin
     try {
       // perform post
       let postResult: any;
-      if (isQuote) {
-        const referenced = cand.numericPostId || '';
-        if (!referenced) {
-          await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "引用元の数値IDが存在しないため引用投稿をスキップ（失敗）" });
-          await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } }, UpdateExpression: "SET postAttempts = if_not_exists(postAttempts, :zero) + :inc, lastPostError = :err, lastPostAttemptAt = :ts, permanentFailure = :t", ExpressionAttributeValues: { ":zero": { N: "0" }, ":inc": { N: "1" }, ":err": { S: "referenced_post_missing" }, ":ts": { N: String(nowSec()) }, ":t": { BOOL: true } } }));
-          return { ok: false };
-        }
-        postResult = await sharedPostQuoteToThreads({ accessToken: acct.oauthAccessToken, oauthAccessToken: acct.oauthAccessToken, text, referencedPostId: String(referenced), userIdOnPlatform: acct.providerUserId });
-      } else {
-        postResult = await postToThreads({ accessToken: acct.oauthAccessToken, oauthAccessToken: acct.oauthAccessToken, text, userIdOnPlatform: acct.providerUserId });
+    if (isQuote) {
+      const referenced = cand.numericPostId || '';
+      if (!referenced) {
+        await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "引用元の数値IDが存在しないため引用投稿をスキップ（失敗）" });
+        await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } }, UpdateExpression: "SET postAttempts = if_not_exists(postAttempts, :zero) + :inc, lastPostError = :err, lastPostAttemptAt = :ts, permanentFailure = :t", ExpressionAttributeValues: { ":zero": { N: "0" }, ":inc": { N: "1" }, ":err": { S: "referenced_post_missing" }, ":ts": { N: String(nowSec()) }, ":t": { BOOL: true } } }));
+        return { ok: false };
       }
+      postResult = await sharedPostQuoteToThreads({ accessToken: acct.oauthAccessToken, oauthAccessToken: acct.oauthAccessToken, text, referencedPostId: String(referenced), userIdOnPlatform: acct.providerUserId });
+    } else {
+      postResult = await postToThreads({ accessToken: acct.oauthAccessToken, oauthAccessToken: acct.oauthAccessToken, text, userIdOnPlatform: acct.providerUserId });
+    }
 
       // Save posted state
       const nowTs = nowSec();
