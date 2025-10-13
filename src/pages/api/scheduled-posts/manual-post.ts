@@ -90,7 +90,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         userIdOnPlatform: providerUserId,
       });
       postId = quoteResult.postId || '';
-      numericId = quoteResult.numericId;
+      // persist numericId: use only publish's numericId (publishedNumeric)
+      numericId = (quoteResult as any).publishedNumeric || undefined;
     } else {
       const normal = await postToThreads({ 
         accessToken, 
@@ -99,7 +100,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         userIdOnPlatform: providerUserId 
       });
       postId = normal.postId;
-      numericId = normal.numericId;
+      // persist numericId: use only publish's numericId (publishedNumeric)
+      numericId = (normal as any).publishedNumeric || undefined;
     }
 
     // [MOD] permalink 取得（失敗時は null）
@@ -119,11 +121,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     };
     const sets = ["#st = :posted", "postedAt = :ts", "postId = :pid"];
     
-    // numericIdがあれば保存
+    // Debug: log publish numeric and update values before DB update
+    try {
+      const publishedNumericValue = (typeof quoteResult !== 'undefined' && (quoteResult as any)?.publishedNumeric) ? (quoteResult as any).publishedNumeric : ((typeof normal !== 'undefined' && (normal as any)?.publishedNumeric) ? (normal as any).publishedNumeric : undefined);
+      console.info('[DBG manual-post] publish numeric', { publishedNumeric: publishedNumericValue, numericId });
+      console.info('[DBG manual-post] updateValues(before)', values);
+    } catch (e) { console.warn('[DBG manual-post] debug log failed', e); }
+
+    // numericIdがあれば保存（publishedNumeric のみ）
     if (numericId) {
       values[":nid"] = { S: numericId };
       sets.push("numericPostId = :nid");
     }
+
+    try {
+      console.info('[DBG manual-post] updateValues(final)', values, 'sets', sets);
+    } catch (e) { console.warn('[DBG manual-post] debug log failed 2', e); }
     
     if (permalink?.url) {
       sets.push("postUrl = :purl");

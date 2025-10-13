@@ -14,7 +14,7 @@ export async function postToThreads({
   text: string;
   userIdOnPlatform?: string;
   inReplyTo?: string;
-}): Promise<{ postId: string; numericId?: string }> {
+}): Promise<{ postId: string; numericId?: string; creationId?: string; publishedNumeric?: string }> {
   const base = process.env.THREADS_GRAPH_BASE || "https://graph.threads.net/v1.0";
   const textPostAppId = process.env.THREADS_TEXT_APP_ID;
   // Use oauthAccessToken only (no accessToken fallback)
@@ -81,15 +81,20 @@ export async function postToThreads({
     let parsed: any = {};
     try { parsed = JSON.parse(txt); } catch {}
     const postId = parsed?.id || creationId;
-    // log publish response
+    const publishedNumeric = parsed?.id || undefined;
+    // log publish response and parsed payload for debugging
     try { console.info('[THREADS PUBLISH]', { postId, status: resp.status, raw: txt.slice(0,800) }); } catch (_) {}
-    return postId as string;
+    try { console.info('[DBG threads] publish parsed', { parsed, publishedNumeric, raw: txt.slice(0,2000) }); } catch (_) {}
+    return { postId: postId as string, publishedNumeric };
   };
 
   const creationId = await create();
   // debug output removed
   
-  let postId = await publish(creationId);
+  const publishResp = await publish(creationId);
+  let postId = publishResp.postId;
+  const publishedNumericId = publishResp.publishedNumeric;
+  try { console.info('[DBG threads] publishResp', publishResp, 'publishedNumericId', publishedNumericId); } catch (_) {}
 
   // Try to prefer the permalink code (string) for display: if the published post has a permalink
   // we extract its code and use that as the canonical postId returned to callers. This ensures
@@ -121,21 +126,78 @@ export async function postToThreads({
   }
   // debug output removed
   
-  // 数字IDを取得（投稿詳細から）
-  let numericId: string | undefined;
-  try {
-    const detailUrl = `${base}/${encodeURIComponent(postId)}?fields=id&access_token=${encodeURIComponent(accessToken)}`;
-    const detailRes = await fetch(detailUrl);
-    if (detailRes.ok) {
-      const detailJson = await detailRes.json();
-      numericId = detailJson?.id;
-      // debug logging removed
+  // 数字IDを取得（publish のレスポンスに含まれる id を優先）
+  let numericId: string | undefined = publishedNumericId || undefined;
+  if (!numericId) {
+    try {
+      const tokenForDetail = primaryToken || accessToken || '';
+      if (tokenForDetail) {
+        const detailUrl = `${base}/${encodeURIComponent(postId)}?fields=id&access_token=${encodeURIComponent(tokenForDetail)}`;
+        // retry a few times because numeric id may not be immediately available
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            const detailRes = await fetch(detailUrl);
+            const txt = await detailRes.text().catch(() => '');
+            if (!detailRes.ok) {
+              if (attempt < 2) await new Promise(r => setTimeout(r, 800));
+              continue;
+            }
+            let detailJson: any = {};
+            try { detailJson = JSON.parse(txt || '{}'); } catch (_) { detailJson = {}; }
+            if (detailJson?.id) {
+              numericId = detailJson.id;
+              break;
+            }
+            if (attempt < 2) await new Promise(r => setTimeout(r, 800));
+          } catch (innerErr) {
+            if (attempt < 2) await new Promise(r => setTimeout(r, 800));
+            continue;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn(`[WARN] 数字ID取得失敗: ${String(e).substring(0, 100)}`);
     }
-  } catch (e) {
-    console.warn(`[WARN] 数字ID取得失敗: ${String(e).substring(0, 100)}`);
+  }
+
+  // FALLBACK: if numericId still missing, attempt to search the account's recent posts
+  // and match by text (best-effort). This helps when numeric id is not exposed via detail
+  // endpoint due to timing or API behavior. Use accessToken (not oauth) to list user's media.
+  if (!numericId) {
+    try {
+      const listToken = accessToken || primaryToken || '';
+      if (listToken) {
+        // search recent posts of the account (me/media) and try to match by text substring
+        // we will request recent items and compare their text to the original text
+        const listUrl = `${base}/me/media?fields=id,caption&access_token=${encodeURIComponent(listToken)}`;
+        const listRes = await fetch(listUrl);
+        if (listRes.ok) {
+          const listJson = await listRes.json().catch(() => ({}));
+          const data = listJson?.data || [];
+          for (const it of data) {
+            const candidateId = it?.id;
+            if (!candidateId) continue;
+            try {
+              const detailUrl2 = `${base}/${encodeURIComponent(candidateId)}?fields=id,caption&access_token=${encodeURIComponent(listToken)}`;
+              const dr = await fetch(detailUrl2);
+              if (!dr.ok) continue;
+              const dj = await dr.json().catch(() => ({}));
+              const caption = dj?.caption || '';
+              // simple substring match against posted text (text variable may be long)
+              if (text && caption && caption.includes(String(text).substring(0, Math.min(200, String(text).length)))) {
+                numericId = dj?.id;
+                break;
+              }
+            } catch (_) { continue; }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[WARN] numericId fallback search failed:', String(e).substring(0,200));
+    }
   }
   
-  return { postId, numericId };
+  return { postId, numericId, creationId, publishedNumeric: publishedNumericId };
 }
 
 export async function postQuoteToThreads({
@@ -150,7 +212,7 @@ export async function postQuoteToThreads({
   text: string;
   referencedPostId: string;
   userIdOnPlatform?: string;
-}): Promise<{ postId: string; numericId?: string }> {
+}): Promise<{ postId: string; numericId?: string; creationId?: string; publishedNumeric?: string }> {
   if (!referencedPostId) throw new Error('referencedPostId required');
   // reuse create/publish flow but include referenced_posts in creation body
   const base = process.env.THREADS_GRAPH_BASE || "https://graph.threads.net/v1.0";
@@ -174,6 +236,8 @@ export async function postQuoteToThreads({
       const sanitizedBody = { media_type: 'TEXT', text: String(text).slice(0,2000) };
       console.info('[THREADS QUOTE CREATE REQ]', { endpoint: url.replace(primaryToken, '***'), body: sanitizedBody });
       try {
+        (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+        (global as any).__TEST_OUTPUT__.push({ tag: 'THREADS_QUOTE_CREATE_REQ', endpoint: String(url).replace(primaryToken, '***'), body: sanitizedBody });
       } catch (_) {}
     } catch (_) {}
     const r = await fetch(url, {
@@ -185,6 +249,8 @@ export async function postQuoteToThreads({
     // Log response
     try { console.info('[THREADS QUOTE CREATE RESP]', { status: r.status, raw: tx.slice(0,2000) }); } catch (_) {}
     try {
+      (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+      (global as any).__TEST_OUTPUT__.push({ tag: 'THREADS_QUOTE_CREATE_RESP', status: r.status, raw: String(tx).slice(0,2000) });
     } catch (_) {}
     if (!r.ok) throw new Error(`threads_quote_create_failed: ${r.status} ${tx}`);
     let j: any = {};
@@ -206,11 +272,15 @@ export async function postQuoteToThreads({
     // Log publish request (no body)
     try { console.info('[THREADS QUOTE PUBLISH REQ]', { endpoint: urlWithToken.replace(primaryToken, '***') }); } catch (_) {}
     try {
+      (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+      (global as any).__TEST_OUTPUT__.push({ tag: 'THREADS_QUOTE_PUBLISH_REQ', endpoint: String(urlWithToken).replace(primaryToken, '***') });
     } catch (_) {}
     const resp = await fetch(urlWithToken, { method: 'POST' });
     const txt = await resp.text().catch(() => '');
     try { console.info('[THREADS QUOTE PUBLISH RESP]', { status: resp.status, raw: txt.slice(0,2000) }); } catch (_) {}
     try {
+      (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+      (global as any).__TEST_OUTPUT__.push({ tag: 'THREADS_QUOTE_PUBLISH_RESP', status: resp.status, raw: String(txt).slice(0,2000) });
     } catch (_) {}
     if (!resp.ok) throw new Error(`threads_quote_publish_failed: ${resp.status} ${txt}`);
     let parsed: any = {};
@@ -239,7 +309,7 @@ export async function postQuoteToThreads({
     }
   } catch {}
 
-  return { postId, numericId };
+  return { postId, numericId, creationId, publishedNumeric };
 }
 
 // [MOD] permalink のみを返す。取得できなければ null（DB保存もしない方針）

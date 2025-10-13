@@ -89,8 +89,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       // If AppConfig isn't available for some reason, we'll silently fall back to user settings/env.
     }
 
-    // 3) Determine final API key and model with the priority: AppConfig -> UserSettings -> process.env -> hardcoded default
-    openaiApiKey = cfgOpenAiKey || userOpenaiKey || process.env.OPENAI_API_KEY || "";
+    // 3) Determine final API key: use AppConfig only. No fallbacks.
+    openaiApiKey = cfgOpenAiKey || "";
 
     const allow = new Set([
       "gpt-5-mini",
@@ -104,7 +104,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const candidateModel = (cfgDefaultModel || userRawModel || process.env.OPENAI_DEFAULT_MODEL || "gpt-5-nano").toString();
     selectedModel = allow.has(candidateModel) ? candidateModel : "gpt-5-nano";
 
-    if (!openaiApiKey) throw new Error("APIキー未設定です");
+    if (!openaiApiKey) throw new Error("APIキー未設定です (AppConfig.OPENAI_API_KEY)");
   } catch (e) {
     res.status(500).json({ error: "APIキーの取得に失敗: " + String(e) }); return;  // [MOD] Next API は void を返す
   }

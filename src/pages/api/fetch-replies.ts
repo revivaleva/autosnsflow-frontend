@@ -19,19 +19,6 @@ const nowSec = () => Math.floor(Date.now() / 1000);
 export async function upsertReplyItem(userId: string, acct: any, { externalReplyId, postId, text, createdAt, originalPost }: any) {
   const sk = `REPLY#${externalReplyId}`;
 
-  // 既存チェック
-  try {
-    const existing = await ddb.send(new GetItemCommand({
-      TableName: TBL_REPLIES,
-      Key: { PK: { S: `USER#${userId}` }, SK: { S: sk } },
-    }));
-    if (existing.Item) {
-      return false; // 既に存在する
-    }
-  } catch (e) {
-    // debug output removed
-  }
-
   // AI生成による返信内容の作成
   let responseContent = "";
   
@@ -87,7 +74,12 @@ export async function upsertReplyItem(userId: string, acct: any, { externalReply
       ConditionExpression: "attribute_not_exists(SK)",
     }));
     return true;
-  } catch {
+  } catch (e: any) {
+    // If item already exists, treat as duplicate (no-op). Otherwise log and return false.
+    if (e?.name === 'ConditionalCheckFailedException') {
+      return false;
+    }
+    console.warn('[WARN] upsertReplyItem failed:', String(e).substring(0,200));
     return false;
   }
 }
@@ -108,8 +100,39 @@ export async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 2
   // debug output removed
   
   // support oauthAccessToken as the canonical token field
-  if (!acct?.accessToken && !acct?.oauthAccessToken) throw new Error("Threads のトークン不足");
-  if (!acct?.providerUserId) throw new Error("Threads のユーザーID取得失敗");
+  let hasAccessToken = !!acct?.accessToken;
+  let hasOauthAccessToken = !!acct?.oauthAccessToken;
+  let hasProviderUserId = !!acct?.providerUserId;
+
+  // If tokens or providerUserId are missing, try a DynamoDB fallback read for this account
+  if (!hasAccessToken && !hasOauthAccessToken) {
+    try {
+      const out = await ddb.send(new GetItemCommand({
+        TableName: process.env.TBL_THREADS_ACCOUNTS || 'ThreadsAccounts',
+        Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${acct?.accountId || ''}` } },
+        ProjectionExpression: 'accessToken, oauthAccessToken, providerUserId'
+      }));
+      const it: any = (out as any).Item || {};
+      if (it.accessToken && it.accessToken.S) acct.accessToken = it.accessToken.S;
+      if (it.oauthAccessToken && it.oauthAccessToken.S) acct.oauthAccessToken = it.oauthAccessToken.S;
+      if (it.providerUserId && it.providerUserId.S) acct.providerUserId = it.providerUserId.S;
+    } catch (e) {
+      console.warn('[WARN] fetchThreadsRepliesAndSave - fallback account read failed', e);
+    }
+    hasAccessToken = !!acct?.accessToken;
+    hasOauthAccessToken = !!acct?.oauthAccessToken;
+    hasProviderUserId = !!acct?.providerUserId;
+  }
+
+  if (!hasAccessToken && !hasOauthAccessToken) {
+    // Log minimal, non-sensitive probe to server console for debugging (do not print tokens)
+    console.warn(`[WARN] fetchThreadsRepliesAndSave - token missing for account: ${acct?.accountId || 'unknown'}`, { hasAccessToken, hasOauthAccessToken, acctKeys: Object.keys(acct || {}) });
+    throw new Error("Threads のトークン不足");
+  }
+  if (!hasProviderUserId) {
+    console.warn(`[WARN] fetchThreadsRepliesAndSave - providerUserId missing for account: ${acct?.accountId || 'unknown'}`, { hasProviderUserId, acctKeys: Object.keys(acct || {}) });
+    throw new Error("Threads のユーザーID取得失敗");
+  }
   
   const since = nowSec() - lookbackSec;
   let saved = 0;
@@ -137,6 +160,14 @@ export async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 2
     // debug output removed
   }
 
+  // 検証ログ: この acct に対して取得された予約投稿の件数とサンプルIDを記録（トークン等は出力しない）
+  try {
+    const sampleIds = (q.Items || []).slice(0,3).map(it => it.scheduledPostId?.S || it.postId?.S || '');
+    console.info(`[reply-fetch-scan] acct=${acct.accountId} count=${(q.Items || []).length} sample=${JSON.stringify(sampleIds)}`);
+  } catch (e) {
+    console.warn('[warn] putLog(reply-fetch-scan) failed:', e);
+  }
+
   // 上記でまとめて処理済み
   
   const postsInfo = [];
@@ -151,30 +182,33 @@ export async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 2
       scheduledPostId: item.scheduledPostId?.S || "",
     };
 
-    // リプライ取得用のIDを決定（数字ID優先）
-    const isNumericPostId = post.numericPostId && /^\d+$/.test(post.numericPostId);
-    const isNumericMainPostId = post.postId && /^\d+$/.test(post.postId);
-    
-    let replyApiId: string;
-    if (isNumericPostId) {
-      replyApiId = post.numericPostId;
-    } else if (isNumericMainPostId) {
-      replyApiId = post.postId;
-    } else {
-      replyApiId = post.numericPostId || post.postId;
-    }
+  // Prepare postInfo early so skip-paths can record logs
+  const postInfo: any = {
+    postId: post.postId || "空",
+    numericPostId: post.numericPostId || "空",
+    replyApiId: null,
+    content: (post.content || "").substring(0, 100),
+    postedAt: post.postedAt || "空",
+    hasReplyApiId: false,
+    apiLog: ""
+  };
 
-    // debug output removed
+  // リプライ取得用のIDを決定（numericPostId のみを許可。shortcode は使用しない）
+  const isNumericPostId = post.numericPostId && /^\d+$/.test(post.numericPostId);
 
-    const postInfo: any = {
-      postId: post.postId || "空",
-      numericPostId: post.numericPostId || "空",
-      replyApiId: replyApiId || "空",
-      content: (post.content || "").substring(0, 100),
-      postedAt: post.postedAt || "空",
-      hasReplyApiId: !!replyApiId,
-      apiLog: ""
-    };
+  let replyApiId: string | null = null;
+  if (isNumericPostId) {
+    replyApiId = post.numericPostId;
+  } else {
+    // numericPostId が無ければショートコードは使わずスキップする
+    postInfo.apiLog = 'SKIP: numericPostId が存在しないためスキップ (shortcode は使用しない)';
+    postsInfo.push(postInfo);
+    continue;
+  }
+
+  // attach resolved replyApiId to postInfo
+  postInfo.replyApiId = replyApiId || "空";
+  postInfo.hasReplyApiId = !!replyApiId;
 
     if (!replyApiId) {
       postInfo.apiLog = "SKIP: リプライ取得用ID無し";
@@ -260,48 +294,29 @@ export async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 2
           const text = rep.text || "";
           const username = rep.username || "";
 
-          // 優先: APIが返すis_reply_owned_by_meを使って除外
-          if (rep.is_reply_owned_by_me === true) {
-            try {
-              await putLog({
-                userId,
-                type: "reply-fetch-exclude",
-                accountId: acct.accountId,
-                status: "info",
-                message: "is_reply_owned_by_me=true のため除外",
-                detail: { replyId: rep.id, reason: 'is_reply_owned_by_me' }
-              });
-            } catch (e) { console.warn('[warn] putLog failed for is_reply flag exclude:', e); }
+        // Ownership check: compare reply's account identifier(s) to reservation.accountId only.
+        // Use simple accountId match (username or id fields) and avoid expensive DB reads per reply.
+        // Compare only by username (reservation.accountId holds the username)
+        const replyOwnerMatch = !!(rep.username && String(rep.username) === String(acct.accountId));
+
+        // If API says owned_by_me, only exclude when replyOwnerMatch is true.
+        // If API says owned_by_me but owner doesn't match, log a single warning per account per run.
+        if (rep.is_reply_owned_by_me === true) {
+          if (replyOwnerMatch) {
+            try { console.info(`[reply-fetch-exclude] account=${acct.accountId} replyId=${rep.id}`); } catch (e) { console.warn('[warn] reply-fetch-exclude log failed:', e); }
             continue;
-          }
-
-          // フラグが付いていない場合は除外しないが、フィールド名や値の差異を調査するためログを出力する
-          try {
-            const authorCandidates = [
-              rep.from?.id,
-              rep.from?.username,
-              rep.username,
-              rep.user?.id,
-              rep.user?.username,
-              rep.author?.id,
-              rep.author?.username,
-            ].map(x => (x == null ? "" : String(x)));
-
-            const s2 = (acct.secondStageContent || "").trim();
-            const rt = (rep.text || "").trim();
-
-            // putLogでデバッグ情報を残す（除外はしない）
-            const debugDetail: any = { replyId: rep.id, authorCandidates, providerUserId: acct.providerUserId };
-            if (s2 && rt) debugDetail.secondStageSample = { s2: s2.replace(/\s+/g,' ').toLowerCase(), rt: rt.replace(/\s+/g,' ').toLowerCase() };
-
-            // only log when there's a potential match to investigate
-            const potentialMatch = authorCandidates.some(a => a && acct.providerUserId && a === acct.providerUserId) || (s2 && rt && (s2.replace(/\s+/g,' ').toLowerCase() === rt.replace(/\s+/g,' ').toLowerCase()));
-            if (potentialMatch) {
-              await putLog({ userId, type: "reply-fetch-flag-mismatch", accountId: acct.accountId, status: "info", message: "flag missing but candidate fields matched", detail: debugDetail });
+          } else {
+            // log mismatch only once per account per invocation to reduce log volume
+            if (!((global as any).__replyFetchFlagMismatchLogged || {})[acct.accountId]) {
+              try {
+                console.warn(`[reply-fetch-flag-mismatch] account=${acct.accountId} replyId=${rep.id} username=${rep.username || null}`);
+                (global as any).__replyFetchFlagMismatchLogged = (global as any).__replyFetchFlagMismatchLogged || {};
+                (global as any).__replyFetchFlagMismatchLogged[acct.accountId] = true;
+              } catch (e) { console.warn('[warn] reply-fetch-flag-mismatch log failed:', e); }
             }
-          } catch (e) {
-            console.warn('[warn] flag-mismatch logging failed:', e);
+            // fallthrough -> save
           }
+        }
 
           const createdAt = nowSec();
           
@@ -373,12 +388,14 @@ async function fetchIncomingReplies(userId: string, acct: any) {
   
   // debug output removed
   
-  // 手動取得の場合はautoReplyの条件を緩和（警告のみ）
-  if (!acct.autoReply) {
-    console.warn(`[WARNING] アカウント ${acct.accountId} はautoReplyがOFFですが手動取得を実行します`);
-  }
+  // (manual warning removed) - handler now decides which accounts to process based on autoReply
   
   try {
+    // Observability: log whether acct contains tokens/providerUserId so we can trace "token missing" cases
+    try {
+      console.info(`[reply-fetch-probe] account=${acct.accountId} hasAccessToken=${!!acct.accessToken} hasOauthAccessToken=${!!acct.oauthAccessToken} hasProviderUserId=${!!acct.providerUserId}`);
+    } catch (e) { console.warn('[warn] reply-fetch-probe log failed:', e); }
+
     const r = await fetchThreadsRepliesAndSave({ acct, userId });
     // debug output removed
     return { 
@@ -406,11 +423,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // ユーザーのThreadsアカウントを取得
     const accounts = await fetchThreadsAccountsFull(userId);
-    
+
+    // autoReply が有効なアカウントのみ処理対象とする
+    const eligibleAccounts = (accounts || []).filter(a => !!a.autoReply);
+    const skippedAccounts = (accounts || []).filter(a => !a.autoReply).map(a => a.accountId);
+
+    if (skippedAccounts.length > 0) {
+      console.info(`[reply-fetch-skip] skippedAccounts=${JSON.stringify(skippedAccounts)}`);
+    }
+
     let totalFetched = 0;
     const results = [];
 
-    for (const acct of accounts) {
+    for (const acct of eligibleAccounts) {
       const result = await fetchIncomingReplies(userId, acct);
       results.push({
         accountId: acct.accountId,
