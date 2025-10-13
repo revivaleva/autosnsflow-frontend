@@ -30,11 +30,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     // リプライ情報を取得
+    // replyId may be passed as full SK ("REPLY#...") or as raw id. Accept both.
+    const skVal = typeof replyId === 'string' && replyId.startsWith('REPLY#') ? replyId : `REPLY#${replyId}`;
     const replyItem = await ddb.send(new GetItemCommand({
       TableName: TBL_REPLIES,
       Key: { 
         PK: { S: `USER#${userId}` }, 
-        SK: { S: `REPLY#${replyId}` }
+        SK: { S: skVal }
       },
     }));
 
@@ -72,8 +74,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const oauthAccessToken = accountItem.Item.oauthAccessToken?.S;
     const providerUserId = accountItem.Item.providerUserId?.S;
 
-    if (!accessToken || !providerUserId) {
-      return res.status(400).json({ error: "Account missing accessToken or providerUserId" });
+    // allow either legacy accessToken or oauthAccessToken to be present (posting uses oauthAccessToken primarily)
+    if (!(accessToken || oauthAccessToken) || !providerUserId) {
+      return res.status(400).json({ error: "Account missing token (accessToken/oauthAccessToken) or providerUserId" });
     }
 
     // debug output removed
@@ -95,7 +98,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       TableName: TBL_REPLIES,
       Key: { 
         PK: { S: `USER#${userId}` }, 
-        SK: { S: `REPLY#${replyId}` }
+        SK: { S: skVal }
       },
       UpdateExpression: "SET #st = :replied, replyAt = :ts, responseContent = :resp, responsePostId = :pid",
       ExpressionAttributeNames: { "#st": "status" },
