@@ -90,8 +90,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         userIdOnPlatform: providerUserId,
       });
       postId = quoteResult.postId || '';
-      // persist numericId: use only numericId returned by publish
-      numericId = quoteResult.numericId || undefined;
+      // persist numericId: prefer publish's numericId (publishedNumeric) if present
+      numericId = quoteResult.numericId || (quoteResult as any).publishedNumeric || undefined;
     } else {
       const normal = await postToThreads({ 
         accessToken, 
@@ -100,8 +100,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         userIdOnPlatform: providerUserId 
       });
       postId = normal.postId;
-      // persist numericId: use only numericId returned by publish
-      numericId = normal.numericId || undefined;
+      // persist numericId: prefer publish's numericId (publishedNumeric) if present
+      numericId = normal.numericId || (normal as any).publishedNumeric || undefined;
     }
 
     // [MOD] permalink 取得（失敗時は null）
