@@ -67,7 +67,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         updatedAt: it.updatedAt,
 
         accessToken: it.accessToken, // [KEEP]
-        oauthAccessToken: it.oauthAccessToken || "", // add oauthAccessToken so frontend can use oauth token where needed
+        oauthAccessToken: (it as any).oauthAccessToken || "", // add oauthAccessToken so frontend can use oauth token where needed
         // providerUserId may not be present on the declared type from backend-core
         // so access it defensively to avoid TypeScript build errors.
         providerUserId: (it as any).providerUserId || (it as any).provider_user_id || "", // [ADD] リプライ取得に必要

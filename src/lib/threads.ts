@@ -309,7 +309,7 @@ export async function postQuoteToThreads({
     }
   } catch {}
 
-  return { postId, numericId, creationId, publishedNumeric };
+  return { postId, numericId, creationId, publishedNumeric: numericId };
 }
 
 // [MOD] permalink のみを返す。取得できなければ null（DB保存もしない方針）

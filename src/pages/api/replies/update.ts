@@ -26,12 +26,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // リプライの編集内容を更新
     const now = Math.floor(Date.now() / 1000);
-    
+
+    // Accept replyId provided either as the raw id ("abc123") or the full SK ("REPLY#abc123").
+    const rawReplyId = String(replyId || "");
+    const skValue = rawReplyId.startsWith("REPLY#") ? rawReplyId : `REPLY#${rawReplyId}`;
+
     await ddb.send(new UpdateItemCommand({
       TableName: TBL_REPLIES,
       Key: {
         PK: { S: `USER#${userId}` },
-        SK: { S: `REPLY#${replyId}` }
+        SK: { S: skValue }
       },
       UpdateExpression: "SET replyContent = :content, updatedAt = :ts, #st = :status",
       ExpressionAttributeNames: {
