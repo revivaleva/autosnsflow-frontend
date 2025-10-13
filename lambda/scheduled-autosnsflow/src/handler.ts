@@ -1238,7 +1238,9 @@ export const handler = async (event: any = {}) => {
           try { await putLog({ userId, type: 'deletion', status: 'error', message: 'test_process_deletion_failed', detail: { error: String(e) } }); } catch(_){}
         }
         const merged = Object.assign({}, res || {}, { deletedCount: Number(dqRes?.deletedCount || 0) });
-        return { statusCode: 200, body: JSON.stringify({ testInvocation: true, job: 'hourly', userId, accountIds, result: merged }) };
+        const testOut = (global as any).__TEST_OUTPUT__ || [];
+        try { (global as any).__TEST_OUTPUT__ = []; } catch(_) {}
+        return { statusCode: 200, body: JSON.stringify({ testInvocation: true, job: 'hourly', userId, accountIds, result: merged, testOutput: testOut }) };
       } else {
         
         const res = await runFiveMinJobForUser(userId);
