@@ -1121,12 +1121,27 @@ async function putLog({
     }
   } catch (_) {}
 
+  // Persist to DynamoDB and also capture small amount to test output if requested
   try {
     await ddb.send(new PutItemCommand({ TableName: TBL_LOGS, Item: item }));
   } catch (e) {
     const error = e as Error;
     console.warn("[warn] putLog skipped:", String(error?.name || error));
   }
+
+  // If this invocation is a test invocation, capture a redacted sample into __TEST_OUTPUT__ for event response
+  try {
+    if ((global as any).__TEST_CAPTURE__) {
+      const sample: any = { userId: userId || null, type: type || null, status: status || null, message: String(message || '').slice(0,200) };
+      // include partial token-like snippets if present in detail under known keys, redacted
+      if (detail && typeof detail === 'object') {
+        const maybeToken = detail?.token || detail?.oauthAccessToken || detail?.accessToken || null;
+        if (maybeToken && typeof maybeToken === 'string') sample.tokenPreview = '***' + String(maybeToken).slice(-6);
+      }
+      (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+      (global as any).__TEST_OUTPUT__.push({ tag: 'PUTLOG_CAPTURE', payload: sample });
+    }
+  } catch (_) {}
 }
 
 // persistDebugLog removed (test utility)
@@ -1140,6 +1155,12 @@ const MASTER_DISCORD_WEBHOOK = process.env.MASTER_DISCORD_WEBHOOK || "";
 export const handler = async (event: any = {}) => {
   const job = event?.job || "every-5min";
   // handler invoked (lean logging for production)
+
+  // If invoked as a test invocation, enable in-memory capture of debug putLog entries
+  try {
+    (global as any).__TEST_CAPTURE__ = !!(event && (event.testInvocation || event.detailedDebug));
+    if ((global as any).__TEST_CAPTURE__) (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+  } catch (_) {}
 
   // Unified AppConfig load at handler startup to avoid inconsistent loads across flows
   try {
