@@ -297,48 +297,49 @@ export async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 2
           const text = rep.text || "";
           const username = rep.username || "";
 
-          // 優先: APIが返すis_reply_owned_by_meを使って除外
-          if (rep.is_reply_owned_by_me === true) {
+        // Build author candidate identifiers for ownership checks
+        const authorCandidates = [
+          rep.from?.id,
+          rep.from?.username,
+          rep.username,
+          rep.user?.id,
+          rep.user?.username,
+          rep.author?.id,
+          rep.author?.username,
+        ].map(x => (x == null ? "" : String(x)));
+
+        const isAuthorMatch = authorCandidates.some(a => a && acct.providerUserId && a === acct.providerUserId);
+
+        // Prefer API flag, but verify against providerUserId. If flag says owned_by_me but author id doesn't match
+        // our stored providerUserId, treat as a potential mismatch and log it instead of silently excluding.
+        if (rep.is_reply_owned_by_me === true) {
+          if (isAuthorMatch) {
             try {
-              await putLog({
-                userId,
-                type: "reply-fetch-exclude",
-                accountId: acct.accountId,
-                status: "info",
-                message: "is_reply_owned_by_me=true のため除外",
-                detail: { replyId: rep.id, reason: 'is_reply_owned_by_me' }
-              });
+              await putLog({ userId, type: "reply-fetch-exclude", accountId: acct.accountId, status: "info", message: "is_reply_owned_by_me=true のため除外", detail: { replyId: rep.id, reason: 'is_reply_owned_by_me' } });
             } catch (e) { console.warn('[warn] putLog failed for is_reply flag exclude:', e); }
             continue;
+          } else {
+            // Flag and DB disagree; log for investigation but do not exclude automatically
+            try {
+              await putLog({ userId, type: "reply-fetch-flag-mismatch", accountId: acct.accountId, status: "warn", message: "is_reply_owned_by_me=true だが providerUserId が一致しないため保存対象とする", detail: { replyId: rep.id, authorCandidates, providerUserId: acct.providerUserId } });
+            } catch (e) { console.warn('[warn] putLog failed for flag mismatch (owned_by_me):', e); }
+            // fallthrough to further processing
           }
+        }
 
-          // フラグが付いていない場合は除外しないが、フィールド名や値の差異を調査するためログを出力する
-          try {
-            const authorCandidates = [
-              rep.from?.id,
-              rep.from?.username,
-              rep.username,
-              rep.user?.id,
-              rep.user?.username,
-              rep.author?.id,
-              rep.author?.username,
-            ].map(x => (x == null ? "" : String(x)));
-
-            const s2 = (acct.secondStageContent || "").trim();
-            const rt = (rep.text || "").trim();
-
-            // putLogでデバッグ情報を残す（除外はしない）
-            const debugDetail: any = { replyId: rep.id, authorCandidates, providerUserId: acct.providerUserId };
-            if (s2 && rt) debugDetail.secondStageSample = { s2: s2.replace(/\s+/g,' ').toLowerCase(), rt: rt.replace(/\s+/g,' ').toLowerCase() };
-
-            // only log when there's a potential match to investigate
-            const potentialMatch = authorCandidates.some(a => a && acct.providerUserId && a === acct.providerUserId) || (s2 && rt && (s2.replace(/\s+/g,' ').toLowerCase() === rt.replace(/\s+/g,' ').toLowerCase()));
-            if (potentialMatch) {
-              await putLog({ userId, type: "reply-fetch-flag-mismatch", accountId: acct.accountId, status: "info", message: "flag missing but candidate fields matched", detail: debugDetail });
-            }
-          } catch (e) {
-            console.warn('[warn] flag-mismatch logging failed:', e);
+        // フラグが付いていない場合や、フラグと DB が食い違う場合は、追加のフィールド照合ログを残す
+        try {
+          const s2 = (acct.secondStageContent || "").trim();
+          const rt = (rep.text || "").trim();
+          const debugDetail: any = { replyId: rep.id, authorCandidates, providerUserId: acct.providerUserId };
+          if (s2 && rt) debugDetail.secondStageSample = { s2: s2.replace(/\s+/g,' ').toLowerCase(), rt: rt.replace(/\s+/g,' ').toLowerCase() };
+          const potentialMatch = isAuthorMatch || (s2 && rt && (s2.replace(/\s+/g,' ').toLowerCase() === rt.replace(/\s+/g,' ').toLowerCase()));
+          if (potentialMatch) {
+            await putLog({ userId, type: "reply-fetch-flag-mismatch", accountId: acct.accountId, status: "info", message: "flag missing but candidate fields matched or flagged for review", detail: debugDetail });
           }
+        } catch (e) {
+          console.warn('[warn] flag-mismatch logging failed:', e);
+        }
 
           const createdAt = nowSec();
           
