@@ -9,9 +9,15 @@ const TBL = process.env.TBL_THREADS_ACCOUNTS || 'ThreadsAccounts';
 export async function getTokenForAccount({ userId, accountId }: { userId: string; accountId: string }) {
   if (!userId) throw new Error('userId required');
   if (!accountId) throw new Error('accountId required');
-  const get = await ddb.send(new GetItemCommand({ TableName: TBL, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } }, ProjectionExpression: 'oauthAccessToken, oauthAccessTokenExpiresAt' }));
+  const get = await ddb.send(new GetItemCommand({
+    TableName: TBL,
+    Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } },
+    // Read token and token expiry (note: expiry is stored as oauthTokenExpiresAt (N))
+    ProjectionExpression: 'oauthAccessToken, oauthTokenExpiresAt'
+  }));
+
   const oauthAccessToken = (get.Item?.oauthAccessToken?.S || '').trim();
-  // Optionally, caller can examine oauthAccessTokenExpiresAt to decide refresh
+  // Optionally, caller can examine oauthTokenExpiresAt (N) to decide refresh
   return oauthAccessToken || null;
 }
 

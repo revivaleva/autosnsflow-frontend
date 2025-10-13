@@ -13,6 +13,8 @@
 
 - `Deprecate accessToken usage: remove all checks/fallbacks and prefer oauthAccessToken` — pending
  - `Deprecate accessToken usage: remove all checks/fallbacks and prefer oauthAccessToken` — in_progress
+ - `Fix ThreadsAccounts token field name/expiry handling (threads-delete)` — completed
+   - Description: Correct ProjectionExpression and ensure expiry field `oauthTokenExpiresAt` is referenced; mark for wider grep for similar name mismatches.
  - `Design and implement token auto-refresh worker` — pending
  - `Mark accounts with missing/expired oauthAccessToken as reauth_required and show UI badge` — pending
  - `Fix: ensure normal posts use normal prompts, not quote prompts` — pending
@@ -27,12 +29,26 @@
  - `Run staging smoke tests for dashboard error dedupe` — pending
    - Verify deduplication and normalizedMessage/detailSignature effectiveness
 
+- `Configure Lambda reserved concurrency for scheduled-autosnsflow (temporary)` — pending
+  - 概要: Lambda の予約同時実行を `1` に設定し、every-5min 実行時の二重投稿を一時的に防止する。運用影響（全ユーザーのスループット低下）を理解した上で適用すること。
+
+- `Implement postingLock in runAutoPostForAccount to prevent duplicate external posts` — pending
+  - 概要: 投稿前に条件付き UpdateItem で `postingLock` を設定し、ロック取得に成功したワーカーのみが Threads へ投稿する。投稿後はロックを解除することで、Lambda の並列実行があっても同一予約件の二重投稿を防止する。
+
 ### 一時デバッグ用ソースの掃除
 
 - note: デバッグ用に追加した `src/pages/api/debug/run-pending-quote.ts` や `src/pages/api/debug/run-auto-posts-remigio.ts` のようなエンドポイントは、本番反映前に不要になります。これらはローカル確認用・デバッグ用に追加したソースです。予定としては以下を行ってください:
   - **短期対応**: 機能実装と動作確認が完了したら、不要なデバッグAPIを削除する。 (責任者: 実装者)
   - **期限**: 次回リリース直前のリファクタ作業内で削除する
   - **理由**: デバッグ用エンドポイントはセキュリティリスクとメンテナンスコストを増やすため、本番へは含めない
+
+### テスト向けデバッグの掃除（今回の追加）
+
+- `Remove __TEST_OUTPUT__ pushes or gate them behind __TEST_CAPTURE__ flag` — pending
+  - 概要: テスト時にのみ収集する `__TEST_OUTPUT__` への push を無効化または環境フラグでのみ有効化する。Lambda の先頭で noop 化済みだが、各 push を削除またはガードする。 (担当: 実装者)
+
+- `Remove unnecessary console.info/debug logs from lambda handler` — pending
+  - 概要: 調査用に追加した多数の `console.info` / `console.warn` を整理し、本番に不要な出力を削除または `ALLOW_DEBUG_EXEC_LOGS` によるガードで制御する。 (担当: 実装者)
 
 （詳細は `.cursor/rules/pjspec.mdc` とソースの TODO コメントを参照）
 

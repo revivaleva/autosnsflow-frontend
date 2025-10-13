@@ -21,6 +21,17 @@ function isMissingPostError(msg: string) {
   return false;
 }
 
+function isRateLimitError(msg: string) {
+  if (!msg) return false;
+  try {
+    const j = JSON.parse(msg.replace(/^.*?\{/, '{'));
+    const errBody = j?.error;
+    if (errBody && (errBody.code === 613 || errBody.error_subcode === 4279002)) return true;
+  } catch (_) {}
+  if (String(msg).toLowerCase().includes('rate limit') || String(msg).toLowerCase().includes('rate_limit')) return true;
+  return false;
+}
+
 export async function deletePostsForAccountWithAdapters({ userId, accountId, limit }: { userId: string; accountId: string; limit?: number }, adapters: DeletionAdapters): Promise<{ deletedCount: number; remaining: boolean }> {
   if (!userId) throw new Error('userId required');
   if (!accountId) throw new Error('accountId required');
@@ -85,6 +96,12 @@ export async function deletePostsForAccountWithAdapters({ userId, accountId, lim
       try { adapters.putLog && adapters.putLog({ userId, accountId, action: 'deletion', status: 'info', message: 'deleted_post', detail: { postId } }); } catch (_) {}
     } catch (err) {
       const msg = stringifyError(err);
+      // Rate limit from Threads API: treat as transient - stop processing and indicate remaining=true
+      if (isRateLimitError(msg)) {
+        try { adapters.putLog && adapters.putLog({ userId, accountId, action: 'deletion', status: 'warn', message: 'rate_limited', detail: { postId, error: msg } }); } catch(_) {}
+        // Return early indicating there are remaining posts to process later
+        return { deletedCount, remaining: true } as any;
+      }
       if (isMissingPostError(msg)) {
         // treat missing post as deleted
       } else {
