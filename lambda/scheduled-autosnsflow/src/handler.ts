@@ -827,19 +827,16 @@ async function createQuoteReservationForAccount(userId: any, acct: any) {
 
 async function generateAndAttachContent(userId: any, acct: any, scheduledPostId: any, themeStr: any, settings: any) {
   try {
-    // Use AppConfig as the authoritative source for OpenAI API key per request.
+    // Require AppConfig OPENAI_API_KEY only (no fallbacks to user settings)
     try {
       await config.loadConfig();
-      const cfgKey = config.getConfigValue('OPENAI_API_KEY');
-      if (cfgKey) settings.openaiApiKey = cfgKey;
     } catch (e) {
-      // If AppConfig cannot be loaded, record error and skip generation
       await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "error", message: "AppConfigの読み込み失敗", detail: { error: String(e) } });
-    
-    // try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL_REASON', payload: { scheduledPostId, reason: 'appconfig_load_failed', error: String(e) } }); } catch(_) {}
+      try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL_REASON', payload: { scheduledPostId, reason: 'appconfig_load_failed', error: String(e) } }); } catch(_) {}
       return false;
     }
-    if (!settings?.openaiApiKey) {
+    const cfgKey = (() => { try { return config.getConfigValue('OPENAI_API_KEY'); } catch (_) { return null; } })();
+    if (!cfgKey) {
       await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "skip", message: "AppConfig に OPENAI_API_KEY が設定されていないため本文生成をスキップ" });
       try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL_REASON', payload: { scheduledPostId, reason: 'openai_key_missing' } }); } catch(_) {}
       return false;
@@ -971,7 +968,7 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
 
       // Prepare OpenAI request payload (mask API key when logging)
       const openAiRequestPayload: any = {
-        apiKey: settings.openaiApiKey,
+        apiKey: (() => { try { return config.getConfigValue('OPENAI_API_KEY'); } catch (_) { return settings.openaiApiKey || ''; } })(),
         model: settings.model || DEFAULT_OPENAI_MODEL,
         temperature: settings.openAiTemperature ?? DEFAULT_OPENAI_TEMP,
         max_tokens: settings.openAiMaxTokens ?? DEFAULT_OPENAI_MAXTOKENS,
@@ -1592,59 +1589,60 @@ async function upsertReplyItem(userId: any, acct: any, { externalReplyId, postId
       return false; // 既に存在する
     }
 
-    // ユーザー設定取得
-    const settings = await getUserSettings(userId);
+    // Use AppConfig exclusively for OpenAI API parameters (no fallbacks to user settings)
     let responseContent = "";
-    
-    // OpenAIで返信コンテンツを生成
-    if (settings?.openaiApiKey && acct.autoReply) {
+    if (acct.autoReply) {
       try {
-        const replyPrompt = buildReplyPrompt(text, originalPost?.content || "", settings, acct);
+        // Load AppConfig and require OPENAI_API_KEY to be present
+        try {
+          await config.loadConfig();
+        } catch (e) {
+          await putLog({ userId, type: "reply-generate", accountId: acct.accountId, status: "error", message: "AppConfigの読み込み失敗", detail: { error: String(e) } });
+          return false;
+        }
+
+        const cfgKey = (() => { try { return config.getConfigValue('OPENAI_API_KEY'); } catch (_) { return null; } })();
+        if (!cfgKey) {
+          await putLog({ userId, type: "reply-generate", accountId: acct.accountId, status: "skip", message: "AppConfig に OPENAI_API_KEY が設定されていないため返信生成をスキップ" });
+          return false;
+        }
+
+        // Read AppConfig-only parameters (use exact keys from AppConfig)
+        const cfgModel = (() => { try { return config.getConfigValue('OPENAI_DEFAULT_MODEL'); } catch (_) { return DEFAULT_OPENAI_MODEL; } })();
+        const cfgTemp = Number((() => { try { return config.getConfigValue('OPENAI_TEMPERATURE'); } catch (_) { return String(DEFAULT_OPENAI_TEMP); } })());
+        const cfgMax = Number((() => { try { return config.getConfigValue('OPENAI_MAXTOKENS'); } catch (_) { return String(DEFAULT_OPENAI_MAXTOKENS); } })());
+
+        // Build prompt without relying on user-level settings (pass empty settings object)
+        const replyPrompt = buildReplyPrompt(text, originalPost?.content || "", {}, acct);
+
         const { text: generatedReply } = await callOpenAIText({
-          apiKey: settings.openaiApiKey,
-          model: settings.model || DEFAULT_OPENAI_MODEL,
-          temperature: settings.openAiTemperature ?? DEFAULT_OPENAI_TEMP,
-          max_tokens: settings.openAiMaxTokens ?? DEFAULT_OPENAI_MAXTOKENS,
+          apiKey: cfgKey,
+          model: cfgModel || DEFAULT_OPENAI_MODEL,
+          temperature: Number.isFinite(cfgTemp) ? cfgTemp : DEFAULT_OPENAI_TEMP,
+          max_tokens: Number.isFinite(cfgMax) ? cfgMax : DEFAULT_OPENAI_MAXTOKENS,
           prompt: replyPrompt,
         });
-        
-        // 投稿生成と同様のクリーニング処理を適用
+
+        // Clean generated text
         let cleanReply = generatedReply || "";
-        
         if (cleanReply) {
           cleanReply = cleanReply.trim();
-          
-          // プロンプトの指示部分が含まれている場合の除去処理
           if (cleanReply.includes("【指示】") || cleanReply.includes("【運用方針】") || cleanReply.includes("【受信したリプライ】")) {
-            // 【指示】以降のテキストを除去
             const instructionIndex = cleanReply.lastIndexOf("【指示】");
-            if (instructionIndex !== -1) {
-              cleanReply = cleanReply.substring(0, instructionIndex).trim();
-            }
-            
-            // 他の指示セクションも除去
+            if (instructionIndex !== -1) cleanReply = cleanReply.substring(0, instructionIndex).trim();
             cleanReply = cleanReply.replace(/【運用方針[^】]*】\n?/g, "");
             cleanReply = cleanReply.replace(/【元の投稿】\n?[^【]*\n?/g, "");
             cleanReply = cleanReply.replace(/【受信したリプライ】\n?[^【]*\n?/g, "");
-            
-            // 空行を整理
             cleanReply = cleanReply.replace(/\n\s*\n/g, "\n").trim();
           }
-          
-          // 引用符やマークダウン記法の除去
           cleanReply = cleanReply.replace(/^[「『"']|[」』"']$/g, "");
           cleanReply = cleanReply.replace(/^\*\*|\*\*$/g, "");
           cleanReply = cleanReply.trim();
         }
-        
         responseContent = cleanReply;
       } catch (e) {
         console.warn(`[warn] 返信コンテンツ生成失敗: ${String(e)}`);
-        await putLog({ 
-          userId, type: "reply-generate", accountId: acct.accountId, 
-          status: "error", message: "返信コンテンツ生成失敗", 
-          detail: { error: String(e) } 
-        });
+        await putLog({ userId, type: "reply-generate", accountId: acct.accountId, status: "error", message: "返信コンテンツ生成失敗", detail: { error: String(e) } });
       }
     }
 

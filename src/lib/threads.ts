@@ -14,7 +14,7 @@ export async function postToThreads({
   text: string;
   userIdOnPlatform?: string;
   inReplyTo?: string;
-}): Promise<{ postId: string; numericId?: string; creationId?: string }> {
+}): Promise<{ postId: string; numericId?: string; creationId?: string; publishedNumeric?: string }> {
   const base = process.env.THREADS_GRAPH_BASE || "https://graph.threads.net/v1.0";
   const textPostAppId = process.env.THREADS_TEXT_APP_ID;
   // Use oauthAccessToken only (no accessToken fallback)
@@ -82,8 +82,9 @@ export async function postToThreads({
     try { parsed = JSON.parse(txt); } catch {}
     const postId = parsed?.id || creationId;
     const publishedNumeric = parsed?.id || undefined;
-    // log publish response
+    // log publish response and parsed payload for debugging
     try { console.info('[THREADS PUBLISH]', { postId, status: resp.status, raw: txt.slice(0,800) }); } catch (_) {}
+    try { console.info('[DBG threads] publish parsed', { parsed, publishedNumeric, raw: txt.slice(0,2000) }); } catch (_) {}
     return { postId: postId as string, publishedNumeric };
   };
 
@@ -93,6 +94,7 @@ export async function postToThreads({
   const publishResp = await publish(creationId);
   let postId = publishResp.postId;
   const publishedNumericId = publishResp.publishedNumeric;
+  try { console.info('[DBG threads] publishResp', publishResp, 'publishedNumericId', publishedNumericId); } catch (_) {}
 
   // Try to prefer the permalink code (string) for display: if the published post has a permalink
   // we extract its code and use that as the canonical postId returned to callers. This ensures
@@ -195,7 +197,7 @@ export async function postToThreads({
     }
   }
   
-  return { postId, numericId, creationId };
+  return { postId, numericId, creationId, publishedNumeric: publishedNumericId };
 }
 
 export async function postQuoteToThreads({
@@ -210,7 +212,7 @@ export async function postQuoteToThreads({
   text: string;
   referencedPostId: string;
   userIdOnPlatform?: string;
-}): Promise<{ postId: string; numericId?: string; creationId?: string }> {
+}): Promise<{ postId: string; numericId?: string; creationId?: string; publishedNumeric?: string }> {
   if (!referencedPostId) throw new Error('referencedPostId required');
   // reuse create/publish flow but include referenced_posts in creation body
   const base = process.env.THREADS_GRAPH_BASE || "https://graph.threads.net/v1.0";
@@ -307,7 +309,7 @@ export async function postQuoteToThreads({
     }
   } catch {}
 
-  return { postId, numericId, creationId };
+  return { postId, numericId, creationId, publishedNumeric };
 }
 
 // [MOD] permalink のみを返す。取得できなければ null（DB保存もしない方針）
