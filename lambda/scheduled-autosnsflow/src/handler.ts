@@ -2227,7 +2227,8 @@ async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settin
       const updateValues: any = { ":posted": { S: "posted" }, ":ts": { N: String(nowTs) }, ":pid": { S: postResult.postId || "" } };
       // Ensure :scheduled is present for the ConditionExpression check
       updateValues[":scheduled"] = { S: "scheduled" };
-      if (postResult.numericId && postResult.numericId !== postResult.postId) { updateExprParts.push("numericPostId = :nid"); updateValues[":nid"] = { S: postResult.numericId }; }
+      const resolvedNumericId = postResult.numericId || postResult.creationId || undefined;
+      if (resolvedNumericId && resolvedNumericId !== postResult.postId) { updateExprParts.push("numericPostId = :nid"); updateValues[":nid"] = { S: resolvedNumericId }; }
       if (acct.secondStageContent && acct.secondStageContent.trim()) { updateExprParts.push("doublePostStatus = :waiting"); updateValues[":waiting"] = { S: "waiting" }; }
       await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } }, UpdateExpression: `SET ${updateExprParts.join(', ')}`, ConditionExpression: "#st = :scheduled", ExpressionAttributeNames: { "#st": "status" }, ExpressionAttributeValues: updateValues }));
       await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "ok", message: "自動投稿を完了", detail: { platform: "threads" } });
