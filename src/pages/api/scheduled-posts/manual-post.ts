@@ -90,7 +90,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         userIdOnPlatform: providerUserId,
       });
       postId = quoteResult.postId || '';
-      numericId = quoteResult.numericId;
+      // persist numericId: prefer numericId, fallback to creationId if present
+      numericId = quoteResult.numericId || (quoteResult as any).creationId || undefined;
     } else {
       const normal = await postToThreads({ 
         accessToken, 
@@ -99,7 +100,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         userIdOnPlatform: providerUserId 
       });
       postId = normal.postId;
-      numericId = normal.numericId;
+      // persist numericId: prefer numericId, fallback to creationId if present
+      numericId = normal.numericId || (normal as any).creationId || undefined;
     }
 
     // [MOD] permalink 取得（失敗時は null）
