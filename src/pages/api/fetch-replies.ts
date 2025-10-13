@@ -160,6 +160,14 @@ export async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 2
     // debug output removed
   }
 
+  // 検証ログ: この acct に対して取得された予約投稿の件数とサンプルIDを記録（トークン等は出力しない）
+  try {
+    const sampleIds = (q.Items || []).slice(0,3).map(it => it.scheduledPostId?.S || it.postId?.S || '');
+    await putLog({ userId, type: 'reply-fetch-scan', accountId: acct.accountId, status: 'info', message: 'scanned scheduled posts for reply-fetch', detail: { count: (q.Items || []).length, sampleScheduledPostIds: sampleIds } });
+  } catch (e) {
+    console.warn('[warn] putLog(reply-fetch-scan) failed:', e);
+  }
+
   // 上記でまとめて処理済み
   
   const postsInfo = [];
