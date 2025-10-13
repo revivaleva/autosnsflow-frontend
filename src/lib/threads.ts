@@ -121,16 +121,34 @@ export async function postToThreads({
   }
   // debug output removed
   
-  // 数字IDを取得（投稿詳細から） — oauthAccessToken（primaryToken）を使用
+  // 数字IDを取得（投稿詳細から） — oauthAccessToken（primaryToken）を優先して使用
   let numericId: string | undefined;
   try {
     const tokenForDetail = primaryToken || accessToken || '';
-    const detailUrl = `${base}/${encodeURIComponent(postId)}?fields=id&access_token=${encodeURIComponent(tokenForDetail)}`;
-    const detailRes = await fetch(detailUrl);
-    if (detailRes.ok) {
-      const detailJson = await detailRes.json();
-      numericId = detailJson?.id;
-      // debug logging removed
+    if (tokenForDetail) {
+      const detailUrl = `${base}/${encodeURIComponent(postId)}?fields=id&access_token=${encodeURIComponent(tokenForDetail)}`;
+      // retry a few times because numeric id may not be immediately available
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const detailRes = await fetch(detailUrl);
+          const txt = await detailRes.text().catch(() => '');
+          if (!detailRes.ok) {
+            // if not ok, wait and retry
+            if (attempt < 2) await new Promise(r => setTimeout(r, 800));
+            continue;
+          }
+          let detailJson: any = {};
+          try { detailJson = JSON.parse(txt || '{}'); } catch (_) { detailJson = {}; }
+          if (detailJson?.id) {
+            numericId = detailJson.id;
+            break;
+          }
+          if (attempt < 2) await new Promise(r => setTimeout(r, 800));
+        } catch (innerErr) {
+          if (attempt < 2) await new Promise(r => setTimeout(r, 800));
+          continue;
+        }
+      }
     }
   } catch (e) {
     console.warn(`[WARN] 数字ID取得失敗: ${String(e).substring(0, 100)}`);
