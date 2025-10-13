@@ -289,48 +289,37 @@ export async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 2
           const text = rep.text || "";
           const username = rep.username || "";
 
-        // Build author candidate identifiers for ownership checks
-        const authorCandidates = [
-          rep.from?.id,
-          rep.from?.username,
+        // Ownership check: compare reply's account identifier(s) to reservation.accountId only.
+        // Use simple accountId match (username or id fields) and avoid expensive DB reads per reply.
+        const replyOwnerCandidates = [
           rep.username,
-          rep.user?.id,
           rep.user?.username,
-          rep.author?.id,
+          rep.from?.username,
           rep.author?.username,
+          rep.user?.id,
+          rep.from?.id,
+          rep.author?.id,
         ].map(x => (x == null ? "" : String(x)));
 
-        const isAuthorMatch = authorCandidates.some(a => a && acct.providerUserId && a === acct.providerUserId);
+        const replyOwnerMatch = replyOwnerCandidates.some(x => x && x === acct.accountId);
 
-        // Prefer API flag, but verify against providerUserId. If flag says owned_by_me but author id doesn't match
-        // our stored providerUserId, treat as a potential mismatch and log it instead of silently excluding.
+        // If API says owned_by_me, only exclude when replyOwnerMatch is true.
+        // If API says owned_by_me but owner doesn't match, log a single warning per account per run.
         if (rep.is_reply_owned_by_me === true) {
-          if (isAuthorMatch) {
-            try {
-              await putLog({ userId, type: "reply-fetch-exclude", accountId: acct.accountId, status: "info", message: "is_reply_owned_by_me=true のため除外", detail: { replyId: rep.id, reason: 'is_reply_owned_by_me' } });
-            } catch (e) { console.warn('[warn] putLog failed for is_reply flag exclude:', e); }
+          if (replyOwnerMatch) {
+            try { await putLog({ userId, type: "reply-fetch-exclude", accountId: acct.accountId, status: "info", message: "is_reply_owned_by_me=true のため除外", detail: { replyId: rep.id } }); } catch (e) { console.warn('[warn] putLog failed for is_reply flag exclude:', e); }
             continue;
           } else {
-            // Flag and DB disagree; log for investigation but do not exclude automatically
-            try {
-              await putLog({ userId, type: "reply-fetch-flag-mismatch", accountId: acct.accountId, status: "warn", message: "is_reply_owned_by_me=true だが providerUserId が一致しないため保存対象とする", detail: { replyId: rep.id, authorCandidates, providerUserId: acct.providerUserId } });
-            } catch (e) { console.warn('[warn] putLog failed for flag mismatch (owned_by_me):', e); }
-            // fallthrough to further processing
+            // log mismatch only once per account per invocation to reduce log volume
+            if (!((global as any).__replyFetchFlagMismatchLogged || {})[acct.accountId]) {
+              try {
+                await putLog({ userId, type: "reply-fetch-flag-mismatch", accountId: acct.accountId, status: "warn", message: "is_reply_owned_by_me=true だが accountId が一致しないため保存対象とする", detail: { replyId: rep.id, replyOwnerCandidates, accountId: acct.accountId } });
+                (global as any).__replyFetchFlagMismatchLogged = (global as any).__replyFetchFlagMismatchLogged || {};
+                (global as any).__replyFetchFlagMismatchLogged[acct.accountId] = true;
+              } catch (e) { console.warn('[warn] putLog failed for flag mismatch (owned_by_me):', e); }
+            }
+            // fallthrough -> save
           }
-        }
-
-        // フラグが付いていない場合や、フラグと DB が食い違う場合は、追加のフィールド照合ログを残す
-        try {
-          const s2 = (acct.secondStageContent || "").trim();
-          const rt = (rep.text || "").trim();
-          const debugDetail: any = { replyId: rep.id, authorCandidates, providerUserId: acct.providerUserId };
-          if (s2 && rt) debugDetail.secondStageSample = { s2: s2.replace(/\s+/g,' ').toLowerCase(), rt: rt.replace(/\s+/g,' ').toLowerCase() };
-          const potentialMatch = isAuthorMatch || (s2 && rt && (s2.replace(/\s+/g,' ').toLowerCase() === rt.replace(/\s+/g,' ').toLowerCase()));
-          if (potentialMatch) {
-            await putLog({ userId, type: "reply-fetch-flag-mismatch", accountId: acct.accountId, status: "info", message: "flag missing but candidate fields matched or flagged for review", detail: debugDetail });
-          }
-        } catch (e) {
-          console.warn('[warn] flag-mismatch logging failed:', e);
         }
 
           const createdAt = nowSec();
