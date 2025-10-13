@@ -35,7 +35,8 @@ const aliasPlugin = {
 };
 
 await build({
-  entryPoints: ["src/handler.ts"],
+  // Use absolute path for entry to avoid resolution issues when executed from CI or different cwd
+  entryPoints: [path.join(__dirname, 'src', 'handler.ts')],
   outfile: "dist/handler.js",
   bundle: true,
   platform: "node",
