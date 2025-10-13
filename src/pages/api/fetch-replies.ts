@@ -193,18 +193,15 @@ export async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 2
     apiLog: ""
   };
 
-  // リプライ取得用のIDを決定（数字IDのみを許可する）
+  // リプライ取得用のIDを決定（numericPostId のみを許可。shortcode は使用しない）
   const isNumericPostId = post.numericPostId && /^\d+$/.test(post.numericPostId);
-  const isNumericMainPostId = post.postId && /^\d+$/.test(post.postId);
 
   let replyApiId: string | null = null;
   if (isNumericPostId) {
     replyApiId = post.numericPostId;
-  } else if (isNumericMainPostId) {
-    replyApiId = post.postId;
   } else {
-    // Non-numeric IDs are skipped to avoid unsupported API requests
-    postInfo.apiLog = 'SKIP: リプライ取得用の数値IDが存在しないためスキップ';
+    // numericPostId が無ければショートコードは使わずスキップする
+    postInfo.apiLog = 'SKIP: numericPostId が存在しないためスキップ (shortcode は使用しない)';
     postsInfo.push(postInfo);
     continue;
   }
