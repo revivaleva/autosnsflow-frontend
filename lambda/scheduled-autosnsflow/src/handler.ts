@@ -2227,8 +2227,8 @@ async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settin
       const updateValues: any = { ":posted": { S: "posted" }, ":ts": { N: String(nowTs) }, ":pid": { S: postResult.postId || "" } };
       // Ensure :scheduled is present for the ConditionExpression check
       updateValues[":scheduled"] = { S: "scheduled" };
-      // Prefer creationId as the canonical numeric post id when available
-      const resolvedNumericId = postResult.creationId || postResult.numericId || undefined;
+      // Prefer the published numericId (from publish response). Fall back to creationId only if numericId missing.
+      const resolvedNumericId = postResult.numericId || postResult.creationId || undefined;
       if (resolvedNumericId) {
         // always save numericPostId as creationId when provided
         if (String(resolvedNumericId) !== String(postResult.postId)) {
