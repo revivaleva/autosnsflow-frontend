@@ -78,6 +78,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const scheduledType = it.type?.S || '';
     let postId: string = '';
     let numericId: string | undefined;
+    let quoteResult: any = undefined;
+    let normal: any = undefined;
     if (scheduledType === 'quote') {
       // Use numericPostId field only. If it's not present, fail early.
       const referenced = it.numericPostId?.S || '';
