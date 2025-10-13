@@ -14,7 +14,7 @@ export async function postToThreads({
   text: string;
   userIdOnPlatform?: string;
   inReplyTo?: string;
-}): Promise<{ postId: string; numericId?: string }> {
+}): Promise<{ postId: string; numericId?: string; creationId?: string }> {
   const base = process.env.THREADS_GRAPH_BASE || "https://graph.threads.net/v1.0";
   const textPostAppId = process.env.THREADS_TEXT_APP_ID;
   // Use oauthAccessToken only (no accessToken fallback)
@@ -81,15 +81,18 @@ export async function postToThreads({
     let parsed: any = {};
     try { parsed = JSON.parse(txt); } catch {}
     const postId = parsed?.id || creationId;
+    const publishedNumeric = parsed?.id || undefined;
     // log publish response
     try { console.info('[THREADS PUBLISH]', { postId, status: resp.status, raw: txt.slice(0,800) }); } catch (_) {}
-    return postId as string;
+    return { postId: postId as string, publishedNumeric };
   };
 
   const creationId = await create();
   // debug output removed
   
-  let postId = await publish(creationId);
+  const publishResp = await publish(creationId);
+  let postId = publishResp.postId;
+  const publishedNumericId = publishResp.publishedNumeric;
 
   // Try to prefer the permalink code (string) for display: if the published post has a permalink
   // we extract its code and use that as the canonical postId returned to callers. This ensures
@@ -121,37 +124,38 @@ export async function postToThreads({
   }
   // debug output removed
   
-  // 数字IDを取得（投稿詳細から） — oauthAccessToken（primaryToken）を優先して使用
-  let numericId: string | undefined;
-  try {
-    const tokenForDetail = primaryToken || accessToken || '';
-    if (tokenForDetail) {
-      const detailUrl = `${base}/${encodeURIComponent(postId)}?fields=id&access_token=${encodeURIComponent(tokenForDetail)}`;
-      // retry a few times because numeric id may not be immediately available
-      for (let attempt = 0; attempt < 3; attempt++) {
-        try {
-          const detailRes = await fetch(detailUrl);
-          const txt = await detailRes.text().catch(() => '');
-          if (!detailRes.ok) {
-            // if not ok, wait and retry
+  // 数字IDを取得（publish のレスポンスに含まれる id を優先）
+  let numericId: string | undefined = publishedNumericId || undefined;
+  if (!numericId) {
+    try {
+      const tokenForDetail = primaryToken || accessToken || '';
+      if (tokenForDetail) {
+        const detailUrl = `${base}/${encodeURIComponent(postId)}?fields=id&access_token=${encodeURIComponent(tokenForDetail)}`;
+        // retry a few times because numeric id may not be immediately available
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            const detailRes = await fetch(detailUrl);
+            const txt = await detailRes.text().catch(() => '');
+            if (!detailRes.ok) {
+              if (attempt < 2) await new Promise(r => setTimeout(r, 800));
+              continue;
+            }
+            let detailJson: any = {};
+            try { detailJson = JSON.parse(txt || '{}'); } catch (_) { detailJson = {}; }
+            if (detailJson?.id) {
+              numericId = detailJson.id;
+              break;
+            }
+            if (attempt < 2) await new Promise(r => setTimeout(r, 800));
+          } catch (innerErr) {
             if (attempt < 2) await new Promise(r => setTimeout(r, 800));
             continue;
           }
-          let detailJson: any = {};
-          try { detailJson = JSON.parse(txt || '{}'); } catch (_) { detailJson = {}; }
-          if (detailJson?.id) {
-            numericId = detailJson.id;
-            break;
-          }
-          if (attempt < 2) await new Promise(r => setTimeout(r, 800));
-        } catch (innerErr) {
-          if (attempt < 2) await new Promise(r => setTimeout(r, 800));
-          continue;
         }
       }
+    } catch (e) {
+      console.warn(`[WARN] 数字ID取得失敗: ${String(e).substring(0, 100)}`);
     }
-  } catch (e) {
-    console.warn(`[WARN] 数字ID取得失敗: ${String(e).substring(0, 100)}`);
   }
 
   // FALLBACK: if numericId still missing, attempt to search the account's recent posts
@@ -206,7 +210,7 @@ export async function postQuoteToThreads({
   text: string;
   referencedPostId: string;
   userIdOnPlatform?: string;
-}): Promise<{ postId: string; numericId?: string }> {
+}): Promise<{ postId: string; numericId?: string; creationId?: string }> {
   if (!referencedPostId) throw new Error('referencedPostId required');
   // reuse create/publish flow but include referenced_posts in creation body
   const base = process.env.THREADS_GRAPH_BASE || "https://graph.threads.net/v1.0";
@@ -303,7 +307,7 @@ export async function postQuoteToThreads({
     }
   } catch {}
 
-  return { postId, numericId };
+  return { postId, numericId, creationId };
 }
 
 // [MOD] permalink のみを返す。取得できなければ null（DB保存もしない方針）
