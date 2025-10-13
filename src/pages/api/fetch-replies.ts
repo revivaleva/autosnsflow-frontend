@@ -163,7 +163,7 @@ export async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 2
   // 検証ログ: この acct に対して取得された予約投稿の件数とサンプルIDを記録（トークン等は出力しない）
   try {
     const sampleIds = (q.Items || []).slice(0,3).map(it => it.scheduledPostId?.S || it.postId?.S || '');
-    await putLog({ userId, type: 'reply-fetch-scan', accountId: acct.accountId, status: 'info', message: 'scanned scheduled posts for reply-fetch', detail: { count: (q.Items || []).length, sampleScheduledPostIds: sampleIds } });
+    console.info(`[reply-fetch-scan] acct=${acct.accountId} count=${(q.Items || []).length} sample=${JSON.stringify(sampleIds)}`);
   } catch (e) {
     console.warn('[warn] putLog(reply-fetch-scan) failed:', e);
   }
@@ -306,16 +306,16 @@ export async function fetchThreadsRepliesAndSave({ acct, userId, lookbackSec = 2
         // If API says owned_by_me but owner doesn't match, log a single warning per account per run.
         if (rep.is_reply_owned_by_me === true) {
           if (replyOwnerMatch) {
-            try { await putLog({ userId, type: "reply-fetch-exclude", accountId: acct.accountId, status: "info", message: "is_reply_owned_by_me=true のため除外", detail: { replyId: rep.id } }); } catch (e) { console.warn('[warn] putLog failed for is_reply flag exclude:', e); }
+            try { console.info(`[reply-fetch-exclude] account=${acct.accountId} replyId=${rep.id}`); } catch (e) { console.warn('[warn] reply-fetch-exclude log failed:', e); }
             continue;
           } else {
             // log mismatch only once per account per invocation to reduce log volume
             if (!((global as any).__replyFetchFlagMismatchLogged || {})[acct.accountId]) {
               try {
-                await putLog({ userId, type: "reply-fetch-flag-mismatch", accountId: acct.accountId, status: "warn", message: "is_reply_owned_by_me=true だが username が一致しないため保存対象とする", detail: { replyId: rep.id, username: rep.username || null, accountId: acct.accountId } });
+                console.warn(`[reply-fetch-flag-mismatch] account=${acct.accountId} replyId=${rep.id} username=${rep.username || null}`);
                 (global as any).__replyFetchFlagMismatchLogged = (global as any).__replyFetchFlagMismatchLogged || {};
                 (global as any).__replyFetchFlagMismatchLogged[acct.accountId] = true;
-              } catch (e) { console.warn('[warn] putLog failed for flag mismatch (owned_by_me):', e); }
+              } catch (e) { console.warn('[warn] reply-fetch-flag-mismatch log failed:', e); }
             }
             // fallthrough -> save
           }
@@ -396,8 +396,8 @@ async function fetchIncomingReplies(userId: string, acct: any) {
   try {
     // Observability: log whether acct contains tokens/providerUserId so we can trace "token missing" cases
     try {
-      await putLog({ userId, type: 'reply-fetch', accountId: acct.accountId, status: 'probe', message: 'acct-token-check', detail: { hasAccessToken: !!acct.accessToken, hasOauthAccessToken: !!acct.oauthAccessToken, hasProviderUserId: !!acct.providerUserId } });
-    } catch (e) { console.warn('[warn] putLog(token-check) failed:', e); }
+      console.info(`[reply-fetch-probe] account=${acct.accountId} hasAccessToken=${!!acct.accessToken} hasOauthAccessToken=${!!acct.oauthAccessToken} hasProviderUserId=${!!acct.providerUserId}`);
+    } catch (e) { console.warn('[warn] reply-fetch-probe log failed:', e); }
 
     const r = await fetchThreadsRepliesAndSave({ acct, userId });
     // debug output removed
@@ -432,9 +432,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const skippedAccounts = (accounts || []).filter(a => !a.autoReply).map(a => a.accountId);
 
     if (skippedAccounts.length > 0) {
-      try {
-        await putLog({ userId, type: 'reply-fetch-skip', status: 'info', message: 'skip accounts with autoReply=OFF', detail: { skippedAccounts } });
-      } catch (e) { console.warn('[warn] putLog(skip accounts) failed:', e); }
+      console.info(`[reply-fetch-skip] skippedAccounts=${JSON.stringify(skippedAccounts)}`);
     }
 
     let totalFetched = 0;
