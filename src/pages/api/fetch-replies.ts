@@ -391,10 +391,7 @@ async function fetchIncomingReplies(userId: string, acct: any) {
   
   // debug output removed
   
-  // 手動取得の場合はautoReplyの条件を緩和（警告のみ）
-  if (!acct.autoReply) {
-    console.warn(`[WARNING] アカウント ${acct.accountId} はautoReplyがOFFですが手動取得を実行します`);
-  }
+  // (manual warning removed) - handler now decides which accounts to process based on autoReply
   
   try {
     // Observability: log whether acct contains tokens/providerUserId so we can trace "token missing" cases
