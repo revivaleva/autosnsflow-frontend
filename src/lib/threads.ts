@@ -153,6 +153,43 @@ export async function postToThreads({
   } catch (e) {
     console.warn(`[WARN] 数字ID取得失敗: ${String(e).substring(0, 100)}`);
   }
+
+  // FALLBACK: if numericId still missing, attempt to search the account's recent posts
+  // and match by text (best-effort). This helps when numeric id is not exposed via detail
+  // endpoint due to timing or API behavior. Use accessToken (not oauth) to list user's media.
+  if (!numericId) {
+    try {
+      const listToken = accessToken || primaryToken || '';
+      if (listToken) {
+        // search recent posts of the account (me/media) and try to match by text substring
+        // we will request recent items and compare their text to the original text
+        const listUrl = `${base}/me/media?fields=id,caption&access_token=${encodeURIComponent(listToken)}`;
+        const listRes = await fetch(listUrl);
+        if (listRes.ok) {
+          const listJson = await listRes.json().catch(() => ({}));
+          const data = listJson?.data || [];
+          for (const it of data) {
+            const candidateId = it?.id;
+            if (!candidateId) continue;
+            try {
+              const detailUrl2 = `${base}/${encodeURIComponent(candidateId)}?fields=id,caption&access_token=${encodeURIComponent(listToken)}`;
+              const dr = await fetch(detailUrl2);
+              if (!dr.ok) continue;
+              const dj = await dr.json().catch(() => ({}));
+              const caption = dj?.caption || '';
+              // simple substring match against posted text (text variable may be long)
+              if (text && caption && caption.includes(String(text).substring(0, Math.min(200, String(text).length)))) {
+                numericId = dj?.id;
+                break;
+              }
+            } catch (_) { continue; }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[WARN] numericId fallback search failed:', String(e).substring(0,200));
+    }
+  }
   
   return { postId, numericId };
 }
