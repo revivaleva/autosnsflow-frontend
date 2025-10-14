@@ -93,6 +93,17 @@ function normalizeEpochSec(raw: any): number {
   return Math.floor(v);
 }
 
+// Helper: determine execution logs prune days (priority: EXECUTION_LOGS_PRUNE_DELAY_DAYS -> RETENTION_DAYS_LOGS+1 -> RETENTION_DAYS+1)
+async function resolveExecutionPruneDays(): Promise<number> {
+  try { await config.loadConfig(); } catch(_) {}
+  const execVal = Number(config.getConfigValue('EXECUTION_LOGS_PRUNE_DELAY_DAYS') || process.env.EXECUTION_LOGS_PRUNE_DELAY_DAYS || 0) || 0;
+  if (execVal > 0) return execVal;
+  const rLogs = Number(config.getConfigValue('RETENTION_DAYS_LOGS') || process.env.RETENTION_DAYS_LOGS || '0') || 0;
+  if (rLogs > 0) return rLogs + 1;
+  const base = Number(config.getConfigValue('RETENTION_DAYS') || process.env.RETENTION_DAYS || '7') || 7;
+  return base + 1;
+}
+
 const isValidUrl = (s: any) => {
   try {
     if (!s || typeof s !== 'string') return false;
@@ -1301,7 +1312,7 @@ export const handler = async (event: any = {}) => {
 
   // daily prune: delete scheduled posts older than 7 days
   // NOTE: caller can request full-table operation by omitting event.userId
-    if (job === "daily-prune" || job === "prune") {
+  if (job === "daily-prune" || job === "prune") {
     // Options:
     // - event.dryRun (boolean): true = do not delete, only count and log candidates
     // - event.userId (string): if provided, only run for that user
@@ -1314,7 +1325,7 @@ export const handler = async (event: any = {}) => {
     // If no userId specified, also compute pre-filter total across the whole table
     let preFilterTotal: number | null = null;
     if (!singleUser) {
-        try {
+      try {
         preFilterTotal = await countAllScheduledPosts();
         // Also compute total ExecutionLogs table size for visibility
         let preFilterLogTotal = 0;
@@ -1539,7 +1550,24 @@ export const handler = async (event: any = {}) => {
         try { console.warn('[warn] dry-run candidate count failed:', String(e)); } catch(_) {}
       }
       await postDiscordMaster(formatMasterMessage({ job: "daily-prune", startedAt, finishedAt, userTotal: userIds.length, userSucceeded: 0, totals: t }));
-      return { statusCode: 200, body: JSON.stringify({ dryRun: true, preFilterTotal, candidates: totalCandidates, scanned: totalScanned, logCandidates: totalLogCandidates, pruneMs }) };
+      return { statusCode: 200, body: JSON.stringify({
+        dryRun: true,
+        preFilterTotal,
+        candidates: totalCandidates,
+        scanned: totalScanned,
+        logCandidates: totalLogCandidates,
+        pruneMs,
+        scheduledNormalDeleted: t.scheduledNormalDeleted,
+        scheduledQuoteDeleted: t.scheduledQuoteDeleted,
+        repliesDeleted: t.repliesDeleted,
+        executionLogsDeleted: t.executionLogsDeleted,
+        usageCountersDeleted: t.usageCountersDeleted,
+        scheduledNormalTotal: t.scheduledNormalTotal,
+        scheduledQuoteTotal: t.scheduledQuoteTotal,
+        repliesTotal: t.repliesTotal,
+        executionLogsTotal: t.executionLogsTotal,
+        usageCountersTotal: t.usageCountersTotal
+      }) };
     }
 
     // If no userId was specified, perform full-table prune
@@ -1603,10 +1631,10 @@ export const handler = async (event: any = {}) => {
         // also remove orphan (non-user) ExecutionLogs entries that TTL may have missed
         let orphanLogDeleted = 0;
         try { orphanLogDeleted = await pruneOrphanExecutionLogsAll(); } catch (_) { orphanLogDeleted = 0; }
-    const finishedAt = Date.now();
+        const finishedAt = Date.now();
     const pruneMsAll = finishedAt - prunePhaseStart;
     const t = { candidates: totalCandidates, scanned: totalScanned, deleted: allDeleted, preFilterTotal, logDeleted: allLogDeleted, orphanLogDeleted, pruneMs: pruneMsAll } as any;
-    await postDiscordMaster(formatMasterMessage({ job: "daily-prune", startedAt, finishedAt, userTotal: userIds.length, userSucceeded, totals: t }));
+        await postDiscordMaster(formatMasterMessage({ job: "daily-prune", startedAt, finishedAt, userTotal: userIds.length, userSucceeded, totals: t }));
         return { statusCode: 200, body: JSON.stringify({ deleted: allDeleted, logDeleted: allLogDeleted, preFilterTotal }) };
       } catch (e) {
         console.warn('[warn] full-table prune failed:', e);
@@ -3301,8 +3329,8 @@ async function pruneOldScheduledPosts(userId: any) {
 async function pruneOldExecutionLogs(userId: any) {
   try {
     try { await config.loadConfig(); } catch(_) {}
-    const retentionDays = Number(config.getConfigValue('RETENTION_DAYS') || '7') || 7;
-    const thresholdSec = Math.floor(Date.now() / 1000) - (retentionDays * 24 * 60 * 60);
+    const execPruneDays = await resolveExecutionPruneDays();
+    const thresholdSec = Math.floor(Date.now() / 1000) - (execPruneDays * 24 * 60 * 60);
     const perUserLogLimit = Number(config.getConfigValue('EXECUTION_LOGS_PRUNE_LIMIT') || process.env.EXECUTION_LOGS_PRUNE_LIMIT || '1000') || 1000;
     let lastKey: any = undefined;
     let totalDeleted = 0;
@@ -3390,9 +3418,9 @@ async function pruneOldExecutionLogsAll() {
 async function pruneOrphanExecutionLogsAll() {
   try {
     try { await config.loadConfig(); } catch(_) {}
+    // For scheduled posts user-scoped prune, use RETENTION_DAYS (no +1)
     const retentionDays = Number(config.getConfigValue('RETENTION_DAYS') || '7') || 7;
-    const execPruneDays = Number(config.getConfigValue('EXECUTION_LOGS_PRUNE_DELAY_DAYS') || String(retentionDays + 1)) || (retentionDays + 1);
-    const thresholdSec = Math.floor(Date.now() / 1000) - (execPruneDays * 24 * 60 * 60);
+    const thresholdSec = Math.floor(Date.now() / 1000) - (retentionDays * 24 * 60 * 60);
     const orphanLimit = Number(config.getConfigValue('ORPHAN_EXEC_LOGS_PRUNE_LIMIT') || process.env.ORPHAN_EXEC_LOGS_PRUNE_LIMIT || '10000') || 10000;
 
     let lastKey: any = undefined;
