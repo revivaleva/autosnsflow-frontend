@@ -1419,12 +1419,16 @@ export const handler = async (event: any = {}) => {
         let normalCnt = 0;
         let quoteCnt = 0;
         do {
-          const s = await ddb.send(new ScanCommand({ TableName: TBL_SCHEDULED, ProjectionExpression: 'type', ExclusiveStartKey: last, Limit: scanPage }));
-          for (const it of (s.Items || [])) {
+          // 'type' is a reserved word in DynamoDB projection; use ExpressionAttributeNames
+          const s = await ddb.send(new ScanCommand({ TableName: TBL_SCHEDULED, ProjectionExpression: '#tp', ExpressionAttributeNames: { '#tp': 'type' }, ExclusiveStartKey: last, Limit: scanPage }));
+          const items = (s.Items || []);
+          for (const it of items) {
             try {
-              const typ = (getS(it.type) || '').toLowerCase();
+              const typ = (getS(it.type) || getS(it['#tp']) || '').toLowerCase();
               if (typ === 'quote') quoteCnt++; else normalCnt++;
-            } catch (_) {}
+            } catch (e) {
+              try { console.warn('[warn] inspect scheduled item type failed', String(e)); } catch(_) {}
+            }
           }
           last = (s as any).LastEvaluatedKey;
         } while (last);
@@ -1445,7 +1449,7 @@ export const handler = async (event: any = {}) => {
         last = undefined;
         let usageCnt = 0;
         do {
-          const s = await ddb.send(new ScanCommand({ TableName: TBL_USAGE, ProjectionExpression: 'PK', ExclusiveStartKey: last, Limit: scanPage }));
+          const s = await ddb.send(new ScanCommand({ TableName: TBL_USAGE, ProjectionExpression: 'PK,SK,updatedAt', ExclusiveStartKey: last, Limit: scanPage }));
           usageCnt += (s.Count || 0);
           last = (s as any).LastEvaluatedKey;
         } while (last);
