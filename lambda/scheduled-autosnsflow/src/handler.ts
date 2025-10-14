@@ -1396,7 +1396,18 @@ export const handler = async (event: any = {}) => {
     if (dryRun) {
       const finishedAt = Date.now();
       // build totals object expected by formatMasterMessage
-      const t = { candidates: totalCandidates, scanned: totalScanned, deleted: 0, preFilterTotal, logCandidates: totalLogCandidates, pruneMs } as any;
+      const t: any = { candidates: totalCandidates, scanned: totalScanned, deleted: 0, preFilterTotal, logCandidates: totalLogCandidates, pruneMs };
+      // Provide fallback fields so formatMasterMessage can render detailed lines
+      t.scheduledNormalDeleted = 0;
+      t.scheduledNormalTotal = Number(preFilterTotal || 0);
+      t.scheduledQuoteDeleted = 0;
+      t.scheduledQuoteTotal = 0;
+      t.repliesDeleted = 0;
+      t.repliesTotal = 0;
+      t.executionLogsDeleted = 0;
+      t.executionLogsTotal = Number(await (async function(){ try { return await countAllExecutionLogs(); } catch(_) { return 0; } })());
+      t.usageCountersDeleted = 0;
+      t.usageCountersTotal = 0;
       await postDiscordMaster(formatMasterMessage({ job: "daily-prune", startedAt, finishedAt, userTotal: userIds.length, userSucceeded: 0, totals: t }));
       return { statusCode: 200, body: JSON.stringify({ dryRun: true, preFilterTotal, candidates: totalCandidates, scanned: totalScanned, logCandidates: totalLogCandidates, pruneMs }) };
     }
