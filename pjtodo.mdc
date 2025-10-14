@@ -23,6 +23,12 @@
   - **Audit and remove non-essential debug `console.*` calls**
     - 概要: 本番に不要な info/verbose ログを削除または低いログレベルへ統合する。
 
+- PRUNE TODOs:
+  - Implement `pruneOldUsageCountersAll` with BatchWriteItem and updatedAt cutoff. [in progress]
+  - Convert per-item DeleteItem deletions to BatchWriteItem for scheduled/posts/replies/logs where safe. [pending]
+  - Add AppConfig keys: RETENTION_DAYS_LOGS, PRUNE_LIMIT_POSTS_REPLIES, PRUNE_LIMIT_OTHERS, PRUNE_BATCH_WRITE_SIZE, PRUNE_SCAN_PAGE_SIZE. [pending]
+  - Update Discord master message to include per-table deleted/total counts and prune duration. [done]
+
 ---
 
 保留にする旨の指示を受けています。次にどのタスクを優先して実行するか指定してください。
