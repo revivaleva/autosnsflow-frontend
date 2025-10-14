@@ -10,6 +10,17 @@ description:
 - **staging**：通常の開発・修正・デバッグはここへ。特段の指示が無い場合は staging。
 - **lambda**：定期実行関連は必ずここへ push。共通部分は staging 経由で反映。
 
+<!-- 追記: このファイルに定期実行（prune）関連の運用追記を行いました（編集日: 2025-10-14）。
+     変更点: Lambda ビルドトリガ説明、テスト実行手順、prune dry-run 用の注意を追加しています。 -->
+
+### Lambda ビルドのトリガについて（重要）
+
+- CI は `lambda` ブランチへの push を検出して Lambda 用のビルド / デプロイジョブを実行します。ローカルで Lambda のビルドを確認したい場合は、必ず WSL 上で以下を個別コマンドで実行してください（1 ステップ = 1 コマンドのポリシー遵守）:
+  1. `wsl -d Ubuntu -u revival bash -lc 'cd /home/revival/projects/AutoSNSFlow/frontend && npm ci'`
+  2. `wsl -d Ubuntu -u revival bash -lc 'cd /home/revival/projects/AutoSNSFlow/frontend && npm --prefix ./lambda/scheduled-autosnsflow run build'`
+
+- 注意: CI が走らない場合は、ブランチ名が `lambda` であること、コミットメッセージに `lambda:` プレフィックスが含まれていること、及び push 先が origin の `lambda` ブランチであることを確認してください。
+
 ## コマンド実行ポリシー
 
 - 原則：1 ステップ = 1 コマンド。ワンライナー連結（`&&`）禁止。
