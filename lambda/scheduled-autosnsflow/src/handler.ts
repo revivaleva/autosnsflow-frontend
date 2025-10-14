@@ -1399,7 +1399,7 @@ export const handler = async (event: any = {}) => {
       const t: any = { candidates: totalCandidates, scanned: totalScanned, deleted: 0, preFilterTotal, logCandidates: totalLogCandidates, pruneMs };
       // Provide fallback fields so formatMasterMessage can render detailed lines
       t.scheduledNormalDeleted = 0;
-      t.scheduledNormalTotal = Number(preFilterTotal || 0);
+      t.scheduledNormalTotal = 0;
       t.scheduledQuoteDeleted = 0;
       t.scheduledQuoteTotal = 0;
       t.repliesDeleted = 0;
@@ -1408,6 +1408,51 @@ export const handler = async (event: any = {}) => {
       t.executionLogsTotal = Number(await (async function(){ try { return await countAllExecutionLogs(); } catch(_) { return 0; } })());
       t.usageCountersDeleted = 0;
       t.usageCountersTotal = 0;
+
+      // Attempt to compute actual totals for dry-run reporting (may be expensive)
+      try {
+        await config.loadConfig();
+        const scanPage = Number(config.getConfigValue('PRUNE_SCAN_PAGE_SIZE') || process.env.PRUNE_SCAN_PAGE_SIZE || '1000') || 1000;
+
+        // ScheduledPosts: count by type
+        let last: any = undefined;
+        let normalCnt = 0;
+        let quoteCnt = 0;
+        do {
+          const s = await ddb.send(new ScanCommand({ TableName: TBL_SCHEDULED, ProjectionExpression: 'type', ExclusiveStartKey: last, Limit: scanPage }));
+          for (const it of (s.Items || [])) {
+            try {
+              const typ = (getS(it.type) || '').toLowerCase();
+              if (typ === 'quote') quoteCnt++; else normalCnt++;
+            } catch (_) {}
+          }
+          last = (s as any).LastEvaluatedKey;
+        } while (last);
+        t.scheduledNormalTotal = normalCnt;
+        t.scheduledQuoteTotal = quoteCnt;
+
+        // Replies total
+        last = undefined;
+        let repliesCnt = 0;
+        do {
+          const s = await ddb.send(new ScanCommand({ TableName: TBL_REPLIES, ProjectionExpression: 'PK', ExclusiveStartKey: last, Limit: scanPage }));
+          repliesCnt += (s.Count || 0);
+          last = (s as any).LastEvaluatedKey;
+        } while (last);
+        t.repliesTotal = repliesCnt;
+
+        // UsageCounters total
+        last = undefined;
+        let usageCnt = 0;
+        do {
+          const s = await ddb.send(new ScanCommand({ TableName: TBL_USAGE, ProjectionExpression: 'PK', ExclusiveStartKey: last, Limit: scanPage }));
+          usageCnt += (s.Count || 0);
+          last = (s as any).LastEvaluatedKey;
+        } while (last);
+        t.usageCountersTotal = usageCnt;
+      } catch (e) {
+        try { console.warn('[warn] dry-run totals scan failed:', String(e)); } catch(_) {}
+      }
       await postDiscordMaster(formatMasterMessage({ job: "daily-prune", startedAt, finishedAt, userTotal: userIds.length, userSucceeded: 0, totals: t }));
       return { statusCode: 200, body: JSON.stringify({ dryRun: true, preFilterTotal, candidates: totalCandidates, scanned: totalScanned, logCandidates: totalLogCandidates, pruneMs }) };
     }
