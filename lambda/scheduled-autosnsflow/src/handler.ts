@@ -1457,6 +1457,87 @@ export const handler = async (event: any = {}) => {
       } catch (e) {
         try { console.warn('[warn] dry-run totals scan failed:', String(e)); } catch(_) {}
       }
+
+      // Compute deletion candidates counts (items that would be deleted) for dry-run
+      try {
+        // scheduled posts candidates by postedAt/scheduledAt
+        await config.loadConfig();
+        const retentionDays = Number(config.getConfigValue('RETENTION_DAYS') || '7') || 7;
+        const execPruneDays = Number(config.getConfigValue('EXECUTION_LOGS_PRUNE_DELAY_DAYS') || String(retentionDays + 1)) || (retentionDays + 1);
+        const scheduledThreshold = Math.floor(Date.now() / 1000) - (retentionDays * 24 * 60 * 60);
+        const execThreshold = Math.floor(Date.now() / 1000) - (execPruneDays * 24 * 60 * 60);
+
+        let last: any = undefined;
+        let scheduledNormalCandidates = 0;
+        let scheduledQuoteCandidates = 0;
+        do {
+          const s = await ddb.send(new ScanCommand({ TableName: TBL_SCHEDULED, ProjectionExpression: 'scheduledAt,postedAt,#tp', ExpressionAttributeNames: { '#tp': 'type' }, ExclusiveStartKey: last, Limit: Number(config.getConfigValue('PRUNE_SCAN_PAGE_SIZE') || process.env.PRUNE_SCAN_PAGE_SIZE || '1000') }));
+          for (const it of (s.Items || [])) {
+            try {
+              const scheduledAt = normalizeEpochSec(getN(it.scheduledAt) || 0);
+              const postedAt = normalizeEpochSec(getN(it.postedAt) || 0);
+              const compareAt = postedAt > 0 ? postedAt : scheduledAt;
+              if (!compareAt) continue;
+              if (compareAt <= scheduledThreshold) {
+                const typ = (getS(it.type) || getS(it['#tp']) || '').toLowerCase();
+                if (typ === 'quote') scheduledQuoteCandidates++; else scheduledNormalCandidates++;
+              }
+            } catch (_) {}
+          }
+          last = (s as any).LastEvaluatedKey;
+        } while (last);
+
+        // ExecutionLogs candidates
+        last = undefined;
+        let execCandidates = 0;
+        do {
+          const s = await ddb.send(new ScanCommand({ TableName: TBL_LOGS, ProjectionExpression: 'createdAt', ExclusiveStartKey: last, Limit: Number(config.getConfigValue('PRUNE_SCAN_PAGE_SIZE') || process.env.PRUNE_SCAN_PAGE_SIZE || '1000') }));
+          for (const it of (s.Items || [])) {
+            try {
+              const createdAt = Number(it.createdAt?.N || 0);
+              if (createdAt && createdAt <= execThreshold) execCandidates++;
+            } catch (_) {}
+          }
+          last = (s as any).LastEvaluatedKey;
+        } while (last);
+
+        // Replies candidates
+        last = undefined;
+        let repliesCandidates = 0;
+        do {
+          const s = await ddb.send(new ScanCommand({ TableName: TBL_REPLIES, ProjectionExpression: 'createdAt', ExclusiveStartKey: last, Limit: Number(config.getConfigValue('PRUNE_SCAN_PAGE_SIZE') || process.env.PRUNE_SCAN_PAGE_SIZE || '1000') }));
+          for (const it of (s.Items || [])) {
+            try {
+              const createdAt = Number(it.createdAt?.N || 0);
+              if (createdAt && createdAt <= scheduledThreshold) repliesCandidates++;
+            } catch (_) {}
+          }
+          last = (s as any).LastEvaluatedKey;
+        } while (last);
+
+        // UsageCounters candidates (updatedAt)
+        last = undefined;
+        let usageCandidates = 0;
+        const usageThreshold = Math.floor(Date.now() / 1000) - (Number(config.getConfigValue('RETENTION_DAYS_LOGS') || '20') * 24 * 60 * 60);
+        do {
+          const s = await ddb.send(new ScanCommand({ TableName: TBL_USAGE, ProjectionExpression: 'updatedAt', ExclusiveStartKey: last, Limit: Number(config.getConfigValue('PRUNE_SCAN_PAGE_SIZE') || process.env.PRUNE_SCAN_PAGE_SIZE || '1000') }));
+          for (const it of (s.Items || [])) {
+            try {
+              const updatedAt = normalizeEpochSec(getN(it.updatedAt) || 0);
+              if (updatedAt && updatedAt <= usageThreshold) usageCandidates++;
+            } catch (_) {}
+          }
+          last = (s as any).LastEvaluatedKey;
+        } while (last);
+
+        t.scheduledNormalDeleted = scheduledNormalCandidates;
+        t.scheduledQuoteDeleted = scheduledQuoteCandidates;
+        t.repliesDeleted = repliesCandidates;
+        t.executionLogsDeleted = execCandidates;
+        t.usageCountersDeleted = usageCandidates;
+      } catch (e) {
+        try { console.warn('[warn] dry-run candidate count failed:', String(e)); } catch(_) {}
+      }
       await postDiscordMaster(formatMasterMessage({ job: "daily-prune", startedAt, finishedAt, userTotal: userIds.length, userSucceeded: 0, totals: t }));
       return { statusCode: 200, body: JSON.stringify({ dryRun: true, preFilterTotal, candidates: totalCandidates, scanned: totalScanned, logCandidates: totalLogCandidates, pruneMs }) };
     }
