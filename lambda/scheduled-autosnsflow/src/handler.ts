@@ -17,6 +17,7 @@ import {
   UpdateItemCommand,
   ScanCommand,
   DescribeTableCommand,
+  BatchWriteItemCommand,
   DeleteItemCommand,
   TransactWriteItemsCommand,
 } from "@aws-sdk/client-dynamodb";
@@ -1300,7 +1301,7 @@ export const handler = async (event: any = {}) => {
 
   // daily prune: delete scheduled posts older than 7 days
   // NOTE: caller can request full-table operation by omitting event.userId
-  if (job === "daily-prune" || job === "prune") {
+    if (job === "daily-prune" || job === "prune") {
     // Options:
     // - event.dryRun (boolean): true = do not delete, only count and log candidates
     // - event.userId (string): if provided, only run for that user
@@ -1329,6 +1330,8 @@ export const handler = async (event: any = {}) => {
     // ExecutionLogs counters
     let totalLogCandidates = 0;
     let totalLogDeleted = 0;
+    // measure scan+delete phase
+    const prunePhaseStart = Date.now();
     for (const uid of userIds) {
       try {
         // If deletePosted mode is requested, only allow single-user operations for safety
@@ -1388,12 +1391,14 @@ export const handler = async (event: any = {}) => {
       }
     }
 
+    const prunePhaseEnd = Date.now();
+    const pruneMs = prunePhaseEnd - prunePhaseStart;
     if (dryRun) {
       const finishedAt = Date.now();
       // build totals object expected by formatMasterMessage
-      const t = { candidates: totalCandidates, scanned: totalScanned, deleted: 0, preFilterTotal, logCandidates: totalLogCandidates } as any;
+      const t = { candidates: totalCandidates, scanned: totalScanned, deleted: 0, preFilterTotal, logCandidates: totalLogCandidates, pruneMs } as any;
       await postDiscordMaster(formatMasterMessage({ job: "daily-prune", startedAt, finishedAt, userTotal: userIds.length, userSucceeded: 0, totals: t }));
-      return { statusCode: 200, body: JSON.stringify({ dryRun: true, preFilterTotal, candidates: totalCandidates, scanned: totalScanned, logCandidates: totalLogCandidates }) };
+      return { statusCode: 200, body: JSON.stringify({ dryRun: true, preFilterTotal, candidates: totalCandidates, scanned: totalScanned, logCandidates: totalLogCandidates, pruneMs }) };
     }
 
     // If no userId was specified, perform full-table prune
@@ -1457,9 +1462,10 @@ export const handler = async (event: any = {}) => {
         // also remove orphan (non-user) ExecutionLogs entries that TTL may have missed
         let orphanLogDeleted = 0;
         try { orphanLogDeleted = await pruneOrphanExecutionLogsAll(); } catch (_) { orphanLogDeleted = 0; }
-        const finishedAt = Date.now();
-        const t = { candidates: totalCandidates, scanned: totalScanned, deleted: allDeleted, preFilterTotal, logDeleted: allLogDeleted, orphanLogDeleted } as any;
-        await postDiscordMaster(formatMasterMessage({ job: "daily-prune", startedAt, finishedAt, userTotal: userIds.length, userSucceeded, totals: t }));
+    const finishedAt = Date.now();
+    const pruneMsAll = finishedAt - prunePhaseStart;
+    const t = { candidates: totalCandidates, scanned: totalScanned, deleted: allDeleted, preFilterTotal, logDeleted: allLogDeleted, orphanLogDeleted, pruneMs: pruneMsAll } as any;
+    await postDiscordMaster(formatMasterMessage({ job: "daily-prune", startedAt, finishedAt, userTotal: userIds.length, userSucceeded, totals: t }));
         return { statusCode: 200, body: JSON.stringify({ deleted: allDeleted, logDeleted: allLogDeleted, preFilterTotal }) };
       } catch (e) {
         console.warn('[warn] full-table prune failed:', e);
@@ -3111,9 +3117,11 @@ async function pruneOldScheduledPosts(userId: any) {
       for (const it of (q.Items || [])) {
         try {
           const scheduledAt = normalizeEpochSec(getN(it.scheduledAt) || 0);
-          // NOTE: per request, do not filter by status or isDeleted — delete purely by scheduledAt age
-          if (!scheduledAt) continue;
-          if (scheduledAt <= thresholdSec) {
+          const postedAt = normalizeEpochSec(getN(it.postedAt) || 0);
+          // Defer to postedAt when present (posted items age by postedAt), otherwise use scheduledAt
+          const compareAt = postedAt > 0 ? postedAt : scheduledAt;
+          if (!compareAt) continue;
+          if (compareAt <= thresholdSec) {
             const acctId = getS(it.accountId) || "__unknown__";
             const cur = deletedByAccount[acctId] || 0;
             if (cur >= perAccountLimit) {
@@ -3158,21 +3166,10 @@ async function pruneOldExecutionLogs(userId: any) {
     let lastKey: any = undefined;
     let totalDeleted = 0;
     do {
-      const q = await ddb.send(new QueryCommand({
-        TableName: TBL_LOGS,
-        KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
-        ExpressionAttributeValues: {
-          ":pk": { S: `USER#${userId}` },
-          ":pfx": { S: "LOG#" },
-        },
-        ProjectionExpression: "PK,SK,createdAt",
-        Limit: 1000,
-        ExclusiveStartKey: lastKey,
-      }));
-
-      for (const it of (q.Items || [])) {
+      const s = await ddb.send(new ScanCommand({ TableName: TBL_LOGS, ProjectionExpression: 'PK,SK,createdAt', ExclusiveStartKey: lastKey, Limit: 1000 }));
+      for (const it of (s.Items || [])) {
         try {
-          const createdAt = Number(it.createdAt?.N || 0);
+          const createdAt = normalizeEpochSec(getN(it.createdAt) || 0);
           if (createdAt && createdAt <= thresholdSec) {
             await ddb.send(new DeleteItemCommand({ TableName: TBL_LOGS, Key: { PK: it.PK, SK: it.SK } }));
             totalDeleted++;
@@ -3182,8 +3179,7 @@ async function pruneOldExecutionLogs(userId: any) {
           console.warn('[warn] prune log delete failed for item', e);
         }
       }
-
-      lastKey = q.LastEvaluatedKey;
+      lastKey = (s as any).LastEvaluatedKey;
     } while (lastKey);
 
     if (totalDeleted > 0) {
@@ -3298,24 +3294,14 @@ async function pruneOldReplies(userId: any) {
     try { await config.loadConfig(); } catch(_) {}
     const retentionDays = Number(config.getConfigValue('RETENTION_DAYS') || '7') || 7;
     const thresholdSec = Math.floor(Date.now() / 1000) - (retentionDays * 24 * 60 * 60);
+    // Convert to full-table scan by createdAt to support user-agnostic pruning
     let lastKey: any = undefined;
     let totalDeleted = 0;
     do {
-      const q = await ddb.send(new QueryCommand({
-        TableName: TBL_REPLIES,
-        KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
-        ExpressionAttributeValues: {
-          ":pk": { S: `USER#${userId}` },
-          ":pfx": { S: "REPLY#" },
-        },
-        ProjectionExpression: "PK,SK,createdAt",
-        Limit: 1000,
-        ExclusiveStartKey: lastKey,
-      }));
-
-      for (const it of (q.Items || [])) {
+      const s = await ddb.send(new ScanCommand({ TableName: TBL_REPLIES, ProjectionExpression: 'PK,SK,createdAt', ExclusiveStartKey: lastKey, Limit: 1000 }));
+      for (const it of (s.Items || [])) {
         try {
-          const createdAt = Number(it.createdAt?.N || 0);
+          const createdAt = normalizeEpochSec(getN(it.createdAt) || 0);
           if (createdAt && createdAt <= thresholdSec) {
             await ddb.send(new DeleteItemCommand({ TableName: TBL_REPLIES, Key: { PK: it.PK, SK: it.SK } }));
             totalDeleted++;
@@ -3324,8 +3310,7 @@ async function pruneOldReplies(userId: any) {
           console.warn('[warn] prune reply delete failed for item', e);
         }
       }
-
-      lastKey = q.LastEvaluatedKey;
+      lastKey = (s as any).LastEvaluatedKey;
     } while (lastKey);
 
     if (totalDeleted > 0) {
@@ -3433,18 +3418,103 @@ async function countAllExecutionLogs() {
 // Full-table prune helper: iterate all users and run pruneOldScheduledPosts
 async function pruneOldScheduledPostsAll() {
   try {
-    const userIds = await getActiveUserIds();
+    // Full-table prune using Scan so we can evaluate scheduledAt/postedAt without per-user queries
+    let lastKey: any = undefined;
     let totalDeleted = 0;
-    for (const uid of userIds) {
-      const c = await pruneOldScheduledPosts(uid);
-      totalDeleted += Number(c || 0);
+    // Build set of queued accountIds to exclude
+    await config.loadConfig();
+    const dqTable = config.getConfigValue('TBL_DELETION_QUEUE') || process.env.TBL_DELETION_QUEUE || 'DeletionQueue';
+    const queued = new Set<string>();
+    try {
+      let lk: any = undefined;
+      do {
+        const s = await ddb.send(new ScanCommand({ TableName: dqTable, ProjectionExpression: 'accountId', ExclusiveStartKey: lk, Limit: 1000 }));
+        for (const it of (s as any).Items || []) {
+          const aid = getS(it.accountId);
+          if (aid) queued.add(aid);
+        }
+        lk = (s as any).LastEvaluatedKey;
+      } while (lk);
+    } catch (e) {
+      // If deletion queue not accessible, proceed but log
+      try { console.warn('[warn] could not scan DeletionQueue, proceeding without exclusions', String(e)); } catch(_) {}
     }
+
+    do {
+      const s = await ddb.send(new ScanCommand({ TableName: TBL_SCHEDULED, ProjectionExpression: 'PK,SK,scheduledAt,postedAt,accountId,type', ExclusiveStartKey: lastKey, Limit: 1000 }));
+      for (const it of (s.Items || [])) {
+        try {
+          const acctId = getS(it.accountId) || '';
+          if (acctId && queued.has(acctId)) continue; // skip queued accounts
+          const scheduledAt = normalizeEpochSec(getN(it.scheduledAt) || 0);
+          const postedAt = normalizeEpochSec(getN(it.postedAt) || 0);
+          const compareAt = postedAt > 0 ? postedAt : scheduledAt;
+          if (!compareAt) continue;
+          const retentionDays = Number(config.getConfigValue('RETENTION_DAYS') || '7') || 7;
+          const thresholdSec = Math.floor(Date.now() / 1000) - (retentionDays * 24 * 60 * 60);
+          if (compareAt <= thresholdSec) {
+            await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: it.PK, SK: it.SK } }));
+            totalDeleted++;
+          }
+        } catch (e) {
+          console.warn('[warn] prune scheduled delete failed for item', e);
+        }
+      }
+      lastKey = (s as any).LastEvaluatedKey;
+    } while (lastKey);
     return totalDeleted;
   } catch (e) {
     console.warn('[warn] pruneOldScheduledPostsAll failed:', e);
     throw e;
   }
 }
+
+// Full-table prune for UsageCounters using updatedAt
+async function pruneOldUsageCountersAll() {
+  try {
+    await config.loadConfig();
+    const retentionDays = Number(config.getConfigValue('RETENTION_DAYS_LOGS') || '20') || 20;
+    const thresholdSec = Math.floor(Date.now() / 1000) - (retentionDays * 24 * 60 * 60);
+    // collect keys to delete
+    const keys: Array<{ PK: any; SK: any }> = [];
+    let lastKey: any = undefined;
+    do {
+      const s = await ddb.send(new ScanCommand({ TableName: TBL_USAGE, ProjectionExpression: 'PK,SK,updatedAt', ExclusiveStartKey: lastKey, Limit: 1000 }));
+      for (const it of (s.Items || [])) {
+        try {
+          const updatedAt = normalizeEpochSec(getN(it.updatedAt) || 0);
+          if (updatedAt && updatedAt <= thresholdSec) {
+            keys.push({ PK: it.PK, SK: it.SK });
+          }
+        } catch (e) {
+          console.warn('[warn] prune usage item inspect failed', e);
+        }
+      }
+      lastKey = (s as any).LastEvaluatedKey;
+    } while (lastKey);
+
+    // batch delete (25 per request)
+    let deleted = 0;
+    const BATCH = 25;
+    for (let i = 0; i < keys.length; i += BATCH) {
+      const chunk = keys.slice(i, i + BATCH);
+      const reqs = chunk.map(k => ({ DeleteRequest: { Key: { PK: k.PK, SK: k.SK } } }));
+      const params: any = { RequestItems: { [TBL_USAGE]: reqs } };
+      try {
+        await ddb.send(new BatchWriteItemCommand(params));
+        deleted += chunk.length;
+      } catch (e) {
+        console.warn('[warn] prune usage batch delete failed', e);
+      }
+    }
+
+    return deleted;
+  } catch (e) {
+    console.warn('[warn] pruneOldUsageCountersAll failed:', e);
+    throw e;
+  }
+}
+
 
 // Count posted records for dry-run deletePosted mode
 async function countPostedCandidates(userId: any) {
@@ -3701,22 +3771,18 @@ function formatMasterMessage({ job, startedAt, finishedAt, userTotal, userSuccee
   }
 
   if (job === "daily-prune" || job === "prune") {
-    const totalRecords = Number(totals?.preFilterTotal || 0);
-    const targetRecords = Number(totals?.candidates || 0);
-    const deleted = Number(totals?.deleted || 0);
-    const remaining = Math.max(0, targetRecords - deleted);
-    const line = [
-      `スキャンユーザー数: ${userTotal}`,
-      `全レコード数: ${totalRecords}`,
-      `対象レコード数: ${targetRecords}`,
-      `削除済レコード数: ${deleted}`,
-      `残対象レコード数: ${remaining}`,
-    ].join(" / ");
-    return [
-      `**[MASTER] 定期実行サマリ ${iso} (daily-prune)**`,
-      line,
-      `所要時間: ${durSec}s`
-    ].join("\n");
+    // Build per-table lines if available in totals
+    const lines: string[] = [];
+    if (typeof totals.scheduledNormalDeleted !== 'undefined') lines.push(`通常投稿${totals.scheduledNormalDeleted}件削除 / 全${totals.scheduledNormalTotal}件`);
+    if (typeof totals.scheduledQuoteDeleted !== 'undefined') lines.push(`引用投稿${totals.scheduledQuoteDeleted}件削除 / 全${totals.scheduledQuoteTotal}件`);
+    if (typeof totals.repliesDeleted !== 'undefined') lines.push(`リプライ${totals.repliesDeleted}件削除 / 全${totals.repliesTotal}件`);
+    if (typeof totals.executionLogsDeleted !== 'undefined') lines.push(`ExecutionLogs${totals.executionLogsDeleted}件削除 / 全${totals.executionLogsTotal}件`);
+    if (typeof totals.usageCountersDeleted !== 'undefined') lines.push(`UsageCounters${totals.usageCountersDeleted}件削除 / 全${totals.usageCountersTotal}件`);
+    if (typeof totals.pruneMs !== 'undefined') lines.push(`処理時間: ${Math.round(Number(totals.pruneMs) / 1000)}s`);
+    if (lines.length === 0) {
+      return [`**[MASTER] 定期実行サマリ ${iso} (daily-prune)**`, `スキャンユーザー数: ${userTotal}`, `所要時間: ${durSec}s`].join("\n");
+    }
+    return [`**[MASTER] 定期実行サマリ ${iso} (daily-prune)**`, ...lines, `所要時間: ${durSec}s`].join("\n");
   }
 
   const line = formatNonZeroLine([
