@@ -1314,12 +1314,12 @@ export const handler = async (event: any = {}) => {
     // If no userId specified, also compute pre-filter total across the whole table
     let preFilterTotal: number | null = null;
     if (!singleUser) {
-      try {
+        try {
         preFilterTotal = await countAllScheduledPosts();
         // Also compute total ExecutionLogs table size for visibility
         let preFilterLogTotal = 0;
         try { preFilterLogTotal = await countAllExecutionLogs(); } catch (e) { preFilterLogTotal = 0; }
-        await postDiscordMaster(`**[PRUNE] pre-filter total items across table: ${preFilterTotal}, ExecutionLogs total: ${preFilterLogTotal}**`);
+        // pre-filter Discord summary suppressed per operator request
       } catch (e) {
         console.warn('[warn] countAllScheduledPosts failed:', e);
       }
@@ -3753,7 +3753,19 @@ function formatNonZeroLine(items: Array<{ label: string; value: number; suffix?:
 function formatMasterMessage({ job, startedAt, finishedAt, userTotal, userSucceeded, totals }: any) {
   const durMs = finishedAt - startedAt;
   const durSec = Math.max(1, Math.round(durMs / 1000));
-  const iso = new Date(finishedAt).toISOString();
+
+  // Format finishedAt as JST 'YYYY-MM-DD HH:mm:ss'
+  function formatJstShort(ms: number) {
+    const d = new Date(ms + 9 * 3600 * 1000); // shift to JST then use UTC getters
+    const yyyy = d.getUTCFullYear();
+    const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(d.getUTCDate()).padStart(2, '0');
+    const hh = String(d.getUTCHours()).padStart(2, '0');
+    const mi = String(d.getUTCMinutes()).padStart(2, '0');
+    const ss = String(d.getUTCSeconds()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
+  }
+  const jstShort = formatJstShort(finishedAt);
   if (job === "hourly") {
     const line = formatNonZeroLine([
       { label: "予約投稿作成 合計", value: totals.createdCount },
@@ -3763,7 +3775,7 @@ function formatMasterMessage({ job, startedAt, finishedAt, userTotal, userSuccee
       { label: "投稿削除 合計", value: totals.deletedCount || 0 },
     ]);
     return [
-      `**[MASTER] 定期実行サマリ ${iso} (hourly)**`,
+      `**[HOURLY] 定期実行サマリ ${jstShort}**`,
       `スキャンユーザー数: ${userTotal} / 実行成功: ${userSucceeded}`,
       line,
       `所要時間: ${durSec}s`
@@ -3780,9 +3792,9 @@ function formatMasterMessage({ job, startedAt, finishedAt, userTotal, userSuccee
     if (typeof totals.usageCountersDeleted !== 'undefined') lines.push(`UsageCounters${totals.usageCountersDeleted}件削除 / 全${totals.usageCountersTotal}件`);
     if (typeof totals.pruneMs !== 'undefined') lines.push(`処理時間: ${Math.round(Number(totals.pruneMs) / 1000)}s`);
     if (lines.length === 0) {
-      return [`**[MASTER] 定期実行サマリ ${iso} (daily-prune)**`, `スキャンユーザー数: ${userTotal}`, `所要時間: ${durSec}s`].join("\n");
+      return [`**[PRUNE] 定期実行サマリ ${jstShort}**`, `スキャンユーザー数: ${userTotal}`, `所要時間: ${durSec}s`].join("\n");
     }
-    return [`**[MASTER] 定期実行サマリ ${iso} (daily-prune)**`, ...lines, `所要時間: ${durSec}s`].join("\n");
+    return [`**[PRUNE] 定期実行サマリ ${jstShort}**`, ...lines, `所要時間: ${durSec}s`].join("\n");
   }
 
   const line = formatNonZeroLine([
@@ -3792,7 +3804,7 @@ function formatMasterMessage({ job, startedAt, finishedAt, userTotal, userSuccee
     { label: "失効(rate-limit) 合計", value: totals.rateSkipped },
   ]);
   return [
-    `**[MASTER] 定期実行サマリ ${iso} (every-5min)**`,
+    `**[5MIN] 定期実行サマリ ${jstShort}**`,
     `スキャンユーザー数: ${userTotal} / 実行成功: ${userSucceeded}`,
     line,
     `所要時間: ${durSec}s`
