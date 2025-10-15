@@ -30,6 +30,7 @@ export default function AdminUsersPage() {
   // [DEBUG] 生データ
   const [raw, setRaw] = useState<any>(null);
   const [debugOpen, setDebugOpen] = useState(false);
+  const [showDeferredItems, setShowDeferredItems] = useState(false);
 
   // [ADD] 非管理者はダッシュボードへリダイレクト
   const router = useRouter();
@@ -82,7 +83,10 @@ export default function AdminUsersPage() {
   };
 
   useEffect(() => {
+    // 初期はローディングだけ実行し、管理用項目は少し遅延させてちらつきを抑止
     load();
+    const t = setTimeout(() => setShowDeferredItems(true), 700);
+    return () => clearTimeout(t);
   }, []);
 
   const openEdit = (r: AdminUserRow) => {
@@ -153,14 +157,14 @@ export default function AdminUsersPage() {
           <div className="flex gap-3 mb-3">
             <input
               className="border rounded px-3 py-2 w-full"
-              placeholder="email / userId で検索"
+              placeholder="email / userId / username で検索"
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
-            <button className="bg-gray-800 text-white px-4 py-2 rounded" onClick={load}>
+            <button className="px-4 py-2 rounded bg-blue-600 text-white" onClick={load}>
               再読込
             </button>
-            <button className="bg-gray-600 text-white px-4 py-2 rounded" onClick={() => setDebugOpen(true)}>
+            <button className="px-4 py-2 rounded bg-gray-700 text-white" onClick={() => setDebugOpen(true)}>
               デバッグ表示
             </button>
           </div>
@@ -208,13 +212,17 @@ export default function AdminUsersPage() {
                       <td className="px-3 py-2">{r.username || ""}</td>
                       <td className="px-3 py-2 text-center">{r.planType}</td>
                       <td className="px-3 py-2 text-center">
-                        {r.apiUsedCount} / {r.apiDailyLimit}
+                        {r.apiUsedCount ?? 0} / {r.apiDailyLimit}
                       </td>
                       <td className="px-3 py-2 text-center">{r.maxThreadsAccounts ?? 0}</td>
                       <td className="px-3 py-2 text-center">{r.autoPostAdminStop ? "停止" : "—"}</td>
                       <td className="px-3 py-2 text-center">{r.autoPost ? "有効" : "無効"}</td>
                       <td className="px-3 py-2 text-center">
                         {r.updatedAt ? new Date(r.updatedAt * 1000).toLocaleString() : "—"}
+                      </td>
+                      {/* 登録日（Cognitoの作成日時） */}
+                      <td className="px-3 py-2 text-center">
+                        {r.createdAt ? new Date(r.createdAt * 1000).toLocaleDateString() : "—"}
                       </td>
                     </tr>
                   ))

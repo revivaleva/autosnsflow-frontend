@@ -51,10 +51,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           Key: { PK: pk, SK: sk },
         }));
         if (!got.Item) {
+          // 初期レコードを作成
           await ddb.send(new PutItemCommand({
             TableName: TBL_SETTINGS,
             Item: {
-              PK: pk, SK: sk,
+              PK: pk,
+              SK: sk,
               planType:        { S: "free" },
               apiDailyLimit:   { N: "200" },
               username:        { S: "" },
@@ -67,9 +69,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             },
             ConditionExpression: "attribute_not_exists(PK)",
           }));
-        }
 
-        const item = (got.Item || {}) as any;
+          // reflect defaults locally so we don't need to re-read
+          var item: any = {
+            planType: { S: "free" },
+            apiDailyLimit: { N: "200" },
+            username: { S: "" },
+            maxThreadsAccounts: { N: "0" },
+            apiUsageDate: { S: todayKeyJst() },
+            apiUsedCount: { N: "0" },
+            autoPost: { BOOL: false },
+            autoPostAdminStop: { BOOL: false },
+            updatedAt: { N: `${Math.floor(Date.now()/1000)}` },
+          };
+        } else {
+          var item: any = got.Item as any;
+        }
         const savedDate = item.apiUsageDate?.S || todayKeyJst();
         if (savedDate !== todayKeyJst()) {
           await ddb.send(new UpdateItemCommand({
@@ -97,6 +112,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           autoPostAdminStop: Boolean(item.autoPostAdminStop?.BOOL || false),
           autoPost:          Boolean(item.autoPost?.BOOL || false),
           updatedAt:         Number(item.updatedAt?.N || 0),
+          // Cognito の作成日時（秒）
+          createdAt:         u.UserCreateDate ? Math.floor(new Date(u.UserCreateDate as any).getTime() / 1000) : 0,
         });
       }
       results.sort((a, b) => (a.email || "").localeCompare(b.email || "", "ja"));
