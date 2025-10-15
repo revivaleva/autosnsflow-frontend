@@ -253,24 +253,17 @@ export default function AdminUsersPage() {
               </tbody>
             </table>
             <style jsx>{`
-              /* clamp long content only in table body cells */
-              table td {
+              /* clamp long content only inside .cell-content wrappers to avoid breaking table layout */
+              table td { white-space: normal; vertical-align: top; }
+              table th { white-space: normal; line-height: 1.2; vertical-align: middle; }
+              .nowrap-button { white-space: nowrap; }
+              .cell-content {
                 display: -webkit-box;
                 -webkit-line-clamp: 2;
                 -webkit-box-orient: vertical;
                 overflow: hidden;
                 white-space: normal;
               }
-              /* keep header cells normal */
-              table th {
-                white-space: normal;
-                line-height: 1.2;
-                vertical-align: middle;
-              }
-              .nowrap-button {
-                white-space: nowrap;
-              }
-              .cell-content { white-space: normal; }
             `}</style>
           </div>
 
