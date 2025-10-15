@@ -11,6 +11,8 @@ import AdminGuard from "@/components/AdminGuard"; // [ADD] 追加
 type AdminUserRow = {
   email: string;
   userId: string;
+  username?: string;
+  maxThreadsAccounts?: number;
   planType: string;
   apiDailyLimit: number;
   apiUsedCount: number;
@@ -41,10 +43,14 @@ export default function AdminUsersPage() {
     apiDailyLimit: number;
     autoPostAdminStop: boolean;
     autoPost: boolean;
+    username: string;
+    maxThreadsAccounts: number;
   }>({
     apiDailyLimit: 200,
     autoPostAdminStop: false,
     autoPost: false,
+    username: "",
+    maxThreadsAccounts: 0,
   });
 
   // [EDIT] 403(forbidden) を検知したらリダイレクトして終了
@@ -85,6 +91,8 @@ export default function AdminUsersPage() {
       apiDailyLimit: r.apiDailyLimit ?? 200,
       autoPostAdminStop: !!r.autoPostAdminStop,
       autoPost: !!r.autoPost,
+      username: r.username ?? "",
+      maxThreadsAccounts: r.maxThreadsAccounts ?? 0,
     });
     setEditOpen(true);
   };
@@ -105,6 +113,8 @@ export default function AdminUsersPage() {
         apiDailyLimit: Number(form.apiDailyLimit),
         autoPostAdminStop: Boolean(form.autoPostAdminStop),
         autoPost: Boolean(form.autoPost),
+        username: String(form.username || ""),
+        maxThreadsAccounts: Number(form.maxThreadsAccounts || 0),
       };
       const res = await fetch("/api/admin/users", {
         method: "PATCH",
@@ -127,7 +137,11 @@ export default function AdminUsersPage() {
   const filtered = rows.filter((r) => {
     const key = (q || "").toLowerCase();
     if (!key) return true;
-    return r.email?.toLowerCase().includes(key) || r.userId?.toLowerCase().includes(key);
+    return (
+      r.email?.toLowerCase().includes(key) ||
+      r.userId?.toLowerCase().includes(key) ||
+      (r.username || "").toLowerCase().includes(key)
+    );
   });
 
   return (
@@ -159,8 +173,10 @@ export default function AdminUsersPage() {
                 <tr>
                   <th className="px-3 py-2 text-left">Email</th>
                   <th className="px-3 py-2 text-left">UserId</th>
+                  <th className="px-3 py-2 text-left">Username</th>
                   <th className="px-3 py-2">Plan</th>
                   <th className="px-3 py-2">当日使用 / 上限</th>
+                  <th className="px-3 py-2">Max Threads</th>
                   <th className="px-3 py-2">管理停止</th>
                   <th className="px-3 py-2">自動投稿（UserSettings）</th>
                   <th className="px-3 py-2">更新</th>
@@ -189,10 +205,12 @@ export default function AdminUsersPage() {
                         </button>
                       </td>
                       <td className="px-3 py-2">{r.userId}</td>
+                      <td className="px-3 py-2">{r.username || ""}</td>
                       <td className="px-3 py-2 text-center">{r.planType}</td>
                       <td className="px-3 py-2 text-center">
                         {r.apiUsedCount} / {r.apiDailyLimit}
                       </td>
+                      <td className="px-3 py-2 text-center">{r.maxThreadsAccounts ?? 0}</td>
                       <td className="px-3 py-2 text-center">{r.autoPostAdminStop ? "停止" : "—"}</td>
                       <td className="px-3 py-2 text-center">{r.autoPost ? "有効" : "無効"}</td>
                       <td className="px-3 py-2 text-center">
@@ -246,6 +264,29 @@ export default function AdminUsersPage() {
                     <div className="text-sm">
                       <div className="text-gray-600">Email</div>
                       <div className="font-mono break-all">{target.email}</div>
+                    </div>
+
+                    <div>
+                      <label className="block font-medium mb-1">Username（管理表示名）</label>
+                      <input
+                        type="text"
+                        className="w-full border rounded px-3 py-2"
+                        value={form.username}
+                        onChange={(e) => setForm((v) => ({ ...v, username: e.target.value }))}
+                      />
+                      <p className="text-xs text-gray-500 mt-1">管理画面内でのみ表示されます。Cognito には同期しません。</p>
+                    </div>
+
+                    <div>
+                      <label className="block font-medium mb-1">Max Threads Accounts</label>
+                      <input
+                        type="number"
+                        min={0}
+                        className="w-full border rounded px-3 py-2"
+                        value={form.maxThreadsAccounts}
+                        onChange={(e) => setForm((v) => ({ ...v, maxThreadsAccounts: Number(e.target.value) }))}
+                      />
+                      <p className="text-xs text-gray-500 mt-1">ユーザーが登録できる Threads アカウント数（デフォルト 0）。</p>
                     </div>
 
                     <div className="flex items-center justify-between">
