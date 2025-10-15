@@ -161,10 +161,10 @@ export default function AdminUsersPage() {
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
-            <button className="px-4 py-2 rounded bg-blue-600 text-white" onClick={load}>
+            <button className="px-4 py-2 rounded bg-indigo-600 text-white" onClick={load}>
               再読込
             </button>
-            <button className="px-4 py-2 rounded bg-gray-700 text-white" onClick={() => setDebugOpen(true)}>
+            <button className="px-4 py-2 rounded bg-indigo-600 text-white/90" onClick={() => setDebugOpen(true)}>
               デバッグ表示
             </button>
           </div>
@@ -179,23 +179,27 @@ export default function AdminUsersPage() {
                   <th className="px-3 py-2 text-left">UserId</th>
                   <th className="px-3 py-2 text-left">Username</th>
                   <th className="px-3 py-2">Plan</th>
-                  <th className="px-3 py-2">当日使用 / 上限</th>
+                  <th className="px-3 py-2 text-center">
+                    <div>当日使用</div>
+                    <div>/ 上限</div>
+                  </th>
                   <th className="px-3 py-2">Max Threads</th>
                   <th className="px-3 py-2">管理停止</th>
                   <th className="px-3 py-2">自動投稿（UserSettings）</th>
                   <th className="px-3 py-2">更新</th>
+                  <th className="px-3 py-2">作成日</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={7} className="px-3 py-6 text-center text-gray-500">
+                    <td colSpan={10} className="px-3 py-6 text-center text-gray-500">
                       読み込み中…
                     </td>
                   </tr>
                 ) : filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-3 py-6 text-center text-gray-500">
+                    <td colSpan={10} className="px-3 py-6 text-center text-gray-500">
                       該当するユーザーがいません
                     </td>
                   </tr>
@@ -204,7 +208,7 @@ export default function AdminUsersPage() {
                     <tr key={r.userId} className="border-t">
                       <td className="px-3 py-2">
                         {/* [ADD] Emailクリックで編集モーダル */}
-                        <button className="text-blue-700 hover:underline" onClick={() => openEdit(r)}>
+                        <button className="text-indigo-600 font-medium hover:underline" onClick={() => openEdit(r)}>
                           {r.email}
                         </button>
                       </td>
