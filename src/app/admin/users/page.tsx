@@ -19,6 +19,7 @@ type AdminUserRow = {
   autoPostAdminStop: boolean;
   autoPost: boolean;
   updatedAt: number;
+  createdAt?: number;
 };
 
 export default function AdminUsersPage() {
