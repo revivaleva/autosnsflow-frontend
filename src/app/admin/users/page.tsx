@@ -151,7 +151,7 @@ export default function AdminUsersPage() {
   return (
     <AdminGuard redirectTo={DASHBOARD_PATH}>
       <AppLayout>
-        <div className="p-6 max-w-6xl mx-auto">
+        <div className="p-6 max-w-7xl mx-auto">
           <h1 className="text-2xl font-bold mb-4">管理者用：ユーザー一覧</h1>
 
           <div className="flex gap-3 mb-3">
@@ -174,16 +174,16 @@ export default function AdminUsersPage() {
           <div className="overflow-x-auto bg-white dark:bg-gray-900 border rounded">
             <table className="min-w-full text-sm">
               <colgroup>
-                <col style={{ width: '26%' }} />
-                <col style={{ width: '20%' }} />
+                <col style={{ width: '30%' }} />
+                <col style={{ width: '24%' }} />
                 <col style={{ width: '12%' }} />
-                <col style={{ width: '8%' }} />
-                <col style={{ width: '8%' }} />
-                <col style={{ width: '8%' }} />
+                <col style={{ width: '6%' }} />
+                <col style={{ width: '10%' }} />
                 <col style={{ width: '6%' }} />
                 <col style={{ width: '6%' }} />
-                <col style={{ width: '6%' }} />
-                <col style={{ width: '6%' }} />
+                <col style={{ width: '3%' }} />
+                <col style={{ width: '2%' }} />
+                <col style={{ width: '1%' }} />
               </colgroup>
               <thead className="bg-gray-100 dark:bg-gray-800">
                 <tr>
