@@ -164,7 +164,7 @@ export default function AdminUsersPage() {
             <button className="px-4 py-2 rounded bg-indigo-600 text-white nowrap-button w-24" onClick={load}>
               再読込
             </button>
-            <button className="px-4 py-2 rounded bg-indigo-600 text-white/90 nowrap-button w-24" onClick={() => setDebugOpen(true)}>
+            <button className="px-4 py-2 rounded bg-indigo-600 text-white/90 nowrap-button w-28" onClick={() => setDebugOpen(true)}>
               デバッグ表示
             </button>
           </div>
@@ -226,7 +226,8 @@ export default function AdminUsersPage() {
                       </td>
                       <td className="px-3 py-2 text-center">{r.planType}</td>
                       <td className="px-3 py-2 text-center">
-                        {r.apiUsedCount ?? 0} / {r.apiDailyLimit}
+                        <div>{r.apiUsedCount ?? 0}</div>
+                        <div>/ {r.apiDailyLimit}</div>
                       </td>
                       <td className="px-3 py-2 text-center">{r.maxThreadsAccounts ?? 0}</td>
                       <td className="px-3 py-2 text-center">{r.autoPostAdminStop ? "停止" : "—"}</td>
@@ -244,12 +245,19 @@ export default function AdminUsersPage() {
               </tbody>
             </table>
             <style jsx>{`
-              table th, table td {
+              /* clamp long content only in table body cells */
+              table td {
                 display: -webkit-box;
                 -webkit-line-clamp: 2;
                 -webkit-box-orient: vertical;
                 overflow: hidden;
                 white-space: normal;
+              }
+              /* keep header cells normal */
+              table th {
+                white-space: normal;
+                line-height: 1.2;
+                vertical-align: middle;
               }
               .nowrap-button {
                 white-space: nowrap;
