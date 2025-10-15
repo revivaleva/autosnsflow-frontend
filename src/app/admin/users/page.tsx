@@ -161,10 +161,10 @@ export default function AdminUsersPage() {
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
-            <button className="px-4 py-2 rounded bg-indigo-600 text-white nowrap-button" onClick={load}>
+            <button className="px-4 py-2 rounded bg-indigo-600 text-white nowrap-button w-24" onClick={load}>
               再読込
             </button>
-            <button className="px-4 py-2 rounded bg-indigo-600 text-white/90 nowrap-button" onClick={() => setDebugOpen(true)}>
+            <button className="px-4 py-2 rounded bg-indigo-600 text-white/90 nowrap-button w-24" onClick={() => setDebugOpen(true)}>
               デバッグ表示
             </button>
           </div>
@@ -208,12 +208,22 @@ export default function AdminUsersPage() {
                     <tr key={r.userId} className="border-t">
                       <td className="px-3 py-2">
                         {/* [ADD] Emailクリックで編集モーダル */}
-                        <button className="text-indigo-600 font-medium hover:underline" onClick={() => openEdit(r)}>
-                          {r.email}
-                        </button>
+                        <div style={{display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden'}}>
+                          <button className="text-indigo-600 font-medium hover:underline nowrap-button" onClick={() => openEdit(r)}>
+                            {r.email}
+                          </button>
+                        </div>
                       </td>
-                      <td className="px-3 py-2">{r.userId}</td>
-                      <td className="px-3 py-2">{r.username || ""}</td>
+                      <td className="px-3 py-2">
+                        <div style={{display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden'}}>
+                          {r.userId}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2">
+                        <div style={{display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden'}}>
+                          {r.username || ""}
+                        </div>
+                      </td>
                       <td className="px-3 py-2 text-center">{r.planType}</td>
                       <td className="px-3 py-2 text-center">
                         {r.apiUsedCount ?? 0} / {r.apiDailyLimit}
