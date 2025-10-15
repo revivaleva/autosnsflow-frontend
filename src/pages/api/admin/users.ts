@@ -108,14 +108,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         // Try to read today's per-provider usage counter (if present) and prefer it for displayed "当日使用"
         let todayCount = Number(item.apiUsedCount?.N || "0");
         try {
-          const usageKey = { PK: { S: `USER#${normalizedSub}` }, SK: { S: `OPENAI#${todayKeyJst()}` } };
-          // 日別カウントは UsageCounters テーブルに保存されているため優先参照する
-          const usageGot = await ddb.send(new GetItemCommand({ TableName: TBL_USAGE, Key: usageKey }));
-          const uitem: any = usageGot.Item || {};
-          // attribute name may be 'count' or 'apiUsedCount' depending on implementation
+          // Usage SK may be OPENAI#YYYYMMDD (no hyphen) or OPENAI#YYYY-MM-DD (with hyphen) depending on writer
+          const ymdNoHyphen = todayKeyJst().replace(/-/g, "");
+          const skCandidates = [`OPENAI#${ymdNoHyphen}`, `OPENAI#${todayKeyJst()}`];
+          let uitem: any = {};
+          for (const sk of skCandidates) {
+            try {
+              const usageGot = await ddb.send(new GetItemCommand({ TableName: TBL_USAGE, Key: { PK: { S: `USER#${normalizedSub}` }, SK: { S: sk } } }));
+              if (usageGot.Item) { uitem = usageGot.Item; break; }
+            } catch (_) {
+              // ignore individual attempt errors
+            }
+          }
           if (uitem.count?.N) todayCount = Number(uitem.count.N);
           else if (uitem.apiUsedCount?.N) todayCount = Number(uitem.apiUsedCount.N);
-          else if (uitem.count) todayCount = Number(uitem.count);
         } catch (e) {
           // ignore and fallback to UserSettings.apiUsedCount
         }
