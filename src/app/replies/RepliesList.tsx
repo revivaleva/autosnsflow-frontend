@@ -3,6 +3,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { getAuthReady, refreshAuthReady } from '@/lib/authReady';
 import dayjs from "dayjs";
 
 // ==========================
@@ -45,13 +46,24 @@ const statusOptions = [
 function EditModal({ open, onClose, onSave, value, replyData }: EditModalProps) {
   const [text, setText] = useState<string>(value);
   const [aiLoading, setAiLoading] = useState<boolean>(false);
+  const [authReady, setAuthReady] = useState<boolean>(getAuthReady());
 
   useEffect(() => { setText(value); }, [value]);
 
   // 自動生成（実際のAI API呼び出し）
   const handleAIGenerate = async () => {
     if (!replyData) return;
-    
+
+    // ensure auth ready
+    if (!authReady) {
+      const ok = await refreshAuthReady();
+      setAuthReady(ok);
+      if (!ok) {
+        alert('認証情報が確認できません。しばらくしてから再試行してください。');
+        return;
+      }
+    }
+
     setAiLoading(true);
     try {
       const response = await fetch("/api/ai-gateway", {
@@ -67,15 +79,15 @@ function EditModal({ open, onClose, onSave, value, replyData }: EditModalProps) 
           },
         }),
       });
-      
+
       const data = await response.json();
-      
+
       if (!response.ok) {
         throw new Error(data.error || `HTTP ${response.status}`);
       }
-      
+
       setText(data.text || "（生成に失敗しました）");
-      
+
     } catch (error: any) {
       console.error("AI generation error:", error);
       alert(`AI生成に失敗しました: ${error.message}`);
