@@ -7,6 +7,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 // [admin-flag] 追加
 import { getAdminFlag, refreshAdminFlag, clearAdminFlag } from "@/lib/adminFlag";
+import { getAuthReady, refreshAuthReady } from "@/lib/authReady";
 
 const menu = [
   { label: "ダッシュボード", href: "/dashboard" },
@@ -28,15 +29,15 @@ export default function AppLayout({ children }) {
   const [authDebug, setAuthDebug] = useState(null);
 
   useEffect(() => {
-    // 1) まずはローカルのフラグで即座にメニューを出す（初期描画が速い）
-    setIsAdmin(getAdminFlag());
-
-    // 2) 画面アクセス時にサーバで再検証 → 乖離あれば更新
+    // 初期は非管理者非表示（ちらつき防止）。サーバ再検証後に表示を切り替える
+    setIsAdmin(false);
+    // 画面アクセス時にサーバで再検証 → 権限確認が取れたらメニューを表示
     (async () => {
       const latest = await refreshAdminFlag();
       setIsAdmin(latest);
 
       try {
+        const ready = await refreshAuthReady();
         const res = await fetch('/api/auth/me', { credentials: 'include' });
         const data = await res.json().catch(() => ({}));
         setUserIdDisplay(data?.sub || null);
@@ -48,7 +49,6 @@ export default function AppLayout({ children }) {
 
       setAuthDebug({ source: "/api/auth/me", pathname, isAdmin: latest });
       if (open) setAuthDebugOpen(true);
-      // debug log removed from client. Use ALLOW_DEBUG_EXEC_LOGS guarded logs on server if necessary.
     })();
 
     // 3) 他タブ更新に追従（storageイベント）

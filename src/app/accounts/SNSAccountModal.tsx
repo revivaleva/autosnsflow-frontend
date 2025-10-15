@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { getAuthReady, refreshAuthReady } from '@/lib/authReady';
 import LoadingOverlay from '@/components/LoadingOverlay';
 import AIGeneratedPersonaModal from "./AIGeneratedPersonaModal";
 import AccountCopyModal from "./AccountCopyModal";
@@ -104,6 +105,7 @@ export default function SNSAccountModal({
   const [originalHasClientSecret, setOriginalHasClientSecret] = useState(false);
   const [characterImage, setCharacterImage] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
+  const [authReady, setAuthReady] = useState<boolean>(getAuthReady());
   const [groupId, setGroupId] = useState("");
   const [groups, setGroups] = useState<AutoPostGroupType[]>([]);
   const [persona, setPersona] = useState<PersonaType>(emptyPersona);
@@ -136,6 +138,11 @@ export default function SNSAccountModal({
     fetch(`/api/auto-post-groups`, { credentials: "include" })
       .then((res) => res.json())
       .then((data) => setGroups(data.groups ?? []));
+    // refresh auth readiness when modal opens
+    (async () => {
+      const ok = await refreshAuthReady();
+      setAuthReady(ok);
+    })();
   }, [open]);
 
   useEffect(() => {
@@ -235,6 +242,16 @@ export default function SNSAccountModal({
 
   const handleAIGenerate = async () => {
     setAiLoading(true);
+    // ensure auth ready to avoid token race
+    if (!authReady) {
+      const ok = await refreshAuthReady();
+      setAuthReady(ok);
+      if (!ok) {
+        setAiLoading(false);
+        setError("認証情報が確認できません。しばらく待ってから再試行してください。");
+        return;
+      }
+    }
     setError("");
     setAiPersonaDetail("");
     setAiPersonaSimple("");
@@ -734,9 +751,10 @@ export default function SNSAccountModal({
             type="button"
             className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 disabled:bg-gray-400 whitespace-nowrap"
             onClick={handleAIGenerate}
-            disabled={aiLoading}
+            disabled={aiLoading || !authReady}
+            title={!authReady ? '認証確認中のため操作できません' : undefined}
           >
-            {aiLoading ? "生成中..." : "AI生成"}
+            {aiLoading ? "生成中..." : !authReady ? "認証確認中..." : "AI生成"}
           </button>
         </div>
 
