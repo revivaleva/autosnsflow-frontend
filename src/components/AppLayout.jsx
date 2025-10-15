@@ -21,6 +21,7 @@ export default function AppLayout({ children }) {
   const pathname = usePathname();
   const router = useRouter();
   const [isAdmin, setIsAdmin] = useState(false);
+  const [userIdDisplay, setUserIdDisplay] = useState(null);
 
   // デバッグDLG（?debugAuth=1）— 既存があればそのまま
   const [authDebugOpen, setAuthDebugOpen] = useState(false);
@@ -34,6 +35,12 @@ export default function AppLayout({ children }) {
     (async () => {
       const latest = await refreshAdminFlag();
       setIsAdmin(latest);
+
+      try {
+        const res = await fetch('/api/auth/me', { credentials: 'include' });
+        const data = await res.json().catch(() => ({}));
+        setUserIdDisplay(data?.sub || null);
+      } catch {}
 
       const open =
         typeof window !== "undefined" &&
@@ -144,6 +151,25 @@ export default function AppLayout({ children }) {
         </ul>
 
         <div className="mt-auto pt-4 border-t border-white/10">
+          {userIdDisplay && (
+            <div className="mb-3 text-xs text-gray-300 break-all">
+              <div className="font-mono">ID: {userIdDisplay}</div>
+              <button
+                className="text-sm text-indigo-300 hover:underline"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(userIdDisplay);
+                    alert('userId copied');
+                  } catch {
+                    // ignore
+                  }
+                }}
+              >
+                クリックでコピー
+              </button>
+            </div>
+          )}
+
           <button
             onClick={handleLogout}
             className="w-full text-left px-3 py-2 rounded bg-white/10 hover:bg白/20"

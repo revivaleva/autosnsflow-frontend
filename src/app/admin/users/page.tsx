@@ -11,6 +11,8 @@ import AdminGuard from "@/components/AdminGuard"; // [ADD] 追加
 type AdminUserRow = {
   email: string;
   userId: string;
+  username?: string;
+  maxThreadsAccounts?: number;
   planType: string;
   apiDailyLimit: number;
   apiUsedCount: number;
@@ -28,6 +30,7 @@ export default function AdminUsersPage() {
   // [DEBUG] 生データ
   const [raw, setRaw] = useState<any>(null);
   const [debugOpen, setDebugOpen] = useState(false);
+  const [showDeferredItems, setShowDeferredItems] = useState(false);
 
   // [ADD] 非管理者はダッシュボードへリダイレクト
   const router = useRouter();
@@ -41,10 +44,14 @@ export default function AdminUsersPage() {
     apiDailyLimit: number;
     autoPostAdminStop: boolean;
     autoPost: boolean;
+    username: string;
+    maxThreadsAccounts: number;
   }>({
     apiDailyLimit: 200,
     autoPostAdminStop: false,
     autoPost: false,
+    username: "",
+    maxThreadsAccounts: 0,
   });
 
   // [EDIT] 403(forbidden) を検知したらリダイレクトして終了
@@ -76,7 +83,10 @@ export default function AdminUsersPage() {
   };
 
   useEffect(() => {
+    // 初期はローディングだけ実行し、管理用項目は少し遅延させてちらつきを抑止
     load();
+    const t = setTimeout(() => setShowDeferredItems(true), 700);
+    return () => clearTimeout(t);
   }, []);
 
   const openEdit = (r: AdminUserRow) => {
@@ -85,6 +95,8 @@ export default function AdminUsersPage() {
       apiDailyLimit: r.apiDailyLimit ?? 200,
       autoPostAdminStop: !!r.autoPostAdminStop,
       autoPost: !!r.autoPost,
+      username: r.username ?? "",
+      maxThreadsAccounts: r.maxThreadsAccounts ?? 0,
     });
     setEditOpen(true);
   };
@@ -105,6 +117,8 @@ export default function AdminUsersPage() {
         apiDailyLimit: Number(form.apiDailyLimit),
         autoPostAdminStop: Boolean(form.autoPostAdminStop),
         autoPost: Boolean(form.autoPost),
+        username: String(form.username || ""),
+        maxThreadsAccounts: Number(form.maxThreadsAccounts || 0),
       };
       const res = await fetch("/api/admin/users", {
         method: "PATCH",
@@ -127,26 +141,30 @@ export default function AdminUsersPage() {
   const filtered = rows.filter((r) => {
     const key = (q || "").toLowerCase();
     if (!key) return true;
-    return r.email?.toLowerCase().includes(key) || r.userId?.toLowerCase().includes(key);
+    return (
+      r.email?.toLowerCase().includes(key) ||
+      r.userId?.toLowerCase().includes(key) ||
+      (r.username || "").toLowerCase().includes(key)
+    );
   });
 
   return (
     <AdminGuard redirectTo={DASHBOARD_PATH}>
       <AppLayout>
-        <div className="p-6 max-w-6xl mx-auto">
+        <div className="p-6 max-w-7xl mx-auto">
           <h1 className="text-2xl font-bold mb-4">管理者用：ユーザー一覧</h1>
 
           <div className="flex gap-3 mb-3">
             <input
               className="border rounded px-3 py-2 w-full"
-              placeholder="email / userId で検索"
+              placeholder="email / userId / username で検索"
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
-            <button className="bg-gray-800 text-white px-4 py-2 rounded" onClick={load}>
+            <button className="px-4 py-2 rounded bg-indigo-600 text-white nowrap-button w-24" onClick={load}>
               再読込
             </button>
-            <button className="bg-gray-600 text-white px-4 py-2 rounded" onClick={() => setDebugOpen(true)}>
+            <button className="px-4 py-2 rounded bg-indigo-600 text-white/90 nowrap-button w-28" onClick={() => setDebugOpen(true)}>
               デバッグ表示
             </button>
           </div>
@@ -155,27 +173,45 @@ export default function AdminUsersPage() {
 
           <div className="overflow-x-auto bg-white dark:bg-gray-900 border rounded">
             <table className="min-w-full text-sm">
+              <colgroup>
+                <col style={{ width: '30%' }} />
+                <col style={{ width: '24%' }} />
+                <col style={{ width: '12%' }} />
+                <col style={{ width: '6%' }} />
+                <col style={{ width: '10%' }} />
+                <col style={{ width: '6%' }} />
+                <col style={{ width: '6%' }} />
+                <col style={{ width: '3%' }} />
+                <col style={{ width: '2%' }} />
+                <col style={{ width: '1%' }} />
+              </colgroup>
               <thead className="bg-gray-100 dark:bg-gray-800">
                 <tr>
                   <th className="px-3 py-2 text-left">Email</th>
                   <th className="px-3 py-2 text-left">UserId</th>
+                  <th className="px-3 py-2 text-left">Username</th>
                   <th className="px-3 py-2">Plan</th>
-                  <th className="px-3 py-2">当日使用 / 上限</th>
+                  <th className="px-3 py-2 text-center">
+                    <div>当日使用</div>
+                    <div>/ 上限</div>
+                  </th>
+                  <th className="px-3 py-2">Max Threads</th>
                   <th className="px-3 py-2">管理停止</th>
                   <th className="px-3 py-2">自動投稿（UserSettings）</th>
                   <th className="px-3 py-2">更新</th>
+                  <th className="px-3 py-2">作成日</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={7} className="px-3 py-6 text-center text-gray-500">
+                    <td colSpan={10} className="px-3 py-6 text-center text-gray-500">
                       読み込み中…
                     </td>
                   </tr>
                 ) : filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-3 py-6 text-center text-gray-500">
+                    <td colSpan={10} className="px-3 py-6 text-center text-gray-500">
                       該当するユーザーがいません
                     </td>
                   </tr>
@@ -184,25 +220,51 @@ export default function AdminUsersPage() {
                     <tr key={r.userId} className="border-t">
                       <td className="px-3 py-2">
                         {/* [ADD] Emailクリックで編集モーダル */}
-                        <button className="text-blue-700 hover:underline" onClick={() => openEdit(r)}>
-                          {r.email}
-                        </button>
+                        <div className="cell-content">
+                          <button className="text-indigo-600 font-medium hover:underline nowrap-button" onClick={() => openEdit(r)}>
+                            {r.email}
+                          </button>
+                        </div>
                       </td>
-                      <td className="px-3 py-2">{r.userId}</td>
+                      <td className="px-3 py-2">
+                        <div className="cell-content">{r.userId}</div>
+                      </td>
+                      <td className="px-3 py-2">
+                        <div className="cell-content">{r.username || ""}</div>
+                      </td>
                       <td className="px-3 py-2 text-center">{r.planType}</td>
                       <td className="px-3 py-2 text-center">
-                        {r.apiUsedCount} / {r.apiDailyLimit}
+                        <div>{r.apiUsedCount ?? 0}</div>
+                        <div>/ {r.apiDailyLimit}</div>
                       </td>
+                      <td className="px-3 py-2 text-center">{r.maxThreadsAccounts ?? 0}</td>
                       <td className="px-3 py-2 text-center">{r.autoPostAdminStop ? "停止" : "—"}</td>
                       <td className="px-3 py-2 text-center">{r.autoPost ? "有効" : "無効"}</td>
                       <td className="px-3 py-2 text-center">
                         {r.updatedAt ? new Date(r.updatedAt * 1000).toLocaleString() : "—"}
+                      </td>
+                      {/* 登録日（Cognitoの作成日時） */}
+                      <td className="px-3 py-2 text-center">
+                        {r.createdAt ? new Date(r.createdAt * 1000).toLocaleDateString() : "—"}
                       </td>
                     </tr>
                   ))
                 )}
               </tbody>
             </table>
+            <style jsx>{`
+              /* clamp long content only inside .cell-content wrappers to avoid breaking table layout */
+              table td { white-space: normal; vertical-align: top; }
+              table th { white-space: normal; line-height: 1.2; vertical-align: middle; }
+              .nowrap-button { white-space: nowrap; }
+              .cell-content {
+                display: -webkit-box;
+                -webkit-line-clamp: 2;
+                -webkit-box-orient: vertical;
+                overflow: hidden;
+                white-space: normal;
+              }
+            `}</style>
           </div>
 
           {/* [DEBUG] 生データのDLG（オーバーレイ順序を [MOD]：先に背景→後に本体） */}
@@ -246,6 +308,29 @@ export default function AdminUsersPage() {
                     <div className="text-sm">
                       <div className="text-gray-600">Email</div>
                       <div className="font-mono break-all">{target.email}</div>
+                    </div>
+
+                    <div>
+                      <label className="block font-medium mb-1">Username（管理表示名）</label>
+                      <input
+                        type="text"
+                        className="w-full border rounded px-3 py-2"
+                        value={form.username}
+                        onChange={(e) => setForm((v) => ({ ...v, username: e.target.value }))}
+                      />
+                      <p className="text-xs text-gray-500 mt-1">管理画面内でのみ表示されます。Cognito には同期しません。</p>
+                    </div>
+
+                    <div>
+                      <label className="block font-medium mb-1">Max Threads Accounts</label>
+                      <input
+                        type="number"
+                        min={0}
+                        className="w-full border rounded px-3 py-2"
+                        value={form.maxThreadsAccounts}
+                        onChange={(e) => setForm((v) => ({ ...v, maxThreadsAccounts: Number(e.target.value) }))}
+                      />
+                      <p className="text-xs text-gray-500 mt-1">ユーザーが登録できる Threads アカウント数（デフォルト 0）。</p>
                     </div>
 
                     <div className="flex items-center justify-between">

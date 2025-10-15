@@ -51,12 +51,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           Key: { PK: pk, SK: sk },
         }));
         if (!got.Item) {
+          // 初期レコードを作成
           await ddb.send(new PutItemCommand({
             TableName: TBL_SETTINGS,
             Item: {
-              PK: pk, SK: sk,
+              PK: pk,
+              SK: sk,
               planType:        { S: "free" },
               apiDailyLimit:   { N: "200" },
+              username:        { S: "" },
+              maxThreadsAccounts: { N: "0" },
               apiUsageDate:    { S: todayKeyJst() },
               apiUsedCount:    { N: "0" },
               autoPost:        { BOOL: false },
@@ -65,9 +69,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             },
             ConditionExpression: "attribute_not_exists(PK)",
           }));
-        }
 
-        const item = (got.Item || {}) as any;
+          // reflect defaults locally so we don't need to re-read
+          var item: any = {
+            planType: { S: "free" },
+            apiDailyLimit: { N: "200" },
+            username: { S: "" },
+            maxThreadsAccounts: { N: "0" },
+            apiUsageDate: { S: todayKeyJst() },
+            apiUsedCount: { N: "0" },
+            autoPost: { BOOL: false },
+            autoPostAdminStop: { BOOL: false },
+            updatedAt: { N: `${Math.floor(Date.now()/1000)}` },
+          };
+        } else {
+          var item: any = got.Item as any;
+        }
         const savedDate = item.apiUsageDate?.S || todayKeyJst();
         if (savedDate !== todayKeyJst()) {
           await ddb.send(new UpdateItemCommand({
@@ -87,12 +104,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         results.push({
           userId: sub,
           email,
+          username:          item.username?.S || "",
           planType:          item.planType?.S || "free",
           apiDailyLimit:     Number(item.apiDailyLimit?.N || "200"),
           apiUsedCount:      Number(item.apiUsedCount?.N || "0"),
+          maxThreadsAccounts: Number(item.maxThreadsAccounts?.N || "0"),
           autoPostAdminStop: Boolean(item.autoPostAdminStop?.BOOL || false),
           autoPost:          Boolean(item.autoPost?.BOOL || false),
           updatedAt:         Number(item.updatedAt?.N || 0),
+          // Cognito の作成日時（秒）
+          createdAt:         u.UserCreateDate ? Math.floor(new Date(u.UserCreateDate as any).getTime() / 1000) : 0,
         });
       }
       results.sort((a, b) => (a.email || "").localeCompare(b.email || "", "ja"));
@@ -104,12 +125,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const user = await verifyUserFromRequest(req);
       assertAdmin(user);
 
-      const { userId, apiDailyLimit, autoPostAdminStop, autoPost } = (req.body || {}) as {
-        userId?: string;
-        apiDailyLimit?: number | string;
-        autoPostAdminStop?: boolean;
-        autoPost?: boolean;
-      };
+    const { userId, apiDailyLimit, autoPostAdminStop, autoPost, username, maxThreadsAccounts } = (req.body || {}) as {
+      userId?: string;
+      apiDailyLimit?: number | string;
+      autoPostAdminStop?: boolean;
+      autoPost?: boolean;
+      username?: string;
+      maxThreadsAccounts?: number | string;
+    };
 
       if (!userId) return res.status(400).json({ error: "userId is required" });
 
@@ -118,18 +141,35 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return res.status(400).json({ error: "apiDailyLimit must be a number >= 0" });
       }
 
+      const maxThreadsNum = typeof maxThreadsAccounts !== 'undefined' ? Number(maxThreadsAccounts) : undefined;
+      if (typeof maxThreadsNum !== 'undefined' && (!Number.isFinite(maxThreadsNum) || maxThreadsNum < 0)) {
+        return res.status(400).json({ error: "maxThreadsAccounts must be a number >= 0" });
+      }
+
       const key = { PK: { S: `USER#${userId}` }, SK: { S: "SETTINGS" } };
+      // Build update expression dynamically to include optional fields (username, maxThreadsAccounts)
+      const sets: string[] = ["apiDailyLimit = :lim", "autoPostAdminStop = :stp", "autoPost = :aut", "updatedAt = :u"];
+      const values: Record<string, any> = {
+        ":lim": { N: String(Math.floor(limitNum)) },
+        ":stp": { BOOL: !!autoPostAdminStop },
+        ":aut": { BOOL: !!autoPost },
+        ":u":   { N: String(Math.floor(Date.now()/1000)) },
+      };
+
+      if (typeof username === 'string') {
+        sets.push("username = :un");
+        values[":un"] = { S: username };
+      }
+      if (typeof maxThreadsNum !== 'undefined') {
+        sets.push("maxThreadsAccounts = :mta");
+        values[":mta"] = { N: String(Math.floor(maxThreadsNum)) };
+      }
+
       await ddb.send(new UpdateItemCommand({
         TableName: TBL_SETTINGS,
         Key: key,
-        // [ADD] 変更点の保存（上限・管理停止・自動投稿・更新時刻）
-        UpdateExpression: "SET apiDailyLimit = :lim, autoPostAdminStop = :stp, autoPost = :aut, updatedAt = :u",
-        ExpressionAttributeValues: {
-          ":lim": { N: String(Math.floor(limitNum)) },
-          ":stp": { BOOL: !!autoPostAdminStop },
-          ":aut": { BOOL: !!autoPost },
-          ":u":   { N: String(Math.floor(Date.now()/1000)) },
-        },
+        UpdateExpression: `SET ${sets.join(', ')}`,
+        ExpressionAttributeValues: values,
         ReturnValues: "NONE",
       }));
 

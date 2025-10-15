@@ -22,7 +22,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (!sub) { res.status(401).json({ message: 'Unauthorized' }); return; }
 
     // 必要最低限の返却（adminFlag.ts が期待する形に合わせる）
-    res.status(200).json({ ok: true, sub });
+    // Cognito の token に含まれる cognito:groups を確認して isAdmin を返す
+    const groups = payload?.['cognito:groups'] || payload?.['cognito.groups'] || [];
+    const groupsArr = Array.isArray(groups) ? groups : String(groups).split(',');
+    const isAdmin = groupsArr.includes(process.env.NEXT_PUBLIC_ADMIN_GROUP || process.env.ADMIN_GROUP || 'Admins');
+    res.status(200).json({ ok: true, sub, isAdmin });
   } catch (e) {
     res.status(401).json({ message: 'Unauthorized' }); return;
   }

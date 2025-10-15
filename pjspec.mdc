@@ -48,3 +48,39 @@
 
 
 (作成日: development)
+
+## 管理画面（Admin Users）仕様
+
+### 目的
+- サービス管理者がユーザー単位で利用制限や表示名を管理できるようにする。
+- 不正利用や運用上の設定変更を容易に行える管理UIを提供する。
+
+### 主な機能
+1. **認可**: 既存の Cognito の管理者グループ（`env.ADMIN_GROUP`, デフォルト `Admins`）のメンバーのみアクセス可能。
+2. **ユーザー一覧表示**: 各ユーザーの以下情報を一覧で表示する。
+   - email
+   - userId (Cognito sub)
+   - username (管理用表示名、管理画面のみで保存・編集)
+   - planType
+   - apiUsedCount / apiDailyLimit
+   - maxThreadsAccounts（ユーザーが登録できる Threads アカウント数、デフォルト 0）
+   - autoPost, autoPostAdminStop
+   - updatedAt
+3. **編集モーダル**: 各ユーザーの `username`、`apiDailyLimit`、`maxThreadsAccounts`、`autoPost`、`autoPostAdminStop` を編集し保存できる。
+4. **コピー可能な userId 表示**: ログイン後のメニューバー下に userId を表示し、クリックでクリップボードへコピーできる。
+
+### データ設計（UserSettings テーブル）
+- 既存の `UserSettings` レコードに以下フィールドを追加:
+  - `username`: S (デフォルト: "")
+  - `maxThreadsAccounts`: N (デフォルト: "0")
+
+### API 仕様
+- `GET /api/admin/users` : Cognito からユーザー一覧を取得し、DynamoDB の UserSettings を結合して返却。
+- `PATCH /api/admin/users` : 管理者権限で `username`, `apiDailyLimit`, `maxThreadsAccounts`, `autoPost`, `autoPostAdminStop` を更新。
+
+### セキュリティ/運用
+- 管理APIは必ず `verifyUserFromRequest` を経由して `assertAdmin` を実行すること。
+- 管理操作の監査ログは現時点では不要（将来の拡張で DynamoDB に記録可能）。
+
+### リスクと対応
+- DynamoDB の既存レコードにフィールドがない場合は GET 時に初期化（デフォルト値挿入）して互換性を保つ。
