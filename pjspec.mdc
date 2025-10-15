@@ -38,6 +38,10 @@
 ## TODO（実装タスク）
 - T001 - T009 を参照（`pjtodo.mdc` に記載）
 
+- PRUNE: daily-prune の全表 Scan→削除への変更（dry-run フラグ付き、DeletionQueue 中アカウントを除外）
+- PRUNE: UsageCounters を updatedAt で全表削除（BatchWriteItem を使用）
+- PRUNE: Discord 通知を各テーブル毎の削除件数/全件数表示へ変更（実行時間含む）
+
 ## 関連ファイル
 - `lambda/scheduled-autosnsflow/src/handler.ts`
 - `src/app/scheduled-posts/ScheduledPostsTable.tsx`

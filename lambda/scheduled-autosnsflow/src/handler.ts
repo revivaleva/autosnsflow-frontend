@@ -17,6 +17,7 @@ import {
   UpdateItemCommand,
   ScanCommand,
   DescribeTableCommand,
+  BatchWriteItemCommand,
   DeleteItemCommand,
   TransactWriteItemsCommand,
 } from "@aws-sdk/client-dynamodb";
@@ -90,6 +91,17 @@ function normalizeEpochSec(raw: any): number {
   // Heuristic: if value looks like milliseconds (> 1e12), convert to seconds
   if (v > 1e12) return Math.floor(v / 1000);
   return Math.floor(v);
+}
+
+// Helper: determine execution logs prune days (priority: EXECUTION_LOGS_PRUNE_DELAY_DAYS -> RETENTION_DAYS_LOGS+1 -> RETENTION_DAYS+1)
+async function resolveExecutionPruneDays(): Promise<number> {
+  try { await config.loadConfig(); } catch(_) {}
+  const execVal = Number(config.getConfigValue('EXECUTION_LOGS_PRUNE_DELAY_DAYS') || process.env.EXECUTION_LOGS_PRUNE_DELAY_DAYS || 0) || 0;
+  if (execVal > 0) return execVal;
+  const rLogs = Number(config.getConfigValue('RETENTION_DAYS_LOGS') || process.env.RETENTION_DAYS_LOGS || '0') || 0;
+  if (rLogs > 0) return rLogs + 1;
+  const base = Number(config.getConfigValue('RETENTION_DAYS') || process.env.RETENTION_DAYS || '7') || 7;
+  return base + 1;
 }
 
 const isValidUrl = (s: any) => {
@@ -1318,7 +1330,7 @@ export const handler = async (event: any = {}) => {
         // Also compute total ExecutionLogs table size for visibility
         let preFilterLogTotal = 0;
         try { preFilterLogTotal = await countAllExecutionLogs(); } catch (e) { preFilterLogTotal = 0; }
-        await postDiscordMaster(`**[PRUNE] pre-filter total items across table: ${preFilterTotal}, ExecutionLogs total: ${preFilterLogTotal}**`);
+        // pre-filter Discord summary suppressed per operator request
       } catch (e) {
         console.warn('[warn] countAllScheduledPosts failed:', e);
       }
@@ -1329,6 +1341,8 @@ export const handler = async (event: any = {}) => {
     // ExecutionLogs counters
     let totalLogCandidates = 0;
     let totalLogDeleted = 0;
+    // measure scan+delete phase
+    const prunePhaseStart = Date.now();
     for (const uid of userIds) {
       try {
         // If deletePosted mode is requested, only allow single-user operations for safety
@@ -1388,12 +1402,172 @@ export const handler = async (event: any = {}) => {
       }
     }
 
+    const prunePhaseEnd = Date.now();
+    const pruneMs = prunePhaseEnd - prunePhaseStart;
     if (dryRun) {
       const finishedAt = Date.now();
       // build totals object expected by formatMasterMessage
-      const t = { candidates: totalCandidates, scanned: totalScanned, deleted: 0, preFilterTotal, logCandidates: totalLogCandidates } as any;
+      const t: any = { candidates: totalCandidates, scanned: totalScanned, deleted: 0, preFilterTotal, logCandidates: totalLogCandidates, pruneMs };
+      // Provide fallback fields so formatMasterMessage can render detailed lines
+      t.scheduledNormalDeleted = 0;
+      t.scheduledNormalTotal = 0;
+      t.scheduledQuoteDeleted = 0;
+      t.scheduledQuoteTotal = 0;
+      t.repliesDeleted = 0;
+      t.repliesTotal = 0;
+      t.executionLogsDeleted = 0;
+      t.executionLogsTotal = Number(await (async function(){ try { return await countAllExecutionLogs(); } catch(_) { return 0; } })());
+      t.usageCountersDeleted = 0;
+      t.usageCountersTotal = 0;
+
+      // Attempt to compute actual totals for dry-run reporting (may be expensive)
+      try {
+        await config.loadConfig();
+        const scanPage = Number(config.getConfigValue('PRUNE_SCAN_PAGE_SIZE') || process.env.PRUNE_SCAN_PAGE_SIZE || '1000') || 1000;
+
+        // ScheduledPosts: count by type
+        let last: any = undefined;
+        let normalCnt = 0;
+        let quoteCnt = 0;
+        do {
+          // 'type' is a reserved word in DynamoDB projection; use ExpressionAttributeNames
+          const s = await ddb.send(new ScanCommand({ TableName: TBL_SCHEDULED, ProjectionExpression: '#tp', ExpressionAttributeNames: { '#tp': 'type' }, ExclusiveStartKey: last, Limit: scanPage }));
+          const items = (s.Items || []);
+          for (const it of items) {
+            try {
+              const typ = (getS(it.type) || getS(it['#tp']) || '').toLowerCase();
+              if (typ === 'quote') quoteCnt++; else normalCnt++;
+            } catch (e) {
+              try { console.warn('[warn] inspect scheduled item type failed', String(e)); } catch(_) {}
+            }
+          }
+          last = (s as any).LastEvaluatedKey;
+        } while (last);
+        t.scheduledNormalTotal = normalCnt;
+        t.scheduledQuoteTotal = quoteCnt;
+
+        // Replies total
+        last = undefined;
+        let repliesCnt = 0;
+        do {
+          const s = await ddb.send(new ScanCommand({ TableName: TBL_REPLIES, ProjectionExpression: 'PK', ExclusiveStartKey: last, Limit: scanPage }));
+          repliesCnt += (s.Count || 0);
+          last = (s as any).LastEvaluatedKey;
+        } while (last);
+        t.repliesTotal = repliesCnt;
+
+        // UsageCounters total
+        last = undefined;
+        let usageCnt = 0;
+        do {
+          const s = await ddb.send(new ScanCommand({ TableName: TBL_USAGE, ProjectionExpression: 'PK,SK,updatedAt', ExclusiveStartKey: last, Limit: scanPage }));
+          usageCnt += (s.Count || 0);
+          last = (s as any).LastEvaluatedKey;
+        } while (last);
+        t.usageCountersTotal = usageCnt;
+      } catch (e) {
+        try { console.warn('[warn] dry-run totals scan failed:', String(e)); } catch(_) {}
+      }
+
+      // Compute deletion candidates counts (items that would be deleted) for dry-run
+      try {
+        // scheduled posts candidates by postedAt/scheduledAt
+        await config.loadConfig();
+        const retentionDays = Number(config.getConfigValue('RETENTION_DAYS') || '7') || 7;
+        const execPruneDays = Number(config.getConfigValue('EXECUTION_LOGS_PRUNE_DELAY_DAYS') || String(retentionDays + 1)) || (retentionDays + 1);
+        const scheduledThreshold = Math.floor(Date.now() / 1000) - (retentionDays * 24 * 60 * 60);
+        const execThreshold = Math.floor(Date.now() / 1000) - (execPruneDays * 24 * 60 * 60);
+
+        let last: any = undefined;
+        let scheduledNormalCandidates = 0;
+        let scheduledQuoteCandidates = 0;
+        do {
+          const s = await ddb.send(new ScanCommand({ TableName: TBL_SCHEDULED, ProjectionExpression: 'scheduledAt,postedAt,#tp', ExpressionAttributeNames: { '#tp': 'type' }, ExclusiveStartKey: last, Limit: Number(config.getConfigValue('PRUNE_SCAN_PAGE_SIZE') || process.env.PRUNE_SCAN_PAGE_SIZE || '1000') }));
+          for (const it of (s.Items || [])) {
+            try {
+              const scheduledAt = normalizeEpochSec(getN(it.scheduledAt) || 0);
+              const postedAt = normalizeEpochSec(getN(it.postedAt) || 0);
+              const compareAt = postedAt > 0 ? postedAt : scheduledAt;
+              if (!compareAt) continue;
+              if (compareAt <= scheduledThreshold) {
+                const typ = (getS(it.type) || getS(it['#tp']) || '').toLowerCase();
+                if (typ === 'quote') scheduledQuoteCandidates++; else scheduledNormalCandidates++;
+              }
+            } catch (_) {}
+          }
+          last = (s as any).LastEvaluatedKey;
+        } while (last);
+
+        // ExecutionLogs candidates
+        last = undefined;
+        let execCandidates = 0;
+        do {
+          const s = await ddb.send(new ScanCommand({ TableName: TBL_LOGS, ProjectionExpression: 'createdAt', ExclusiveStartKey: last, Limit: Number(config.getConfigValue('PRUNE_SCAN_PAGE_SIZE') || process.env.PRUNE_SCAN_PAGE_SIZE || '1000') }));
+          for (const it of (s.Items || [])) {
+            try {
+              const createdAt = Number(it.createdAt?.N || 0);
+              if (createdAt && createdAt <= execThreshold) execCandidates++;
+            } catch (_) {}
+          }
+          last = (s as any).LastEvaluatedKey;
+        } while (last);
+
+        // Replies candidates
+        last = undefined;
+        let repliesCandidates = 0;
+        do {
+          const s = await ddb.send(new ScanCommand({ TableName: TBL_REPLIES, ProjectionExpression: 'createdAt', ExclusiveStartKey: last, Limit: Number(config.getConfigValue('PRUNE_SCAN_PAGE_SIZE') || process.env.PRUNE_SCAN_PAGE_SIZE || '1000') }));
+          for (const it of (s.Items || [])) {
+            try {
+              const createdAt = Number(it.createdAt?.N || 0);
+              if (createdAt && createdAt <= scheduledThreshold) repliesCandidates++;
+            } catch (_) {}
+          }
+          last = (s as any).LastEvaluatedKey;
+        } while (last);
+
+        // UsageCounters candidates (updatedAt)
+        last = undefined;
+        let usageCandidates = 0;
+        const usageThreshold = Math.floor(Date.now() / 1000) - (Number(config.getConfigValue('RETENTION_DAYS_LOGS') || '20') * 24 * 60 * 60);
+        do {
+          const s = await ddb.send(new ScanCommand({ TableName: TBL_USAGE, ProjectionExpression: 'updatedAt', ExclusiveStartKey: last, Limit: Number(config.getConfigValue('PRUNE_SCAN_PAGE_SIZE') || process.env.PRUNE_SCAN_PAGE_SIZE || '1000') }));
+          for (const it of (s.Items || [])) {
+            try {
+              const updatedAt = normalizeEpochSec(getN(it.updatedAt) || 0);
+              if (updatedAt && updatedAt <= usageThreshold) usageCandidates++;
+            } catch (_) {}
+          }
+          last = (s as any).LastEvaluatedKey;
+        } while (last);
+
+        t.scheduledNormalDeleted = scheduledNormalCandidates;
+        t.scheduledQuoteDeleted = scheduledQuoteCandidates;
+        t.repliesDeleted = repliesCandidates;
+        t.executionLogsDeleted = execCandidates;
+        t.usageCountersDeleted = usageCandidates;
+      } catch (e) {
+        try { console.warn('[warn] dry-run candidate count failed:', String(e)); } catch(_) {}
+      }
       await postDiscordMaster(formatMasterMessage({ job: "daily-prune", startedAt, finishedAt, userTotal: userIds.length, userSucceeded: 0, totals: t }));
-      return { statusCode: 200, body: JSON.stringify({ dryRun: true, preFilterTotal, candidates: totalCandidates, scanned: totalScanned, logCandidates: totalLogCandidates }) };
+      return { statusCode: 200, body: JSON.stringify({
+        dryRun: true,
+        preFilterTotal,
+        candidates: totalCandidates,
+        scanned: totalScanned,
+        logCandidates: totalLogCandidates,
+        pruneMs,
+        scheduledNormalDeleted: t.scheduledNormalDeleted,
+        scheduledQuoteDeleted: t.scheduledQuoteDeleted,
+        repliesDeleted: t.repliesDeleted,
+        executionLogsDeleted: t.executionLogsDeleted,
+        usageCountersDeleted: t.usageCountersDeleted,
+        scheduledNormalTotal: t.scheduledNormalTotal,
+        scheduledQuoteTotal: t.scheduledQuoteTotal,
+        repliesTotal: t.repliesTotal,
+        executionLogsTotal: t.executionLogsTotal,
+        usageCountersTotal: t.usageCountersTotal
+      }) };
     }
 
     // If no userId was specified, perform full-table prune
@@ -1458,7 +1632,8 @@ export const handler = async (event: any = {}) => {
         let orphanLogDeleted = 0;
         try { orphanLogDeleted = await pruneOrphanExecutionLogsAll(); } catch (_) { orphanLogDeleted = 0; }
         const finishedAt = Date.now();
-        const t = { candidates: totalCandidates, scanned: totalScanned, deleted: allDeleted, preFilterTotal, logDeleted: allLogDeleted, orphanLogDeleted } as any;
+    const pruneMsAll = finishedAt - prunePhaseStart;
+    const t = { candidates: totalCandidates, scanned: totalScanned, deleted: allDeleted, preFilterTotal, logDeleted: allLogDeleted, orphanLogDeleted, pruneMs: pruneMsAll } as any;
         await postDiscordMaster(formatMasterMessage({ job: "daily-prune", startedAt, finishedAt, userTotal: userIds.length, userSucceeded, totals: t }));
         return { statusCode: 200, body: JSON.stringify({ deleted: allDeleted, logDeleted: allLogDeleted, preFilterTotal }) };
       } catch (e) {
@@ -3111,9 +3286,11 @@ async function pruneOldScheduledPosts(userId: any) {
       for (const it of (q.Items || [])) {
         try {
           const scheduledAt = normalizeEpochSec(getN(it.scheduledAt) || 0);
-          // NOTE: per request, do not filter by status or isDeleted — delete purely by scheduledAt age
-          if (!scheduledAt) continue;
-          if (scheduledAt <= thresholdSec) {
+          const postedAt = normalizeEpochSec(getN(it.postedAt) || 0);
+          // Defer to postedAt when present (posted items age by postedAt), otherwise use scheduledAt
+          const compareAt = postedAt > 0 ? postedAt : scheduledAt;
+          if (!compareAt) continue;
+          if (compareAt <= thresholdSec) {
             const acctId = getS(it.accountId) || "__unknown__";
             const cur = deletedByAccount[acctId] || 0;
             if (cur >= perAccountLimit) {
@@ -3152,27 +3329,16 @@ async function pruneOldScheduledPosts(userId: any) {
 async function pruneOldExecutionLogs(userId: any) {
   try {
     try { await config.loadConfig(); } catch(_) {}
-    const retentionDays = Number(config.getConfigValue('RETENTION_DAYS') || '7') || 7;
-    const thresholdSec = Math.floor(Date.now() / 1000) - (retentionDays * 24 * 60 * 60);
+    const execPruneDays = await resolveExecutionPruneDays();
+    const thresholdSec = Math.floor(Date.now() / 1000) - (execPruneDays * 24 * 60 * 60);
     const perUserLogLimit = Number(config.getConfigValue('EXECUTION_LOGS_PRUNE_LIMIT') || process.env.EXECUTION_LOGS_PRUNE_LIMIT || '1000') || 1000;
     let lastKey: any = undefined;
     let totalDeleted = 0;
     do {
-      const q = await ddb.send(new QueryCommand({
-        TableName: TBL_LOGS,
-        KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
-        ExpressionAttributeValues: {
-          ":pk": { S: `USER#${userId}` },
-          ":pfx": { S: "LOG#" },
-        },
-        ProjectionExpression: "PK,SK,createdAt",
-        Limit: 1000,
-        ExclusiveStartKey: lastKey,
-      }));
-
-      for (const it of (q.Items || [])) {
+      const s = await ddb.send(new ScanCommand({ TableName: TBL_LOGS, ProjectionExpression: 'PK,SK,createdAt', ExclusiveStartKey: lastKey, Limit: 1000 }));
+      for (const it of (s.Items || [])) {
         try {
-          const createdAt = Number(it.createdAt?.N || 0);
+          const createdAt = normalizeEpochSec(getN(it.createdAt) || 0);
           if (createdAt && createdAt <= thresholdSec) {
             await ddb.send(new DeleteItemCommand({ TableName: TBL_LOGS, Key: { PK: it.PK, SK: it.SK } }));
             totalDeleted++;
@@ -3182,8 +3348,7 @@ async function pruneOldExecutionLogs(userId: any) {
           console.warn('[warn] prune log delete failed for item', e);
         }
       }
-
-      lastKey = q.LastEvaluatedKey;
+      lastKey = (s as any).LastEvaluatedKey;
     } while (lastKey);
 
     if (totalDeleted > 0) {
@@ -3253,9 +3418,9 @@ async function pruneOldExecutionLogsAll() {
 async function pruneOrphanExecutionLogsAll() {
   try {
     try { await config.loadConfig(); } catch(_) {}
+    // For scheduled posts user-scoped prune, use RETENTION_DAYS (no +1)
     const retentionDays = Number(config.getConfigValue('RETENTION_DAYS') || '7') || 7;
-    const execPruneDays = Number(config.getConfigValue('EXECUTION_LOGS_PRUNE_DELAY_DAYS') || String(retentionDays + 1)) || (retentionDays + 1);
-    const thresholdSec = Math.floor(Date.now() / 1000) - (execPruneDays * 24 * 60 * 60);
+    const thresholdSec = Math.floor(Date.now() / 1000) - (retentionDays * 24 * 60 * 60);
     const orphanLimit = Number(config.getConfigValue('ORPHAN_EXEC_LOGS_PRUNE_LIMIT') || process.env.ORPHAN_EXEC_LOGS_PRUNE_LIMIT || '10000') || 10000;
 
     let lastKey: any = undefined;
@@ -3298,24 +3463,14 @@ async function pruneOldReplies(userId: any) {
     try { await config.loadConfig(); } catch(_) {}
     const retentionDays = Number(config.getConfigValue('RETENTION_DAYS') || '7') || 7;
     const thresholdSec = Math.floor(Date.now() / 1000) - (retentionDays * 24 * 60 * 60);
+    // Convert to full-table scan by createdAt to support user-agnostic pruning
     let lastKey: any = undefined;
     let totalDeleted = 0;
     do {
-      const q = await ddb.send(new QueryCommand({
-        TableName: TBL_REPLIES,
-        KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
-        ExpressionAttributeValues: {
-          ":pk": { S: `USER#${userId}` },
-          ":pfx": { S: "REPLY#" },
-        },
-        ProjectionExpression: "PK,SK,createdAt",
-        Limit: 1000,
-        ExclusiveStartKey: lastKey,
-      }));
-
-      for (const it of (q.Items || [])) {
+      const s = await ddb.send(new ScanCommand({ TableName: TBL_REPLIES, ProjectionExpression: 'PK,SK,createdAt', ExclusiveStartKey: lastKey, Limit: 1000 }));
+      for (const it of (s.Items || [])) {
         try {
-          const createdAt = Number(it.createdAt?.N || 0);
+          const createdAt = normalizeEpochSec(getN(it.createdAt) || 0);
           if (createdAt && createdAt <= thresholdSec) {
             await ddb.send(new DeleteItemCommand({ TableName: TBL_REPLIES, Key: { PK: it.PK, SK: it.SK } }));
             totalDeleted++;
@@ -3324,8 +3479,7 @@ async function pruneOldReplies(userId: any) {
           console.warn('[warn] prune reply delete failed for item', e);
         }
       }
-
-      lastKey = q.LastEvaluatedKey;
+      lastKey = (s as any).LastEvaluatedKey;
     } while (lastKey);
 
     if (totalDeleted > 0) {
@@ -3433,18 +3587,103 @@ async function countAllExecutionLogs() {
 // Full-table prune helper: iterate all users and run pruneOldScheduledPosts
 async function pruneOldScheduledPostsAll() {
   try {
-    const userIds = await getActiveUserIds();
+    // Full-table prune using Scan so we can evaluate scheduledAt/postedAt without per-user queries
+    let lastKey: any = undefined;
     let totalDeleted = 0;
-    for (const uid of userIds) {
-      const c = await pruneOldScheduledPosts(uid);
-      totalDeleted += Number(c || 0);
+    // Build set of queued accountIds to exclude
+    await config.loadConfig();
+    const dqTable = config.getConfigValue('TBL_DELETION_QUEUE') || process.env.TBL_DELETION_QUEUE || 'DeletionQueue';
+    const queued = new Set<string>();
+    try {
+      let lk: any = undefined;
+      do {
+        const s = await ddb.send(new ScanCommand({ TableName: dqTable, ProjectionExpression: 'accountId', ExclusiveStartKey: lk, Limit: 1000 }));
+        for (const it of (s as any).Items || []) {
+          const aid = getS(it.accountId);
+          if (aid) queued.add(aid);
+        }
+        lk = (s as any).LastEvaluatedKey;
+      } while (lk);
+    } catch (e) {
+      // If deletion queue not accessible, proceed but log
+      try { console.warn('[warn] could not scan DeletionQueue, proceeding without exclusions', String(e)); } catch(_) {}
     }
+
+    do {
+      const s = await ddb.send(new ScanCommand({ TableName: TBL_SCHEDULED, ProjectionExpression: 'PK,SK,scheduledAt,postedAt,accountId,type', ExclusiveStartKey: lastKey, Limit: 1000 }));
+      for (const it of (s.Items || [])) {
+        try {
+          const acctId = getS(it.accountId) || '';
+          if (acctId && queued.has(acctId)) continue; // skip queued accounts
+          const scheduledAt = normalizeEpochSec(getN(it.scheduledAt) || 0);
+          const postedAt = normalizeEpochSec(getN(it.postedAt) || 0);
+          const compareAt = postedAt > 0 ? postedAt : scheduledAt;
+          if (!compareAt) continue;
+          const retentionDays = Number(config.getConfigValue('RETENTION_DAYS') || '7') || 7;
+          const thresholdSec = Math.floor(Date.now() / 1000) - (retentionDays * 24 * 60 * 60);
+          if (compareAt <= thresholdSec) {
+            await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: it.PK, SK: it.SK } }));
+            totalDeleted++;
+          }
+        } catch (e) {
+          console.warn('[warn] prune scheduled delete failed for item', e);
+        }
+      }
+      lastKey = (s as any).LastEvaluatedKey;
+    } while (lastKey);
     return totalDeleted;
   } catch (e) {
     console.warn('[warn] pruneOldScheduledPostsAll failed:', e);
     throw e;
   }
 }
+
+// Full-table prune for UsageCounters using updatedAt
+async function pruneOldUsageCountersAll() {
+  try {
+    await config.loadConfig();
+    const retentionDays = Number(config.getConfigValue('RETENTION_DAYS_LOGS') || '20') || 20;
+    const thresholdSec = Math.floor(Date.now() / 1000) - (retentionDays * 24 * 60 * 60);
+    // collect keys to delete
+    const keys: Array<{ PK: any; SK: any }> = [];
+    let lastKey: any = undefined;
+    do {
+      const s = await ddb.send(new ScanCommand({ TableName: TBL_USAGE, ProjectionExpression: 'PK,SK,updatedAt', ExclusiveStartKey: lastKey, Limit: 1000 }));
+      for (const it of (s.Items || [])) {
+        try {
+          const updatedAt = normalizeEpochSec(getN(it.updatedAt) || 0);
+          if (updatedAt && updatedAt <= thresholdSec) {
+            keys.push({ PK: it.PK, SK: it.SK });
+          }
+        } catch (e) {
+          console.warn('[warn] prune usage item inspect failed', e);
+        }
+      }
+      lastKey = (s as any).LastEvaluatedKey;
+    } while (lastKey);
+
+    // batch delete (25 per request)
+    let deleted = 0;
+    const BATCH = 25;
+    for (let i = 0; i < keys.length; i += BATCH) {
+      const chunk = keys.slice(i, i + BATCH);
+      const reqs = chunk.map(k => ({ DeleteRequest: { Key: { PK: k.PK, SK: k.SK } } }));
+      const params: any = { RequestItems: { [TBL_USAGE]: reqs } };
+      try {
+        await ddb.send(new BatchWriteItemCommand(params));
+        deleted += chunk.length;
+      } catch (e) {
+        console.warn('[warn] prune usage batch delete failed', e);
+      }
+    }
+
+    return deleted;
+  } catch (e) {
+    console.warn('[warn] pruneOldUsageCountersAll failed:', e);
+    throw e;
+  }
+}
+
 
 // Count posted records for dry-run deletePosted mode
 async function countPostedCandidates(userId: any) {
@@ -3683,7 +3922,19 @@ function formatNonZeroLine(items: Array<{ label: string; value: number; suffix?:
 function formatMasterMessage({ job, startedAt, finishedAt, userTotal, userSucceeded, totals }: any) {
   const durMs = finishedAt - startedAt;
   const durSec = Math.max(1, Math.round(durMs / 1000));
-  const iso = new Date(finishedAt).toISOString();
+
+  // Format finishedAt as JST 'YYYY-MM-DD HH:mm:ss'
+  function formatJstShort(ms: number) {
+    const d = new Date(ms + 9 * 3600 * 1000); // shift to JST then use UTC getters
+    const yyyy = d.getUTCFullYear();
+    const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(d.getUTCDate()).padStart(2, '0');
+    const hh = String(d.getUTCHours()).padStart(2, '0');
+    const mi = String(d.getUTCMinutes()).padStart(2, '0');
+    const ss = String(d.getUTCSeconds()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
+  }
+  const jstShort = formatJstShort(finishedAt);
   if (job === "hourly") {
     const line = formatNonZeroLine([
       { label: "予約投稿作成 合計", value: totals.createdCount },
@@ -3693,7 +3944,7 @@ function formatMasterMessage({ job, startedAt, finishedAt, userTotal, userSuccee
       { label: "投稿削除 合計", value: totals.deletedCount || 0 },
     ]);
     return [
-      `**[MASTER] 定期実行サマリ ${iso} (hourly)**`,
+      `**[HOURLY] 定期実行サマリ ${jstShort}**`,
       `スキャンユーザー数: ${userTotal} / 実行成功: ${userSucceeded}`,
       line,
       `所要時間: ${durSec}s`
@@ -3701,22 +3952,18 @@ function formatMasterMessage({ job, startedAt, finishedAt, userTotal, userSuccee
   }
 
   if (job === "daily-prune" || job === "prune") {
-    const totalRecords = Number(totals?.preFilterTotal || 0);
-    const targetRecords = Number(totals?.candidates || 0);
-    const deleted = Number(totals?.deleted || 0);
-    const remaining = Math.max(0, targetRecords - deleted);
-    const line = [
-      `スキャンユーザー数: ${userTotal}`,
-      `全レコード数: ${totalRecords}`,
-      `対象レコード数: ${targetRecords}`,
-      `削除済レコード数: ${deleted}`,
-      `残対象レコード数: ${remaining}`,
-    ].join(" / ");
-    return [
-      `**[MASTER] 定期実行サマリ ${iso} (daily-prune)**`,
-      line,
-      `所要時間: ${durSec}s`
-    ].join("\n");
+    // Build per-table lines if available in totals
+    const lines: string[] = [];
+    if (typeof totals.scheduledNormalDeleted !== 'undefined') lines.push(`通常投稿${totals.scheduledNormalDeleted}件削除 / 全${totals.scheduledNormalTotal}件`);
+    if (typeof totals.scheduledQuoteDeleted !== 'undefined') lines.push(`引用投稿${totals.scheduledQuoteDeleted}件削除 / 全${totals.scheduledQuoteTotal}件`);
+    if (typeof totals.repliesDeleted !== 'undefined') lines.push(`リプライ${totals.repliesDeleted}件削除 / 全${totals.repliesTotal}件`);
+    if (typeof totals.executionLogsDeleted !== 'undefined') lines.push(`ExecutionLogs${totals.executionLogsDeleted}件削除 / 全${totals.executionLogsTotal}件`);
+    if (typeof totals.usageCountersDeleted !== 'undefined') lines.push(`UsageCounters${totals.usageCountersDeleted}件削除 / 全${totals.usageCountersTotal}件`);
+    if (typeof totals.pruneMs !== 'undefined') lines.push(`処理時間: ${Math.round(Number(totals.pruneMs) / 1000)}s`);
+    if (lines.length === 0) {
+      return [`**[PRUNE] 定期実行サマリ ${jstShort}**`, `スキャンユーザー数: ${userTotal}`, `所要時間: ${durSec}s`].join("\n");
+    }
+    return [`**[PRUNE] 定期実行サマリ ${jstShort}**`, ...lines, `所要時間: ${durSec}s`].join("\n");
   }
 
   const line = formatNonZeroLine([
@@ -3726,7 +3973,7 @@ function formatMasterMessage({ job, startedAt, finishedAt, userTotal, userSuccee
     { label: "失効(rate-limit) 合計", value: totals.rateSkipped },
   ]);
   return [
-    `**[MASTER] 定期実行サマリ ${iso} (every-5min)**`,
+    `**[5MIN] 定期実行サマリ ${jstShort}**`,
     `スキャンユーザー数: ${userTotal} / 実行成功: ${userSucceeded}`,
     line,
     `所要時間: ${durSec}s`

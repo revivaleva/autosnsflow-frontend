@@ -1,0 +1,8 @@
+{
+  "job": "daily-prune",
+  "dryRun": true,
+  "confirm": false,
+  "reportSampleLimit": 20
+}
+
+
