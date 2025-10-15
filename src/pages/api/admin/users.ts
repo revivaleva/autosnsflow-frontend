@@ -110,18 +110,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         try {
           // Usage SK may be OPENAI#YYYYMMDD (no hyphen) or OPENAI#YYYY-MM-DD (with hyphen) depending on writer
           const ymdNoHyphen = todayKeyJst().replace(/-/g, "");
-          const skCandidates = [`OPENAI#${ymdNoHyphen}`, `OPENAI#${todayKeyJst()}`];
-          let uitem: any = {};
-          for (const sk of skCandidates) {
-            try {
-              const usageGot = await ddb.send(new GetItemCommand({ TableName: TBL_USAGE, Key: { PK: { S: `USER#${normalizedSub}` }, SK: { S: sk } } }));
-              if (usageGot.Item) { uitem = usageGot.Item; break; }
-            } catch (_) {
-              // ignore individual attempt errors
-            }
+          const sk = `OPENAI#${ymdNoHyphen}`;
+          try {
+            const usageGot = await ddb.send(new GetItemCommand({ TableName: TBL_USAGE, Key: { PK: { S: `USER#${normalizedSub}` }, SK: { S: sk } } }));
+            const uitem: any = usageGot.Item || {};
+            if (uitem.count?.N) todayCount = Number(uitem.count.N);
+            else if (uitem.apiUsedCount?.N) todayCount = Number(uitem.apiUsedCount.N);
+          } catch (e) {
+            // ignore and fallback to UserSettings.apiUsedCount
           }
-          if (uitem.count?.N) todayCount = Number(uitem.count.N);
-          else if (uitem.apiUsedCount?.N) todayCount = Number(uitem.apiUsedCount.N);
         } catch (e) {
           // ignore and fallback to UserSettings.apiUsedCount
         }
