@@ -161,10 +161,10 @@ export default function AdminUsersPage() {
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
-            <button className="px-4 py-2 rounded bg-indigo-600 text-white" onClick={load}>
+            <button className="px-4 py-2 rounded bg-indigo-600 text-white nowrap-button" onClick={load}>
               再読込
             </button>
-            <button className="px-4 py-2 rounded bg-indigo-600 text-white/90" onClick={() => setDebugOpen(true)}>
+            <button className="px-4 py-2 rounded bg-indigo-600 text-white/90 nowrap-button" onClick={() => setDebugOpen(true)}>
               デバッグ表示
             </button>
           </div>
@@ -233,6 +233,18 @@ export default function AdminUsersPage() {
                 )}
               </tbody>
             </table>
+            <style jsx>{`
+              table th, table td {
+                display: -webkit-box;
+                -webkit-line-clamp: 2;
+                -webkit-box-orient: vertical;
+                overflow: hidden;
+                white-space: normal;
+              }
+              .nowrap-button {
+                white-space: nowrap;
+              }
+            `}</style>
           </div>
 
           {/* [DEBUG] 生データのDLG（オーバーレイ順序を [MOD]：先に背景→後に本体） */}
