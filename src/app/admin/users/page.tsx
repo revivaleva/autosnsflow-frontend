@@ -173,6 +173,18 @@ export default function AdminUsersPage() {
 
           <div className="overflow-x-auto bg-white dark:bg-gray-900 border rounded">
             <table className="min-w-full text-sm">
+              <colgroup>
+                <col style={{ width: '26%' }} />
+                <col style={{ width: '20%' }} />
+                <col style={{ width: '12%' }} />
+                <col style={{ width: '8%' }} />
+                <col style={{ width: '8%' }} />
+                <col style={{ width: '8%' }} />
+                <col style={{ width: '6%' }} />
+                <col style={{ width: '6%' }} />
+                <col style={{ width: '6%' }} />
+                <col style={{ width: '6%' }} />
+              </colgroup>
               <thead className="bg-gray-100 dark:bg-gray-800">
                 <tr>
                   <th className="px-3 py-2 text-left">Email</th>
@@ -208,21 +220,17 @@ export default function AdminUsersPage() {
                     <tr key={r.userId} className="border-t">
                       <td className="px-3 py-2">
                         {/* [ADD] Emailクリックで編集モーダル */}
-                        <div style={{display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden'}}>
+                        <div className="cell-content">
                           <button className="text-indigo-600 font-medium hover:underline nowrap-button" onClick={() => openEdit(r)}>
                             {r.email}
                           </button>
                         </div>
                       </td>
                       <td className="px-3 py-2">
-                        <div style={{display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden'}}>
-                          {r.userId}
-                        </div>
+                        <div className="cell-content">{r.userId}</div>
                       </td>
                       <td className="px-3 py-2">
-                        <div style={{display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden'}}>
-                          {r.username || ""}
-                        </div>
+                        <div className="cell-content">{r.username || ""}</div>
                       </td>
                       <td className="px-3 py-2 text-center">{r.planType}</td>
                       <td className="px-3 py-2 text-center">
@@ -262,6 +270,7 @@ export default function AdminUsersPage() {
               .nowrap-button {
                 white-space: nowrap;
               }
+              .cell-content { white-space: normal; }
             `}</style>
           </div>
 
