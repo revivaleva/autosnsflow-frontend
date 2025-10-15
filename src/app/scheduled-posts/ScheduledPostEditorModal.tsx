@@ -3,6 +3,7 @@
 
 // [MOD] AI生成の送信ペイロードから persona を削除し、accountId のみ送信
 import React, { useEffect, useMemo, useState } from "react";
+import { getAuthReady, refreshAuthReady } from '@/lib/authReady';
 
 type ScheduledPostStatus = "" | "pending" | "posted";
 export type ScheduledPostType = {
@@ -197,6 +198,7 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
   const [autoType, setAutoType] = useState<number | null>(null);
   const [groupItems, setGroupItems] = useState<AutoPostGroupItem[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [authReady, setAuthReady] = useState<boolean>(getAuthReady());
   const [theme, setTheme] = useState(initial?.theme || "");
   const [content, setContent] = useState(initial?.content || "");
   const [scheduledAtLocal, setScheduledAtLocal] = useState(
@@ -278,6 +280,11 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
       } catch (e) {
         // settings load error ignored in client
       }
+      // refresh auth readiness for AI operations
+      try {
+        const ok = await refreshAuthReady();
+        setAuthReady(ok);
+      } catch {}
     })();
 
     if (mode === "add" && !scheduledAtLocal) {
@@ -562,6 +569,15 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
     applyDefaultsFromGroupAndSettings();
 
     try {
+      // ensure auth ready to avoid token race
+      if (!authReady) {
+        const ok = await refreshAuthReady();
+        setAuthReady(ok);
+        if (!ok) {
+          alert('認証情報が確認できません。しばらく待ってから再試行してください。');
+          return;
+        }
+      }
       setIsGenerating(true);
       // If the selected scheduled post appears to be a quote (editing an existing
       // scheduled item with type === 'quote' or user selected a quote flow), call
@@ -668,11 +684,12 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
             <button
               type="button"
               onClick={handleClickGenerate}
-              className={`px-3 py-2 rounded-md text-white ${isGenerating ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
-              disabled={isGenerating}
+              className={`px-3 py-2 rounded-md text-white ${isGenerating || !authReady ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
+              disabled={isGenerating || !authReady}
               style={{ display: 'inline-block' }}
+              title={!authReady ? '認証確認中のため操作できません' : undefined}
             >
-              {isGenerating ? '生成中...' : 'AIで生成'}
+              {isGenerating ? '生成中...' : !authReady ? '認証確認中...' : 'AIで生成'}
             </button>
           </div>
         </div>
