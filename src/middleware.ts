@@ -2,8 +2,8 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-// 認証不要なページ（ログイン関連のみ）
-const PUBLIC_PAGES = ["/login", "/logout", "/auth/callback"];
+// 認証不要なページ（ログイン関連や公開ページ）
+const PUBLIC_PAGES = ["/login", "/logout", "/auth/callback", "/privacy"];
 
 export function middleware(req: NextRequest) {
   const { pathname, searchParams } = req.nextUrl;
