@@ -17,6 +17,8 @@ const cipa = new CognitoIdentityProviderClient({
 });
 const USER_POOL_ID = env.COGNITO_USER_POOL_ID;
 const TBL_SETTINGS = process.env.TBL_SETTINGS || "UserSettings";
+// 日別カウントを格納するテーブル
+const TBL_USAGE = process.env.TBL_USAGE_COUNTERS || process.env.USAGE_COUNTERS_TABLE || "UsageCounters";
 
 function todayKeyJst(): string {
   const now = new Date();
@@ -39,10 +41,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       for (const u of list) {
         const sub   = u.Attributes?.find(a => a?.Name === "sub")?.Value || "";
+        // Normalize sub: sometimes upstream values may include a USER# prefix accidentally
+        const normalizedSub = String(sub || "").replace(/^USER#/i, "");
         const email = u.Attributes?.find(a => a?.Name === "email")?.Value || "";
         if (!sub) continue;
 
-        const pk = { S: `USER#${sub}` };
+        const pk = { S: `USER#${normalizedSub}` };
         const sk = { S: "SETTINGS" };
 
         // 初期化 or 取得
@@ -101,13 +105,31 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           item.apiUsedCount = { N: "0" };
         }
 
+        // Try to read today's per-provider usage counter (if present) and prefer it for displayed "当日使用"
+        let todayCount = Number(item.apiUsedCount?.N || "0");
+        try {
+          // Usage SK may be OPENAI#YYYYMMDD (no hyphen) or OPENAI#YYYY-MM-DD (with hyphen) depending on writer
+          const ymdNoHyphen = todayKeyJst().replace(/-/g, "");
+          const sk = `OPENAI#${ymdNoHyphen}`;
+          try {
+            const usageGot = await ddb.send(new GetItemCommand({ TableName: TBL_USAGE, Key: { PK: { S: `USER#${normalizedSub}` }, SK: { S: sk } } }));
+            const uitem: any = usageGot.Item || {};
+            if (uitem.count?.N) todayCount = Number(uitem.count.N);
+            else if (uitem.apiUsedCount?.N) todayCount = Number(uitem.apiUsedCount.N);
+          } catch (e) {
+            // ignore and fallback to UserSettings.apiUsedCount
+          }
+        } catch (e) {
+          // ignore and fallback to UserSettings.apiUsedCount
+        }
+
         results.push({
-          userId: sub,
+          userId: normalizedSub,
           email,
           username:          item.username?.S || "",
           planType:          item.planType?.S || "free",
           apiDailyLimit:     Number(item.apiDailyLimit?.N || "200"),
-          apiUsedCount:      Number(item.apiUsedCount?.N || "0"),
+          apiUsedCount:      todayCount,
           maxThreadsAccounts: Number(item.maxThreadsAccounts?.N || "0"),
           autoPostAdminStop: Boolean(item.autoPostAdminStop?.BOOL || false),
           autoPost:          Boolean(item.autoPost?.BOOL || false),
