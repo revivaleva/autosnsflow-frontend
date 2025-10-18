@@ -368,7 +368,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         if (cleared) {
           try {
             const putLog = (await import('@/lib/logger')).putLog;
-            try { await putLog({ userId, type: 'deauthorize', accountId, status: 'info', message: 'oauthAccessToken cleared by user' }); } catch (e) {}
+            try { await putLog({ userId, action: 'deauthorize', accountId, status: 'info', message: 'oauthAccessToken cleared by user' }); } catch (e) {}
           } catch (e) {}
         }
       } catch (e) {}
