@@ -57,6 +57,35 @@
 - 方針: 今後は `oauthAccessToken` を正式トークンとし、`accessToken` は参照・フォールバックしない。
 - 未設定または期限切れのトークンは自動処理（定期実行・手動バッチ含む）から除外し、アカウント状態を `reauth_required` に設定して UI 上で再認証を促す。
 
+### アカウント編集モーダルの認証状態表示と解除機能
+
+- 目的
+  - アカウント編集モーダル（`SNSAccountModal`）内で、認可URLのコピーボタン横に簡潔な認証状態表示（ラベル）を置き、ユーザーがトークンの有無を一目で把握できるようにする。また、認証済であればワンクリックで認証解除（DB上のトークン削除）できるUIを提供する。
+
+- 表示要件
+  - 認証済み: `oauthAccessToken` または従来の `accessToken` の存在をもって「認証済み」と表示（緑のバッジ）。
+  - 未認証: トークンが存在しない場合は「未認証」をグレーで表示。
+  - モーダル表示時には可能な限り最新のDB状態を反映する。最短実装はモーダルに渡された `account` オブジェクト上のフィールドから判定する方法、推奨はモーダル表示時に `/api/threads-accounts?accountId=...` 等で最新値をフェッチして反映する。
+
+- 解除（Deauthorize）ボタン挙動
+  - 解除は確認ダイアログを表示したうえで実行する（同期的な confirm で可）。
+  - クライアント側は `PATCH /api/threads-accounts` を呼び、ペイロードに `accountId` と `oauthAccessToken: ''` を含めることで DB 上のトークンを空にする。API 側は受けて UpdateItemCommand でフィールドを上書きできること。
+  - 成功時のクライアント側処理:
+    - UI 上のトークン関連 state (`accessToken`, `clientSecretMasked` 等) をクリアして「未認証」表示に切替える。
+    - `reloadAccounts()` を呼んで一覧を更新する（必要に応じてモーダルを閉じる）。
+    - ユーザー向けに成功メッセージ（alert など）を表示する。
+  - 失敗時の処理:
+    - エラーメッセージを alert 表示し、UI state は変更しない。
+
+- セキュリティ・監査
+  - トークン削除リクエストは認証済みユーザーであることを前提とし、サーバー側で `verifyUserFromRequest` を通すこと。
+  - 監査のため、サーバー側でトークン削除操作（deauthorize）を ExecutionLogs に `action: 'deauthorize', initiatedBy: <userId>, accountId: <id>` として保存することを推奨。
+
+- テスト
+  - 単体テスト: モーダルの認証ラベルが `account` オブジェクトの `oauthAccessToken` 存在に応じて正しくレンダリングされること。
+  - e2e/インテグレーション: 実際に PATCH を行って DB 上のトークンが消えることを確認し、UI が更新されることを検証する。スタブ/モックが利用可能な環境であれば PATCH の応答をモックして UI の分岐を確認する。
+
+
 ### トークン自動更新（auto-refresh）設計（概要）
 
 - 目的: トークンの有効期限が近い場合に自動で更新（長期化）し、手動での再認証負荷を軽減する。
@@ -76,4 +105,88 @@
 
 - `ThreadsAccounts.status` に新しい値 `reauth_required` を追加。UI はこのステータスを検出して、アカウント一覧の状態欄に「要再認証」バッジと再認証ボタンを表示すること。
 - ステータス変更はバッチ処理中に発生する可能性があるため、UI 側はリアルタイム更新を考慮する（ポーリングまたは WebSocket）。
+
+---
+
+## Threads Resolver（変換API）仕様（v1）
+
+目的
+
+- ユーザー名（`@user` / `user` / プロフィールURL`）を受け取り、Threads の最新投稿（または指定投稿）の**数列ID（numericId）** を返す軽量単機能APIを提供する。可能であればその投稿の本文（postBody）と公開日時も返却する。
+
+スコープ
+
+- 入力: `username`（必須、`@`やURLを正規化して扱う）。互換性のため `code` クエリも受け付け可能。
+- 出力（成功）: `numericId`（文字列）、`postCode`（短縮コード）、`postBody`（可能ならテキスト）、`publishedAt`（ISO8601）、`source`（`html`|`playwright`）
+- 永続化: **行わない**（キャッシュは呼び出し側で管理）。
+
+API 仕様
+
+- エンドポイント: `GET /resolve?username=<name>`（Function URL または API Gateway）
+- CORS: `Access-Control-Allow-Origin` を環境変数 `CORS_ORIGIN` に従う
+- 成功例:
+
+```json
+{
+  "username":"akipiiiiiii",
+  "postCode":"DP6DgMHCE11",
+  "numericId":"18297320887283438",
+  "postBody":"投稿本文テキスト...",
+  "publishedAt":"2025-10-17T09:03:27Z",
+  "source":"html"
+}
+```
+
+- エラー例（HTTP ステータスと JSON）
+  - 400: invalid_request — パラメータ不足/不正
+    ```json
+    { "error":"invalid_request","message":"username is required" }
+    ```
+  - 404: not_found — ユーザー/投稿が見つからない or 非公開
+    ```json
+    { "error":"not_found","message":"numeric id not found" }
+    ```
+  - 429: rate_limited — レート/ブロック検知
+    ```json
+    { "error":"rate_limited","retryAfter":60 }
+    ```
+  - 502: upstream_error — 外部取得失敗
+    ```json
+    { "error":"upstream_error","message":"fetch failed: 502" }
+    ```
+
+内部設計（DB を使わない流れ）
+
+1. 入力正規化: `@` や profile URL を受け取り正規ユーザー名にする。バリデーションで不正な文字列や長さを弾く。
+2. 軽量取得: `GET https://www.threads.net/@<username>`（必要時は `https://www.threads.net/<profilePath>`）をモバイルUAで fetch。`REQUEST_TIMEOUT_MS` を超えた場合は upstream_error を返す。
+3. HTML パース: ページ内の `<script type="application/json">` を列挙し JSON.parse して `post` オブジェクトを探す。抽出対象:
+   - `post.code` → `postCode`
+   - `post.pk`、または `post.id.split('_')[0]` → `numericId`
+   - `post.text` → `postBody`（存在すれば）
+   - `post.timestamp` → `publishedAt`（ある場合）
+4. 成功時は構造化して返却。抽出できなければ 404。HTTP 429 や明らかなブロック文言（captcha/too many requests 等）が HTML に含まれる場合は 429 を返す。
+5. フォールバック: 必要なら Playwright を使うが、Lambda 本体に組み込むとサイズとコストが増えるため**別 Lambda に分離**し、環境変数 `PLAYWRIGHT_FALLBACK=true` のときに同期呼び出し（`Invoke`）で試行することを推奨する。
+
+エンバイロメント変数
+
+- `CORS_ORIGIN` — CORS 許可ドメイン
+- `REQUEST_TIMEOUT_MS` — fetch のタイムアウト（ms）
+- `MOBILE_USER_AGENT` — 取得に使う User-Agent（任意）
+- `PLAYWRIGHT_FALLBACK` — `true`/`false`
+- `PLAYWRIGHT_LAMBDA_NAME` — フォールバック先 Lambda 名（フォールバックを別関数にする場合）
+
+運用・テスト
+
+- `parser`（HTML→numericId+postBody 抽出）はユニットテストで堅牢化する。複数の HTML サンプル（通常ページ、ログイン要求ページ、レート制限ページ、構造変化サンプル）を用意する。 
+- 本 API はステートレスなので、呼び出し側（UI / 定期バッチ）が必要に応じてキャッシュやレート制御を実装する。
+
+セキュリティ・IAM
+
+- DDB 利用がないため Dynamo 権限は不要。Playwright を別 Lambda にする場合は `lambda:InvokeFunction` の権限が必要。
+
+備考
+
+- まずは HTML パーサーを作り安定化させ、実運用でパース失敗が増えたら Playwright フォールバックを追加する段階的導入を推奨する。
+
+---
 

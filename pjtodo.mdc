@@ -47,3 +47,21 @@
  - T107: 小規模な E2E 手順を作成し、staging にマージ後に動作確認を行う [pending]
  - T108: feature/admin-users → staging の PR を作成する（PR 作成） [pending]
  - T109: staging での動作確認後 main へ反映する（運用承認待ち） [pending]
+
+## App Review / 承認関連
+
+- AR-01: App Review 用ドキュメント作成（`threads_profile_discovery` 権限申請用） [pending]
+  - 概要: 申請説明文、スクリーンキャスト（動画）案、必要なプライバシーポリシー/連絡先情報をまとめる。
+
+- AR-02: テスター用手順ドキュメント追加（Graph API Explorer を使ったトークン取得手順） [pending]
+  - 概要: テスターアカウントの追加方法、Graph API Explorer でのアクセストークン取得手順を README に追記する。
+
+- AR-03: 申請後の運用手順（承認後の再認可フロー） [pending]
+  - 概要: 既存ユーザーへスムーズに新スコープ付与を促すための UI/メールテンプレート案とバッチ再認可トリガーの設計。
+
+- AR-04: 自動再認可トリガー実装（`oauthTokenExpiresAt` を使った再認可案内） [pending]
+  - 概要: `oauthTokenExpiresAt` を監視して切迫時にユーザーへ再認可を促す通知（メール or UIバナー）を作成する。
+
+- AR-05: DB とスクリプトの拡張: `fetchPublicProfilePosts(username)` の追加と `accountId` → username 解決フローの実装 [pending]
+  - 概要: トークンが無い場合に profile_posts を試すフォールバック実装。ただし実運用前に App Review 承認が必要。
+

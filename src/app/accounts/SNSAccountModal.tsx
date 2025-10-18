@@ -25,6 +25,7 @@ type SNSAccountModalProps = {
   mode?: "create" | "edit";
   account?: any;
   reloadAccounts: () => void;
+  showAppColumn?: boolean;
 };
 type AIPersonaPayload = {
   personaDetail: any;
@@ -76,6 +77,7 @@ export default function SNSAccountModal({
   mode = "create",
   account,
   reloadAccounts,
+  showAppColumn = false,
 }: SNSAccountModalProps) {
   const emptyPersona = {
     name: "",
@@ -97,6 +99,7 @@ export default function SNSAccountModal({
   const [displayName, setDisplayName] = useState("");
   const [accountId, setAccountId] = useState("");
   const [accessToken, setAccessToken] = useState("");
+  const [oauthAccessToken, setOauthAccessToken] = useState("");
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [clientSecretMasked, setClientSecretMasked] = useState(false);
@@ -129,6 +132,7 @@ export default function SNSAccountModal({
   // deletionMessage removed from UI; keep only for potential future use
   const [deletionMessage, setDeletionMessage] = useState<string | null>(null);
   const [deletionExecuted, setDeletionExecuted] = useState(false);
+  const [checkingAuth, setCheckingAuth] = useState(false);
   const [bulkPersonaOpen, setBulkPersonaOpen] = useState(false);
   const [bulkPersonaText, setBulkPersonaText] = useState("");
 
@@ -146,61 +150,77 @@ export default function SNSAccountModal({
   }, [open]);
 
   useEffect(() => {
-    if (mode === "edit" && account) {
-      setDisplayName(account.displayName || "");
-      setAccountId(account.accountId || "");
-      setAccessToken(account.accessToken || "");
-      // clientId may be stored under different keys depending on migration; try several fallbacks
-      setClientId(
-        account.clientId || account.client_id || account.CLIENT_ID || (account?.client && account.client.id) || ""
-      );
+    (async () => {
+      if (mode === "edit" && account) {
+        setDisplayName(account.displayName || "");
+        setAccountId(account.accountId || "");
+        setAccessToken(account.accessToken || "");
+        // clientId may be stored under different keys depending on migration; try several fallbacks
+        setClientId(
+          account.clientId || account.client_id || account.CLIENT_ID || (account?.client && account.client.id) || ""
+        );
 
-      // For security, do not preload actual clientSecret into the editable field.
-      // API may return clientSecret (legacy) or hasClientSecret flag; check both.
-      const hasSecret = !!(
-        account.clientSecret || account.client_secret || account.hasClientSecret || account.has_client_secret || (account?.client && account.client.secret)
-      );
-      setClientSecret("");
-      setClientSecretMasked(hasSecret);
-      // store original values for change-detection
-      setOriginalClientId(
-        account.clientId || account.client_id || account.CLIENT_ID || (account?.client && account.client.id) || ""
-      );
-      setOriginalHasClientSecret(hasSecret);
-      setGroupId(account.autoPostGroupId || "");
-      // ▼【追加】不正なJSON文字列で落ちないようガード
-      try {
-        setPersona(account.personaDetail ? JSON.parse(account.personaDetail) : { ...emptyPersona }); // 【追加】
-      } catch {
-        setPersona({ ...emptyPersona }); // 【追加】
+        // For security, do not preload actual clientSecret into the editable field.
+        // API may return clientSecret (legacy) or hasClientSecret flag; check both.
+        const hasSecret = !!(
+          account.clientSecret || account.client_secret || account.hasClientSecret || account.has_client_secret || (account?.client && account.client.secret)
+        );
+        setClientSecret("");
+        setClientSecretMasked(hasSecret);
+        // store original values for change-detection
+        setOriginalClientId(
+          account.clientId || account.client_id || account.CLIENT_ID || (account?.client && account.client.id) || ""
+        );
+        setOriginalHasClientSecret(hasSecret);
+        setGroupId(account.autoPostGroupId || "");
+        // ▼【追加】不正なJSON文字列で落ちないようガード
+        try {
+          setPersona(account.personaDetail ? JSON.parse(account.personaDetail) : { ...emptyPersona }); // 【追加】
+        } catch {
+          setPersona({ ...emptyPersona }); // 【追加】
+        }
+        setCharacterImage(account.characterImage || "");
+        setPersonaMode(account.personaMode === "simple" ? "simple" : "detail");
+        setPersonaSimple(account.personaSimple || "");
+        setSecondStageContent(account.secondStageContent || ""); // ← 追加
+        setMonitoredAccountId(account.monitoredAccountId || "");
+        setQuoteTimeStart(account.quoteTimeStart || "");
+        setQuoteTimeEnd(account.quoteTimeEnd || "");
+        // ensure oauthAccessToken state is in sync with passed account (prefer oauthAccessToken)
+        setOauthAccessToken(account.oauthAccessToken || account.oauth_access_token || account.oauthAccessToken || account.accessToken || account.access_token || "");
+
+        // additionally fetch latest record from API to avoid stale data
+        try {
+          const resp = await fetch(`/api/threads-accounts/${encodeURIComponent(account.accountId)}`, { credentials: 'include', cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } });
+          if (resp.ok) {
+            const json = await resp.json().catch(() => ({}));
+            const tok = (json && (json.oauthAccessToken || json.accessToken)) || '';
+            setOauthAccessToken(tok || '');
+          }
+        } catch (e) {
+          // ignore
+        }
+      } else if (mode === "create") {
+        setDisplayName("");
+        setAccountId("");
+        setAccessToken("");
+        setClientId("");
+        setClientSecret("");
+        setClientSecretMasked(false);
+        setOriginalClientId("");
+        setOriginalHasClientSecret(false);
+        setGroupId("");
+        setPersonaMode("detail");
+        setPersonaSimple("");
+        setPersona({ ...emptyPersona });
+        setCharacterImage("");
+        setSecondStageContent(""); // ← 追加
+        setMonitoredAccountId("");
+        setQuoteTimeStart("");
+        setQuoteTimeEnd("");
       }
-      setCharacterImage(account.characterImage || "");
-      setPersonaMode(account.personaMode === "simple" ? "simple" : "detail");
-      setPersonaSimple(account.personaSimple || "");
-      setSecondStageContent(account.secondStageContent || ""); // ← 追加
-      setMonitoredAccountId(account.monitoredAccountId || "");
-      setQuoteTimeStart(account.quoteTimeStart || "");
-      setQuoteTimeEnd(account.quoteTimeEnd || "");
-    } else if (mode === "create") {
-      setDisplayName("");
-      setAccountId("");
-      setAccessToken("");
-      setClientId("");
-      setClientSecret("");
-      setClientSecretMasked(false);
-      setOriginalClientId("");
-      setOriginalHasClientSecret(false);
-      setGroupId("");
-      setPersonaMode("detail");
-      setPersonaSimple("");
-      setPersona({ ...emptyPersona });
-      setCharacterImage("");
-      setSecondStageContent(""); // ← 追加
-      setMonitoredAccountId("");
-      setQuoteTimeStart("");
-      setQuoteTimeEnd("");
-    }
-    setError("");
+      setError("");
+    })();
   }, [account, mode]);
 
   // 変更判定: clientId が変わったか、clientSecret が編集モードになった or 元が空で新規入力されたか
@@ -643,40 +663,91 @@ export default function SNSAccountModal({
 
         {/* 認可ボタン（編集時のみ表示） */}
         {mode === "edit" && accountId && (
-          <div className="mb-3 flex flex-col gap-2">
-            <div className="flex gap-2">
-              <button
-                type="button"
-                className="bg-yellow-500 text-white rounded px-3 py-1 hover:bg-yellow-600"
-                onClick={async () => {
-                  // 変更が検知されたら処理中止してメッセージを出す
-                  if (areCredentialsModified()) {
-                    alert('Threads App ID / Secret が編集されています。先に保存して続行してください');
-                    return;
-                  }
-
-                  const apiUrl = '/api/auth/threads/start' + (accountId ? `?accountId=${encodeURIComponent(accountId)}` : '');
-                  try {
-                    const r = await fetch(apiUrl + '&raw=1', { headers: { Accept: 'application/json' } });
-                    const j = await r.json().catch(() => ({}));
-                    const authUrl = j.auth_url || apiUrl;
-                    try {
-                      await navigator.clipboard.writeText(authUrl);
-                      alert('認可URLをクリップボードにコピーしました');
-                      setAuthUrlFallback(null);
-                    } catch (e) {
-                      setAuthUrlFallback(authUrl);
+          <div className="mb-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="bg-yellow-500 text-white rounded px-4 py-2 hover:bg-yellow-600"
+                  onClick={async () => {
+                    if (areCredentialsModified()) {
+                      alert('Threads App ID / Secret が編集されています。先に保存して続行してください');
+                      return;
                     }
-                  } catch (e) {
-                    // フェッチ失敗時は従来の挙動に戻す
-                    const fallbackUrl = apiUrl;
-                    try { await navigator.clipboard.writeText(fallbackUrl); alert('認可URLをクリップボードにコピーしました'); setAuthUrlFallback(null); }
-                    catch { setAuthUrlFallback(fallbackUrl); }
-                  }
-                }}
-              >
-                認可URLをコピー
-              </button>
+                    const apiUrl = '/api/auth/threads/start' + (accountId ? `?accountId=${encodeURIComponent(accountId)}` : '');
+                    try {
+                      const r = await fetch(apiUrl + '&raw=1', { headers: { Accept: 'application/json' } });
+                      const j = await r.json().catch(() => ({}));
+                      const authUrl = j.auth_url || apiUrl;
+                      try {
+                        await navigator.clipboard.writeText(authUrl);
+                        alert('認可URLをクリップボードにコピーしました');
+                        setAuthUrlFallback(null);
+                      } catch (e) {
+                        setAuthUrlFallback(authUrl);
+                      }
+                    } catch (e) {
+                      const fallbackUrl = apiUrl;
+                      try {
+                        await navigator.clipboard.writeText(fallbackUrl);
+                        alert('認可URLをクリップボードにコピーしました');
+                        setAuthUrlFallback(null);
+                      } catch {
+                        setAuthUrlFallback(fallbackUrl);
+                      }
+                    }
+                  }}
+                >
+                  認可URLをコピー
+                </button>
+
+                <button
+                  type="button"
+                  aria-label={oauthAccessToken ? '認証解除' : '未認証'}
+                  title={oauthAccessToken ? '認証解除' : '未認証'}
+                  className={`${oauthAccessToken ? 'bg-green-600 text-white hover:bg-green-700 cursor-pointer' : 'bg-red-600 text-white cursor-pointer'} rounded-full px-3 py-1 text-xs`}
+                onClick={async (e: React.MouseEvent<HTMLButtonElement>) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (oauthAccessToken) {
+                      if (!originalAccountId) return;
+                      if (!confirm('認証を解除します。よろしいですか？（DBからトークンを削除します）')) return;
+                      try {
+                        const res = await fetch('/api/threads-accounts', { method: 'PATCH', headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' }, credentials: 'include', body: JSON.stringify({ accountId: originalAccountId, oauthAccessToken: '' }), });
+                        const d = await res.json().catch(() => ({}));
+                        if (!res.ok || d?.error) throw new Error(d?.error || 'deauth failed');
+                      setOauthAccessToken('');
+                      } catch (e: any) { alert('解除に失敗しました: ' + (e?.message || e)); }
+                      return;
+                    }
+                    // No token: perform async check without causing navigation/reload
+                    setCheckingAuth(true);
+                    try {
+                      const acctId = originalAccountId || accountId;
+                      if (!acctId) return;
+                      const resp = await fetch(`/api/threads-accounts/${encodeURIComponent(acctId)}`, { credentials: 'include', cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } });
+                      if (resp.ok) {
+                        const json = await resp.json().catch(() => ({}));
+                        const tok = (json && (json.oauthAccessToken || json.accessToken)) || '';
+                        setOauthAccessToken(tok || '');
+                      }
+                    } catch (e) {
+                      // ignore network errors for silent check
+                    } finally {
+                      setCheckingAuth(false);
+                    }
+                  }}
+                >
+                  {checkingAuth ? '確認中...' : (oauthAccessToken ? '認証済み' : '未認証')}
+                </button>
+              </div>
+              {showAppColumn && (
+                <div className="flex items-center">
+                  <button type="button" className="bg-indigo-500 text-white rounded px-3 py-1 whitespace-nowrap hover:bg-indigo-600" onClick={() => {
+                    try { const username = String(account?.accountId || "").replace(/^@/, ""); const threadsUrl = `https://www.threads.net/@${encodeURIComponent(username)}`; const containerName = encodeURIComponent(username); const deepLink = `mycontainers://open?name=${containerName}&url=${encodeURIComponent(threadsUrl)}`; window.location.href = deepLink; } catch (e) { console.error('failed to open mycontainers link', e); }
+                  }}>アプリ</button>
+                </div>
+              )}
             </div>
             {authUrlFallback && (
               <div className="text-sm">

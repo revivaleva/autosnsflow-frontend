@@ -455,6 +455,7 @@ export default function SNSAccountsTable() {
         mode={modalMode}
         account={selectedAccount}
         reloadAccounts={loadAccounts}
+        showAppColumn={showAppColumn}
       />
     </div>
   );

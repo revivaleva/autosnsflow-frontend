@@ -17,6 +17,15 @@
    - Description: Correct ProjectionExpression and ensure expiry field `oauthTokenExpiresAt` is referenced; mark for wider grep for similar name mismatches.
  - `Design and implement token auto-refresh worker` — pending
  - `Mark accounts with missing/expired oauthAccessToken as reauth_required and show UI badge` — pending
+ - `アカウント編集モーダルに認証状態ラベルと認証解除ボタンを追加` — completed
+   - ファイル: `src/app/accounts/SNSAccountModal.tsx`
+   - 内容: 認可URLコピーボタン横に認証状態ラベルを追加し、認証解除ボタンを実装。クライアント側から `PATCH /api/threads-accounts` に `oauthAccessToken: ''` を送信して DB 上のトークンを削除する。
+ - `モーダル開時に最新のトークン状態をフェッチして表示を正確化` — pending
+   - 実装: `SNSAccountModal` の `useEffect` で `/api/threads-accounts?accountId=...` を呼び、`oauthAccessToken` / `accessToken` / `clientSecret` の有無を state に反映する。
+ - `サーバー側: トークン削除操作を ExecutionLogs に記録する` — pending
+   - 実装: `src/pages/api/threads-accounts.ts` の PATCH ハンドラに `putLog` 相当の呼び出しを追加し、`action: 'deauthorize'` を記録する。
+ - `テスト: e2e/統合テストで認証解除フローを検証` — pending
+   - シナリオ: モックDBまたはテスト環境でアカウントにトークンをセット→モーダルで解除→PATCH成功→DB上トークンが空であることとUIが未認証に更新されることを確認。
  - `Fix: ensure normal posts use normal prompts, not quote prompts` — pending
    - Description: Investigate and fix code path where normal scheduled posts are generated using the quote-generation prompt. Ensure `generateAndAttachContent` selects prompt based on `type` (quote vs normal) and UserSettings/AppConfig precedence.
  - `Unify ExecutionLogs writes across Next.js APIs` — in_progress
@@ -33,7 +42,24 @@
   - 概要: Lambda の予約同時実行を `1` に設定し、every-5min 実行時の二重投稿を一時的に防止する。運用影響（全ユーザーのスループット低下）を理解した上で適用すること。
 
 - `Implement postingLock in runAutoPostForAccount to prevent duplicate external posts` — pending
-  - 概要: 投稿前に条件付き UpdateItem で `postingLock` を設定し、ロック取得に成功したワーカーのみが Threads へ投稿する。投稿後はロックを解除することで、Lambda の並列実行があっても同一予約件の二重投稿を防止する。
+  - 概要: 投稿前に条件付き UpdateItem で `postingLock` を設定し、ロック取得に成功したワーカーのみが Threads へ投稿する。投稿後はロックを解除することで、Lambda の並列実行があっても同一予約件の二重投稿を防止する。 
+
+### Threads Resolver（username→numericId）タスク
+
+- `Create lambda/threads-resolver scaffold` — in_progress
+  - 概要: TypeScript Lambda スキャフォールド（handler, package.json, tsconfig）を作成する。
+- `Implement parser: html -> {postCode,numericId,postBody,publishedAt}` — pending
+  - 概要: HTML 内の `script[type="application/json"]` を列挙して JSON.parse を試行し、最新投稿を抽出する純粋関数を作成する。ユニットテストを含む。
+- `Implement handler: /resolve?username=` — pending
+  - 概要: 入力正規化、fetch (mobile UA)+parser 呼び出し、エラーハンドリング、CORS ヘッダ返却。
+- `Add Playwright fallback as separate lambda (optional)` — pending
+  - 概要: Playwright を使う場合は別 Lambda `threads-resolver-playwright` を用意し、メインから `Invoke` して同期的に処理できるようにする。
+- `Add README for threads-resolver (env/usage/iam)` — pending
+  - 概要: 環境変数、利用例（定期バッチ/UI）、デプロイ手順を記載する。
+- `Add unit tests for parser and handler` — pending
+  - 概要: parser の HTML サンプル群と handler の統合テストを作成する。
+
+---
 
 ### 一時デバッグ用ソースの掃除
 

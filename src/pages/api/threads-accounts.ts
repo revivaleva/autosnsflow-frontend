@@ -362,6 +362,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         UpdateExpression: `SET ${sets.join(", ")}`,
         ExpressionAttributeValues: values,
       }));
+      // Log deauthorization actions for audit when oauthAccessToken is explicitly cleared
+      try {
+        const cleared = Object.prototype.hasOwnProperty.call(rest, 'oauthAccessToken') && String(rest.oauthAccessToken || '').trim() === '';
+        if (cleared) {
+          try {
+            const putLog = (await import('@/lib/logger')).putLog;
+            try { await putLog({ userId, type: 'deauthorize', accountId, status: 'info', message: 'oauthAccessToken cleared by user' }); } catch (e) {}
+          } catch (e) {}
+        }
+      } catch (e) {}
       return res.status(200).json({ ok: true });
     }
 
