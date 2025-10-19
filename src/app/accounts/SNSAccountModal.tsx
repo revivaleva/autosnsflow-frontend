@@ -652,12 +652,25 @@ export default function SNSAccountModal({
         />
 
         <label className="block">ID</label>
-        <input
-          className="mb-2 border rounded px-2 py-1 w-full"
-          value={accountId}
-          onChange={(e) => setAccountId(e.target.value)}
-          placeholder="@account_id"
-        />
+        {mode === "edit" ? (
+          <div className="mb-2">
+            <input
+              className="mb-2 border rounded px-2 py-1 w-full bg-gray-100 dark:bg-gray-800"
+              value={accountId}
+              readOnly
+            />
+            <div className="text-sm text-gray-500">
+              編集時はIDを変更できません。IDを変更すると旧レコードが削除され新しいレコードが作成されます。
+            </div>
+          </div>
+        ) : (
+          <input
+            className="mb-2 border rounded px-2 py-1 w-full"
+            value={accountId}
+            onChange={(e) => setAccountId(e.target.value)}
+            placeholder="@account_id"
+          />
+        )}
 
         {/* アクセストークンは UI から削除（内部で管理するため） */}
 
