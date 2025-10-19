@@ -19,12 +19,17 @@ jobs:
         with:
           node-version: '18'
 
-      - name: Archive lambda
+      - name: Build and archive lambda
         run: |
           cd lambda-auth
-          # package-lock.json may not exist in this folder; use npm install for CI
+          # install runtime deps
           npm install --production --no-audit --no-fund
-          zip -r ../lambda-auth.zip .
+          # bundle TypeScript handlers into dist/ using esbuild (npx will fetch it)
+          npx esbuild validate.ts heartbeat.ts --outdir=dist --bundle --platform=node --target=node18 || true
+          # include bundled output and production node_modules
+          mkdir -p dist
+          cp -r node_modules dist/ || true
+          zip -r ../lambda-auth.zip dist
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v2
