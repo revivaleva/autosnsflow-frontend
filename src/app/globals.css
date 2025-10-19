@@ -79,3 +79,19 @@ select {
 }
 input:checked + .slider { background-color: #0ea5e9; }
 input:checked + .slider:before { transform: translateX(18px); }
+
+/* Simple inline loader used in modals */
+.loader {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255,255,255,0.45);
+  border-top-color: rgba(255,255,255,1);
+  border-radius: 50%;
+  display: inline-block;
+  vertical-align: middle;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
