@@ -29,7 +29,9 @@ jobs:
           # include bundled output and production node_modules
           mkdir -p dist
           cp -r node_modules dist/ || true
-          zip -r ../lambda-auth.zip dist
+          # package dist contents at zip root so Lambda handler paths match
+          cd dist
+          zip -r ../lambda-auth.zip .
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v2
