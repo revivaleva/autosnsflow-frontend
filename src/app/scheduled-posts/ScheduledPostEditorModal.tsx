@@ -199,6 +199,8 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
   const [groupItems, setGroupItems] = useState<AutoPostGroupItem[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [authReady, setAuthReady] = useState<boolean>(getAuthReady());
+  // 初回マウント時に open が true の場合は読み込み状態を初期表示してちらつきを防止
+  const [tokenRefreshing, setTokenRefreshing] = useState<boolean>(Boolean(open && !getAuthReady())); // トークン取得中フラグ
   const [theme, setTheme] = useState(initial?.theme || "");
   const [content, setContent] = useState(initial?.content || "");
   const [scheduledAtLocal, setScheduledAtLocal] = useState(
@@ -223,6 +225,8 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
 
   useEffect(() => {
     if (!open) return;
+    // モーダルを開いた瞬間にローディング状態を表示してちらつきを防ぐ
+    setTokenRefreshing(true);
 
     (async () => {
       try {
@@ -280,11 +284,14 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
       } catch (e) {
         // settings load error ignored in client
       }
-      // refresh auth readiness for AI operations
+      // refresh auth readiness for AI operations (always show tokenRefreshing while we check)
       try {
+        setTokenRefreshing(true);
         const ok = await refreshAuthReady();
         setAuthReady(ok);
-      } catch {}
+      } catch {} finally {
+        setTokenRefreshing(false);
+      }
     })();
 
     if (mode === "add" && !scheduledAtLocal) {
@@ -571,8 +578,10 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
     try {
       // ensure auth ready to avoid token race
       if (!authReady) {
+        setTokenRefreshing(true);
         const ok = await refreshAuthReady();
         setAuthReady(ok);
+        setTokenRefreshing(false);
         if (!ok) {
           alert('認証情報が確認できません。しばらく待ってから再試行してください。');
           return;
@@ -684,12 +693,14 @@ export default function ScheduledPostEditorModal({ open, mode, initial, onClose,
             <button
               type="button"
               onClick={handleClickGenerate}
-              className={`px-3 py-2 rounded-md text-white ${isGenerating || !authReady ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
-              disabled={isGenerating || !authReady}
+            className={`px-3 py-2 rounded-md text-white ${(isGenerating || tokenRefreshing || !authReady) ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
+              disabled={isGenerating || tokenRefreshing || !authReady}
               style={{ display: 'inline-block' }}
               title={!authReady ? '認証確認中のため操作できません' : undefined}
             >
-              {isGenerating ? '生成中...' : !authReady ? '認証確認中...' : 'AIで生成'}
+              {isGenerating || tokenRefreshing ? (
+                <span className="loader inline-block" aria-hidden aria-label="読み込み中"></span>
+              ) : !authReady ? '認証確認中...' : 'AIで生成'}
             </button>
           </div>
         </div>

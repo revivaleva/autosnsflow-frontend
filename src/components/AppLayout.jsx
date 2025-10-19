@@ -137,16 +137,28 @@ export default function AppLayout({ children }) {
           ))}
           {/* 管理メニュー：フラグで即時表示（サーバ再検証で後から整合） */}
           {isAdmin && (
-            <li>
-              <Link
-                href="/admin/users"
-                className={`block px-3 py-2 rounded hover:bg-gray-700 ${
-                  pathname === "/admin/users" ? "bg-gray-700 font-semibold" : ""
-                }`}
-              >
-                管理（ユーザー一覧）
-              </Link>
-            </li>
+            <>
+              <li>
+                <Link
+                  href="/admin/users"
+                  className={`block px-3 py-2 rounded hover:bg-gray-700 ${
+                    pathname === "/admin/users" ? "bg-gray-700 font-semibold" : ""
+                  }`}
+                >
+                  管理（ユーザー一覧）
+                </Link>
+              </li>
+              <li>
+                <Link
+                  href="/admin/tokens"
+                  className={`block px-3 py-2 rounded hover:bg-gray-700 ${
+                    pathname === "/admin/tokens" ? "bg-gray-700 font-semibold" : ""
+                  }`}
+                >
+                  管理（トークン一覧）
+                </Link>
+              </li>
+            </>
           )}
         </ul>
 
