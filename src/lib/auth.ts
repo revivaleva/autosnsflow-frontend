@@ -33,6 +33,21 @@ export async function verifyUserFromRequest(req: any): Promise<VerifiedUser> {
       e.statusCode = 401;
       throw e;
     }
+    // If admin has set an impersonation cookie, and requester is admin, honor it by replacing sub
+    try {
+      const cookie = req.headers?.cookie || "";
+      const m = cookie.match(/(?:^|;\s*)impersonateUser=([^;]+)/);
+      const impersonate = m ? decodeURIComponent(m[1]) : null;
+      const groups = (payload["cognito:groups"] as string[]) || [];
+      const expected = env.ADMIN_GROUP || "Admins";
+      if (impersonate && Array.isArray(groups) && groups.includes(expected)) {
+        // attach originalSub for audit and replace sub
+        (payload as any).__originalSub = payload.sub;
+        (payload as any).sub = String(impersonate);
+      }
+    } catch (e) {
+      // ignore cookie parsing errors
+    }
     return payload as VerifiedUser;
   } catch (err: any) {
     const msg = String(err?.message || "");

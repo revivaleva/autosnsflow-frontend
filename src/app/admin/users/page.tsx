@@ -248,6 +248,24 @@ export default function AdminUsersPage() {
                       <td className="px-3 py-2 text-center">
                         {r.createdAt ? new Date(r.createdAt * 1000).toLocaleDateString() : "—"}
                       </td>
+                      <td className="px-3 py-2 text-center">
+                        <button
+                          className="px-2 py-1 bg-green-600 text-white rounded text-xs"
+                          onClick={async () => {
+                            try {
+                              const res = await fetch('/api/admin/impersonate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ userId: r.userId }) });
+                              const j = await res.json().catch(() => ({}));
+                              if (!res.ok) throw new Error(j?.error || `HTTP ${res.status}`);
+                              // open new tab to root
+                              window.open('/', '_blank');
+                            } catch (e: any) {
+                              alert('切替に失敗しました: ' + (e?.message || e));
+                            }
+                          }}
+                        >
+                          このユーザーで開く
+                        </button>
+                      </td>
                     </tr>
                   ))
                 )}
