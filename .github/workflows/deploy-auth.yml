@@ -22,7 +22,8 @@ jobs:
       - name: Archive lambda
         run: |
           cd lambda-auth
-          npm ci --omit=dev
+          # package-lock.json may not exist in this folder; use npm install for CI
+          npm install --production --no-audit --no-fund
           zip -r ../lambda-auth.zip .
 
       - name: Configure AWS Credentials
