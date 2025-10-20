@@ -23,7 +23,8 @@ export const handler = async (event: any = {}) => {
 
     if (!token || !device_id) return jsonResp(400, { ok: false, code: 'BAD_REQUEST', message: 'token and device_id required' });
 
-    const getResp = await ddb.send(new GetItemCommand({ TableName: TOKENS_TABLE, Key: marshall({ token }) }));
+    // Use table primary key `token_id` (stored as plain token per current DB)
+    const getResp = await ddb.send(new GetItemCommand({ TableName: TOKENS_TABLE, Key: marshall({ token_id: token }) }));
     if (!getResp.Item) return jsonResp(401, { ok: false, code: 'INVALID_TOKEN', message: 'token not found' });
     const item = unmarshall(getResp.Item) as any;
 
@@ -32,7 +33,7 @@ export const handler = async (event: any = {}) => {
     if (item.expires_at && Number(item.expires_at) > 0 && Number(item.expires_at) < now) return jsonResp(410, { ok: false, code: 'TOKEN_EXPIRED', message: 'token expired' });
 
     const leaseEnd = now + LEASE_SECONDS;
-    await ddb.send(new UpdateItemCommand({ TableName: TOKENS_TABLE, Key: marshall({ token }), UpdateExpression: 'SET bound_device_id = :did, bound_at = :now, session_expires_at = :lease, updated_at = :now', ExpressionAttributeValues: marshall({ ':did': device_id, ':now': now, ':lease': leaseEnd }) }));
+    await ddb.send(new UpdateItemCommand({ TableName: TOKENS_TABLE, Key: marshall({ token_id: token }), UpdateExpression: 'SET bound_device_id = :did, bound_at = :now, session_expires_at = :lease, updated_at = :now', ExpressionAttributeValues: marshall({ ':did': device_id, ':now': now, ':lease': leaseEnd }) }));
 
     try { const log = { event_id: `${token}#${now}#validate`, token, event_type: 'validate', actor: device_id, ts: now, detail: device_info || {}, ttl: now + LOG_TTL_SECONDS }; await ddb.send(new PutItemCommand({ TableName: TOKEN_EVENTS_TABLE, Item: marshall(log) })); } catch (e) { console.warn('putLog failed', String(e)); }
 
