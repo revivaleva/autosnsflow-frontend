@@ -292,11 +292,31 @@ ${incomingReply}
     max_tokens = pq.max_tokens;
 
   } else if (purpose === "persona-generate") {
-    systemPrompt = "あなたはSNS運用の専門家です。";
-    userPrompt = `
-あなたはSNSアカウントのキャラクターペルソナを作成するAIです。
-（…既存文面は変更なし…）
-    `.trim();
+    const personaSeed = (input?.personaSeed ?? "").toString();
+    // Include masterPrompt (運用方針) if present to match scheduled-post behavior
+    const mp = masterPrompt?.trim() ? `【運用方針（masterPrompt）】\n${masterPrompt}\n\n` : "";
+    systemPrompt = "あなたはSNS運用の専門家です。アカウントのキャラクターペルソナを作成してください。出力は「簡易ペルソナ」とJSON形式の「詳細ペルソナ」を必ず含めてください。説明は不要です。" + (mp ? `\n${mp}` : "");
+    userPrompt = (
+      mp +
+      `入力:\n${personaSeed}\n\n` +
+      `出力要件(厳守):\n1) 簡易ペルソナ: 日本語で一文の要約\n2) 詳細ペルソナ: 以下のキーを持つJSONオブジェクトのみを出力する（前後に説明や注釈を付けないこと）\n` +
+      `{
+  "name": "",
+  "age": "",
+  "gender": "",
+  "job": "",
+  "lifestyle": "",
+  "character": "",
+  "tone": "",
+  "vocab": "",
+  "emotion": "",
+  "erotic": "",
+  "target": "",
+  "purpose": "",
+  "distance": "",
+  "ng": ""
+}`
+    ).trim();
     max_tokens = 800;
 
   } else {
@@ -332,13 +352,25 @@ ${incomingReply}
       return JSON.stringify(base);
     };
 
+    // Choose model to use for the initial request. For persona-generate prefer a
+    // non-inference-style model to avoid reasoning-only responses that return
+    // empty `message.content` (we'll still keep selectedModel for fallback logic).
+    let modelToUse = selectedModel;
+    if (purpose === "persona-generate") {
+      if (isInferenceModel(selectedModel)) {
+        modelToUse = "gpt-4o-mini"; // prefer a stable non-inference model for persona JSON output
+      } else {
+        modelToUse = selectedModel;
+      }
+    }
+
     const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${openaiApiKey}`,
       },
-      body: openaiBodyFactory(selectedModel),
+      body: openaiBodyFactory(modelToUse),
     });
 
     // Read raw text first for debug
@@ -394,9 +426,78 @@ ${incomingReply}
     }
 
     if (purpose === "persona-generate") {
-      const text = data.choices?.[0]?.message?.content || "";
-      // （既存の抽出処理はそのまま）
-      res.status(200).json({ text }); return;  // [MOD] Next API は void を返す
+      // Primary content (may be empty if model used "reasoning" tokens)
+      let rawText = data.choices?.[0]?.message?.content || "";
+
+      // If empty, retry once with smaller max to avoid token truncation issues
+      if (!rawText) {
+        try {
+          const retryBody = openaiBodyFactory(selectedModel, { maxOut: 150 });
+          const retryRes = await fetch("https://api.openai.com/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${openaiApiKey}`,
+            },
+            body: retryBody,
+          });
+          const retryRaw = await retryRes.text();
+          let retryData: any = {};
+          try { retryData = retryRaw ? JSON.parse(retryRaw) : {}; } catch { retryData = { raw: retryRaw }; }
+          const retryText = retryData.choices?.[0]?.message?.content || "";
+          if (retryText) {
+            rawText = retryText;
+            data._retry = retryData;
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      // If still empty and selected model is inference-style, try fallbacks
+      if (!rawText && isInferenceModel(selectedModel)) {
+        const fallbacks = ["gpt-4o-mini", "gpt-5-mini", "gpt-5-nano"];
+        for (const fbModel of fallbacks) {
+          try {
+            const fbRes = await fetch("https://api.openai.com/v1/chat/completions", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${openaiApiKey}`,
+              },
+              body: openaiBodyFactory(fbModel, { maxOut: Math.max(300, 150) }),
+            });
+            const fbRaw = await fbRes.text();
+            let fbData: any = {};
+            try { fbData = fbRaw ? JSON.parse(fbRaw) : {}; } catch { fbData = { raw: fbRaw }; }
+            const fbText = fbData.choices?.[0]?.message?.content || "";
+            (data._fallbacks = data._fallbacks || []).push({ model: fbModel, raw: fbData });
+            if (fbText) {
+              rawText = fbText;
+              data._fallback = { model: fbModel, raw: fbData };
+              break;
+            }
+          } catch (ee) {
+            // ignore
+          }
+        }
+      }
+
+      // Parse persona from rawText
+      let personaDetail = "";
+      let personaSimple = "";
+      try {
+        const jsonMatch = rawText.match(/\{[\s\S]*\}/m);
+        if (jsonMatch) personaDetail = jsonMatch[0].trim();
+        const simpleMatch = rawText.match(/簡易ペルソナ[:：]?\s*([\s\S]*?)(?:\n{2,}|\n\{|\n$)/m);
+        if (simpleMatch) personaSimple = simpleMatch[1].trim();
+        else personaSimple = rawText.replace(personaDetail, "").trim();
+        if (personaSimple.length > 1000) personaSimple = personaSimple.slice(0, 1000);
+      } catch (e) {
+        // ignore
+      }
+
+      return res.status(200).json({ personaDetail, personaSimple, raw: data });
     }
 
     let text = data.choices?.[0]?.message?.content || "";

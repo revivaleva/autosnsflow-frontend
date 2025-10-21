@@ -148,7 +148,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
 
     if (req.method === "POST") {
-      const { accountId, username, displayName, accessToken = "", oauthAccessToken = "", clientId, clientSecret, monitoredAccountId, quoteTimeStart, quoteTimeEnd } = safeBody(req.body);
+      const { accountId, username, displayName, accessToken = "", oauthAccessToken = "", clientId, clientSecret, monitoredAccountId, quoteTimeStart, quoteTimeEnd, personaDetail, personaSimple, personaMode, autoPostGroupId, secondStageContent } = safeBody(req.body);
       if (!accountId) return res.status(400).json({ error: "accountId required" });
       // Prevent creating the same SK for different users: check if any existing item with SK ACCOUNT#<accountId> exists for a different PK
       try {
@@ -224,6 +224,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         createdAt: { N: now },
         updatedAt: { N: now },
       };
+      // Optional persona fields
+      if (typeof personaMode !== 'undefined') item.personaMode = { S: String(personaMode || '') };
+      if (typeof personaSimple !== 'undefined') item.personaSimple = { S: String(personaSimple || '') };
+      if (typeof personaDetail !== 'undefined') item.personaDetail = { S: String(personaDetail || '') };
+      if (autoPostGroupId) item.autoPostGroupId = { S: String(autoPostGroupId) };
+      if (secondStageContent) item.secondStageContent = { S: String(secondStageContent) };
       // If clientId/clientSecret not provided or empty, try to fallback to user default settings
       if (clientId) {
         item.clientId = { S: String(clientId) };

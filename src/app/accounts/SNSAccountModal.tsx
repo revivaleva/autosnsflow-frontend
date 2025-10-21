@@ -635,6 +635,7 @@ export default function SNSAccountModal({
         <form
           className="bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 p-8 rounded shadow-lg min-w-[520px] max-h-[90vh] overflow-y-auto"
           onSubmit={handleSubmit}
+          autoComplete="off"
         >
         <h2 className="text-xl font-bold mb-4">
           {mode === "edit" ? "アカウント編集" : "新規アカウント追加"}
@@ -652,12 +653,14 @@ export default function SNSAccountModal({
         />
 
         <label className="block">ID</label>
-        {mode === "edit" ? (
+          {mode === "edit" ? (
           <div className="mb-2">
             <input
               className="mb-2 border rounded px-2 py-1 w-full bg-gray-100 dark:bg-gray-800"
               value={accountId}
               readOnly
+                name="accountId"
+                autoComplete="off"
             />
             <div className="text-sm text-gray-500">
               編集時はIDを変更できません。IDを変更すると旧レコードが削除され新しいレコードが作成されます。
@@ -666,6 +669,8 @@ export default function SNSAccountModal({
         ) : (
           <input
             className="mb-2 border rounded px-2 py-1 w-full"
+            name="accountId"
+            autoComplete="off"
             value={accountId}
             onChange={(e) => setAccountId(e.target.value)}
             placeholder="@account_id"
@@ -777,6 +782,8 @@ export default function SNSAccountModal({
         <label className="block mt-2">Threads App ID (clientId)</label>
         <input
           className="mb-2 border rounded px-2 py-1 w-full"
+          name="clientId"
+          autoComplete="off"
           value={clientId}
           onChange={(e) => setClientId(e.target.value)}
           placeholder="未設定の場合は空欄"
@@ -789,6 +796,8 @@ export default function SNSAccountModal({
               className="flex-1 border rounded px-2 py-1 w-full bg-gray-50"
               readOnly
               value={'********'}
+              name="clientSecretMasked"
+              autoComplete="new-password"
             />
             <button
               type="button"
@@ -806,6 +815,8 @@ export default function SNSAccountModal({
           <input
             className="mb-2 border rounded px-2 py-1 w-full"
             type="password"
+            name="clientSecret"
+            autoComplete="new-password"
             value={clientSecret}
             onChange={(e) => setClientSecret(e.target.value)}
             placeholder="登録済みのシークレットを上書きするにはここに入力"
