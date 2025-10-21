@@ -4,7 +4,7 @@
 
 import type { NextApiRequest, NextApiResponse } from "next";
 import { CognitoIdentityProviderClient, ListUsersCommand } from "@aws-sdk/client-cognito-identity-provider";
-import { GetItemCommand, PutItemCommand, UpdateItemCommand } from "@aws-sdk/client-dynamodb";
+import { GetItemCommand, PutItemCommand, UpdateItemCommand, QueryCommand } from "@aws-sdk/client-dynamodb";
 import { createDynamoClient } from "@/lib/ddb";
 import { verifyUserFromRequest, assertAdmin } from "@/lib/auth";
 import { env } from "@/lib/env";
@@ -123,6 +123,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           // ignore and fallback to UserSettings.apiUsedCount
         }
 
+        // count registered Threads accounts for this user
+        let registeredAccounts = 0;
+        try {
+          const qc = await ddb.send(new QueryCommand({
+            TableName: process.env.TBL_THREADS_ACCOUNTS || 'ThreadsAccounts',
+            KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
+            ExpressionAttributeValues: { ':pk': { S: `USER#${normalizedSub}` }, ':pfx': { S: 'ACCOUNT#' } },
+            Select: 'COUNT',
+          }));
+          registeredAccounts = Number((qc as any).Count || 0);
+        } catch (e) {
+          // ignore and leave as 0
+        }
+
         results.push({
           userId: normalizedSub,
           email,
@@ -136,6 +150,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           updatedAt:         Number(item.updatedAt?.N || 0),
           // Cognito の作成日時（秒）
           createdAt:         u.UserCreateDate ? Math.floor(new Date(u.UserCreateDate as any).getTime() / 1000) : 0,
+          registeredAccounts,
         });
       }
       results.sort((a, b) => (a.email || "").localeCompare(b.email || "", "ja"));
