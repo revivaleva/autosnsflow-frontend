@@ -29,7 +29,9 @@ jobs:
           # include bundled output and production node_modules
           mkdir -p dist
           cp -r node_modules dist/ || true
-          zip -r ../lambda-auth.zip dist
+          # package dist contents at zip root so Lambda handler paths match
+          cd dist
+          zip -r ../lambda-auth.zip .
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v2
@@ -38,6 +40,9 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ap-northeast-1
 
-      - name: Update Lambda code
+      - name: List workspace and update Lambda code
         run: |
-          aws lambda update-function-code --function-name autosnsflow-auth --zip-file fileb://lambda-auth.zip
+          echo "Workspace files:" && ls -la
+          echo "lambda-auth contents:" && ls -la lambda-auth || true
+          echo "lambda-auth zip exists:" && ls -la lambda-auth/lambda-auth.zip || true
+          aws lambda update-function-code --function-name autosnsflow-auth --zip-file fileb://lambda-auth/lambda-auth.zip
