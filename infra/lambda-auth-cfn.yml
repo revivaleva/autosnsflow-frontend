@@ -1,0 +1,125 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Lambda + API Gateway for autosnsflow-auth
+Resources:
+  AuthLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: AuthLambdaDDBPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                Resource:
+                  - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${TokensTable}
+                  - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${EventsTable}
+        - PolicyName: AuthLambdaLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+
+  AuthFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: autosnsflow-auth
+      Handler: validate.handler
+      Role: !GetAtt AuthLambdaExecutionRole.Arn
+      Runtime: nodejs18.x
+      Timeout: 10
+      Environment:
+        Variables:
+          TOKENS_TABLE: !Ref TokensTable
+          TOKEN_EVENTS_TABLE: !Ref EventsTable
+          LEASE_SECONDS: "7200"
+          LOG_TTL_SECONDS: !Ref LogTtlSeconds
+
+  AuthHeartbeatFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: autosnsflow-auth-heartbeat
+      Handler: heartbeat.handler
+      Role: !GetAtt AuthLambdaExecutionRole.Arn
+      Runtime: nodejs18.x
+      Timeout: 10
+      Environment:
+        Variables:
+          TOKENS_TABLE: !Ref TokensTable
+          TOKEN_EVENTS_TABLE: !Ref EventsTable
+          LEASE_SECONDS: "7200"
+          LOG_TTL_SECONDS: !Ref LogTtlSeconds
+
+  AuthApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: autosnsflow-auth-api
+      ProtocolType: HTTP
+
+  AuthIntegrationValidate:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref AuthApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AuthFunction.Arn}/invocations
+
+  AuthIntegrationHeartbeat:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref AuthApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AuthHeartbeatFunction.Arn}/invocations
+
+  ValidateRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref AuthApi
+      RouteKey: POST /auth/validate
+      Target: !Sub integrations/${AuthIntegrationValidate}
+
+  HeartbeatRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref AuthApi
+      RouteKey: POST /auth/heartbeat
+      Target: !Sub integrations/${AuthIntegrationHeartbeat}
+
+  ApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref AuthApi
+      AutoDeploy: true
+      StageName: prod
+
+Outputs:
+  ApiEndpoint:
+    Value: !Sub https://${AuthApi}.execute-api.${AWS::Region}.amazonaws.com/prod
+
+Parameters:
+  TokensTable:
+    Type: String
+    Default: LicenseTokens
+  EventsTable:
+    Type: String
+    Default: TokenEvents
+  LogTtlSeconds:
+    Type: Number
+    Default: 604800
+
+

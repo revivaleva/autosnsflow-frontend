@@ -1,0 +1,48 @@
+name: Deploy Auth Lambda
+
+on:
+  push:
+    paths:
+      - 'lambda-auth/**'
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Build and archive lambda
+        run: |
+          cd lambda-auth
+          # install runtime deps
+          npm install --production --no-audit --no-fund
+          # bundle TypeScript handlers into dist/ using esbuild (npx will fetch it)
+          npx esbuild validate.ts heartbeat.ts --outdir=dist --bundle --platform=node --target=node18 || true
+          # include bundled output and production node_modules
+          mkdir -p dist
+          cp -r node_modules dist/ || true
+          # package dist contents at zip root so Lambda handler paths match
+          cd dist
+          zip -r ../lambda-auth.zip .
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-northeast-1
+
+      - name: List workspace and update Lambda code
+        run: |
+          echo "Workspace files:" && ls -la
+          echo "lambda-auth contents:" && ls -la lambda-auth || true
+          echo "lambda-auth zip exists:" && ls -la lambda-auth/lambda-auth.zip || true
+          aws lambda update-function-code --function-name autosnsflow-auth --zip-file fileb://lambda-auth/lambda-auth.zip
