@@ -13,6 +13,7 @@ type AdminUserRow = {
   userId: string;
   username?: string;
   maxThreadsAccounts?: number;
+  registeredAccounts?: number;
   planType: string;
   apiDailyLimit: number;
   apiUsedCount: number;
