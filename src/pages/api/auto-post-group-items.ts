@@ -27,6 +27,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         ExpressionAttributeValues: { ":pk": { S: `USER#${userId}` }, ":pfx": { S: `GROUPITEM#${groupKey}#` } },
         ScanIndexForward: true,
         Limit: 100,
+        ConsistentRead: true,
       }));
       const items = (out.Items || []).map((i: any) => ({
         slotId: (i.SK?.S || "").split(`#`).pop() || "",
@@ -52,11 +53,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }));
       const count = Number(q.Count || 0);
       if (count >= MAX_SLOTS) return res.status(400).json({ error: "slot_limit_reached" });
+      const sk = skItem(groupKey, slotId);
+      console.log(`[auto-post-group-items][POST] user=${userId} groupKey=${groupKey} slotId=${slotId} SK=${sk}`);
       await ddb.send(new PutItemCommand({
         TableName: TBL_GROUPS,
         Item: {
           PK: { S: `USER#${userId}` },
-          SK: { S: skItem(groupKey, slotId) },
+          SK: { S: sk },
           order: { N: String(order) },
           timeRange: { S: String(timeRange || "") },
           theme: { S: String(theme || "") },
@@ -80,25 +83,44 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (has(enabled))   { names["#en"] = "enabled";   values[":en"] = { BOOL: !!enabled };               sets.push("#en = :en"); }
       if (has(body.secondStageWanted)) { names["#ssw"] = "secondStageWanted"; values[":ssw"] = { BOOL: !!body.secondStageWanted }; sets.push("#ssw = :ssw"); }
       if (!sets.length) return res.status(400).json({ error: "no_fields" });
-      await ddb.send(new UpdateItemCommand({
-        TableName: TBL_GROUPS,
-        Key: { PK: { S: `USER#${userId}` }, SK: { S: skItem(groupKey, slotId) } },
-        UpdateExpression: "SET " + sets.join(", "),
-        ExpressionAttributeNames: names,
-        ExpressionAttributeValues: values,
-      }));
-      return res.status(200).json({ ok: true });
+      const sku = skItem(groupKey, slotId);
+      console.log(`[auto-post-group-items][PATCH] user=${userId} groupKey=${groupKey} slotId=${slotId} SK=${sku} sets=${sets.join(',')}`);
+      try {
+        await ddb.send(new UpdateItemCommand({
+          TableName: TBL_GROUPS,
+          Key: { PK: { S: `USER#${userId}` }, SK: { S: sku } },
+          UpdateExpression: "SET " + sets.join(", "),
+          ExpressionAttributeNames: names,
+          ExpressionAttributeValues: values,
+          ConditionExpression: "attribute_exists(PK) AND attribute_exists(SK)",
+        }));
+        return res.status(200).json({ ok: true });
+      } catch (e: any) {
+        // If conditional check failed, the item does not exist -> return 404 to client
+        if (String(e?.name || e?.code || '').includes('ConditionalCheckFailed')) {
+          return res.status(404).json({ error: 'not_found' });
+        }
+        console.error('[auto-post-group-items][PATCH] error', e);
+        return res.status(500).json({ error: String(e?.message || e) });
+      }
     }
 
     if (req.method === "DELETE") {
       const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
       const { groupKey, slotId } = body || {};
       if (!groupKey || !slotId) return res.status(400).json({ error: "groupKey and slotId required" });
-      await ddb.send(new DeleteItemCommand({
-        TableName: TBL_GROUPS,
-        Key: { PK: { S: `USER#${userId}` }, SK: { S: skItem(groupKey, slotId) } },
-      }));
-      return res.status(200).json({ ok: true });
+      const sk = skItem(groupKey, slotId);
+      try {
+        console.log(`[auto-post-group-items][DELETE] user=${userId} groupKey=${groupKey} slotId=${slotId} SK=${sk}`);
+        await ddb.send(new DeleteItemCommand({
+          TableName: TBL_GROUPS,
+          Key: { PK: { S: `USER#${userId}` }, SK: { S: sk } },
+        }));
+        return res.status(200).json({ ok: true, deleted: { PK: `USER#${userId}`, SK: sk } });
+      } catch (e: any) {
+        console.error('[auto-post-group-items][DELETE] error', e);
+        return res.status(500).json({ error: String(e?.message || e) });
+      }
     }
 
     res.setHeader("Allow", ["GET", "POST", "PATCH", "DELETE"]);
