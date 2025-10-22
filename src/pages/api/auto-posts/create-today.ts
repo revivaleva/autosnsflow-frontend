@@ -118,8 +118,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             const ta = new Date(Date.UTC(dateY, dateM, dateD, pa[0]-9, pa[1], 0));
             const tb = new Date(Date.UTC(dateY, dateM, dateD, pb[0]-9, pb[1], 0));
             // If end <= start, treat as single point at start
-            const mid = Math.floor((ta.getTime() + tb.getTime()) / 2);
-            return Math.floor(mid / 1000);
+            const startMs = ta.getTime();
+            const endMs = tb.getTime();
+            if (endMs <= startMs) return Math.floor(startMs / 1000);
+            // Latest allowed is 6 minutes before range end
+            const latestAllowedMs = endMs - 6 * 60 * 1000;
+            const cappedLatestMs = latestAllowedMs < startMs ? startMs : latestAllowedMs;
+            // Choose a random millisecond timestamp between start and cappedLatest (inclusive)
+            const span = cappedLatestMs - startMs;
+            const chosenMs = startMs + Math.floor(Math.random() * (span + 1));
+            return Math.floor(chosenMs / 1000);
           } catch (e) {
             return null;
           }

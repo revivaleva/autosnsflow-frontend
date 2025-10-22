@@ -106,8 +106,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       numericId = (normal as any).publishedNumeric || undefined;
     }
 
-    // [MOD] permalink 取得（失敗時は null）
-    const permalink = await getThreadsPermalink({ accessToken: (oauthAccessToken && oauthAccessToken.trim()) ? oauthAccessToken : accessToken, postId });
+    // Prefer to use available postId directly to build permalink URL when possible
+    // If postId is present, use https://www.threads.net/post/<postId> without calling external API.
+    let permalinkUrl: string | null = null;
+    if (postId && String(postId).trim().length > 0) {
+      permalinkUrl = `https://www.threads.net/post/${String(postId).trim()}`;
+    } else {
+      // fallback to fetch permalink from API (may require token)
+      const perm = await getThreadsPermalink({ accessToken: (oauthAccessToken && oauthAccessToken.trim()) ? oauthAccessToken : accessToken, postId });
+      permalinkUrl = perm?.url || null;
+    }
 
     // Debug webhook removed
 
@@ -140,9 +148,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       console.info('[DBG manual-post] updateValues(final)', values, 'sets', sets);
     } catch (e) { console.warn('[DBG manual-post] debug log failed 2', e); }
     
-    if (permalink?.url) {
+    if (permalinkUrl) {
       sets.push("postUrl = :purl");
-      values[":purl"] = { S: permalink.url };
+      values[":purl"] = { S: permalinkUrl };
     } else {
       // Mark as attempted-and-failed so we don't retry fetching permalink repeatedly
       sets.push("postUrl = :purl");
@@ -175,7 +183,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       post: {
         scheduledPostId,
         postId,
-        ...(permalink?.url ? { postUrl: permalink.url } : {}),
+        ...(permalinkUrl ? { postUrl: permalinkUrl } : {}),
         postedAt: now,
         status: "posted",
         ...(secondStageContent?.trim() ? { doublePostStatus: "waiting" } : {}),
