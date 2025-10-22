@@ -1,6 +1,4 @@
-// [MOD] Emailクリックで編集モーダルを開く。背景クリックでキャンセル。
-//      管理停止・自動投稿トグル／当日上限を編集 → PATCH /api/admin/users で保存
-// [ADD] AdminGuard を巻いて未権限ユーザーをダッシュボードにリダイレクト
+// Merged and cleaned version of Admin Users page
 "use client";
 
 import { useEffect, useState } from "react";
@@ -303,7 +301,7 @@ export default function AdminUsersPage() {
                       ×
                     </button>
                   </div>
-                  <pre className="text-xs whitespace-pre-wrap break-all bg-gray-50 p-3 rounded max-h-[70vh] overflow-auto">
+                  <pre className="text-xsWhitespace-pre-wrap break-all bg-gray-50 p-3 rounded max-h-[70vh] overflow-auto">
                     {JSON.stringify(raw, null, 2)}
                   </pre>
                 </div>

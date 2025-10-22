@@ -653,14 +653,14 @@ export default function SNSAccountModal({
         />
 
         <label className="block">ID</label>
-          {mode === "edit" ? (
+        {mode === "edit" ? (
           <div className="mb-2">
             <input
               className="mb-2 border rounded px-2 py-1 w-full bg-gray-100 dark:bg-gray-800"
               value={accountId}
               readOnly
-                name="accountId"
-                autoComplete="off"
+              name="accountId"
+              autoComplete="off"
             />
             <div className="text-sm text-gray-500">
               編集時はIDを変更できません。IDを変更すると旧レコードが削除され新しいレコードが作成されます。
