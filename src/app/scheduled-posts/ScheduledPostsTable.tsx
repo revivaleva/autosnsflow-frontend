@@ -666,6 +666,11 @@ export default function ScheduledPostsTable() {
 
               // [FIX] 型エラー回避のため any キャストで postUrl を取得
               const pUrl = (post as any).postUrl as string | undefined;
+              // Normalize pUrl: treat '-' or quoted '-' as missing so UI falls back to generatedUrl
+              const normalizedPUrl = pUrl ? String(pUrl).trim().replace(/^'+|'+$/g, '') : '';
+              const validPUrl = (normalizedPUrl && normalizedPUrl !== '-') ? normalizedPUrl : undefined;
+              // fallback to account profile if no post permalink available
+              const profileUrl = post.accountId ? `https://www.threads.com/@${post.accountId}` : undefined;
               // postIdからpostURLを生成
               const postId = (post as any).postId as string | undefined;
               const generatedUrl = postId ? `https://www.threads.net/post/${postId}` : undefined;
@@ -773,8 +778,8 @@ export default function ScheduledPostsTable() {
                   <td className="border p-1">
                     {/* 投稿ID列: postUrl があればアンカー、無ければ postId 表示、どちらも無ければ 空 */}
                     {post.status === "posted" ? (
-                      (pUrl || generatedUrl) ? (
-                        <a href={pUrl || generatedUrl} target="_blank" rel="noreferrer" className="text-blue-600 underline">{String(post.postId || (post as any).numericPostId || '').slice(0, 30)}</a>
+                      (validPUrl || generatedUrl || profileUrl) ? (
+                        <a href={validPUrl || generatedUrl || profileUrl} target="_blank" rel="noreferrer" className="text-blue-600 underline">{String(post.postId || (post as any).numericPostId || '').slice(0, 30)}</a>
                       ) : (
                         <span className="text-sm">{post.postId || (post as any).numericPostId || ""}</span>
                       )
