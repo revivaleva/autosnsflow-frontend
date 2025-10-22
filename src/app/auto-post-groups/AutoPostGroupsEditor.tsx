@@ -2,7 +2,7 @@
 
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 
 // =======================
 // 型定義
@@ -240,7 +240,8 @@ export default function AutoPostGroupsEditor() {
             const it = items[i];
             const payload: any = {
               groupKey: newGroupKey,
-              slotId: `CLONE#${Date.now()}${i}`,
+              // generate numeric timestamp-based id (same form as manual Add)
+              slotId: String(Date.now()) + String(i),
               order: i,
               timeRange: it.timeRange || "",
               theme: it.theme || "",
@@ -363,8 +364,14 @@ function SlotEditor({ groupKey, items, loading, onReload }: { groupKey: string; 
     setRows(arr);
   };
 
-  // Save all slots (create new / update existing) with validation
+  const [isSavingSlots, setIsSavingSlots] = useState(false);
+  const savingRef = useRef(false); // synchronous guard to prevent double-invocation
+
+  // Save all slots (update existing) with validation. New rows are created by Add button.
   const saveAll = async () => {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setIsSavingSlots(true);
     // Validate enabled rows have timeRange and theme
     for (let i = 0; i < rows.length; i++) {
       const it = rows[i];
@@ -372,40 +379,73 @@ function SlotEditor({ groupKey, items, loading, onReload }: { groupKey: string; 
       const [s = "", e = ""] = (it.timeRange || "").split("-");
       if (!s || !e || !String(it.theme || "").trim()) {
         alert("未設定の時間帯や空のテーマがあります。すべての有効なスロットで時間帯とテーマを設定してください。");
+        setIsSavingSlots(false);
+        savingRef.current = false;
         return;
       }
     }
 
+    // Only PATCH existing rows (Add button creates new records on server).
     for (let i = 0; i < rows.length; i++) {
       const it = rows[i];
       const payload = { groupKey, slotId: it.slotId, timeRange: it.timeRange || "", theme: it.theme || "", enabled: !!it.enabled, secondStageWanted: !!it.secondStageWanted, order: i };
-      if (String(it.slotId).startsWith("tmp-")) {
-        await fetch(API_ITEMS, { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify(payload) });
-      } else {
-        await fetch(API_ITEMS, { method: "PATCH", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify(payload) });
-      }
+      console.log('[slotEditor] patch payload', payload);
+      await fetch(API_ITEMS, { method: "PATCH", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify(payload) });
     }
-    onReload();
+
+    // After updating rows, delete any original slots that were removed locally.
+    try {
+      const existingIds = (items || []).map(x => x.slotId);
+      const currentIds = rows.map(x => x.slotId);
+      const toDelete = existingIds.filter(id => !currentIds.includes(id));
+      console.log('[slotEditor] toDelete(after save)', { groupKey, toDelete, existingIds, currentIds });
+      for (const id of toDelete) {
+        console.log('[slotEditor] DELETE send(after save)', { groupKey, slotId: id });
+        await fetch(API_ITEMS, { method: "DELETE", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ groupKey, slotId: id }) });
+      }
+    } catch (e) {
+      console.warn('[slotEditor] delete error after save', e);
+    }
+
+    try {
+      onReload();
+    } finally {
+      setIsSavingSlots(false);
+      savingRef.current = false;
+    }
   };
 
   // per-row save removed: use saveAll to persist all slots at once
 
+  // Prompt and delete immediately on server, then remove locally
   const deleteRow = async (slotId: string) => {
-    if (!window.confirm("スロットを削除しますか？")) return;
-    await fetch(API_ITEMS, {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ groupKey, slotId }),
-    });
-    onReload();
+    if (savingRef.current) return; // ignore deletes while saving to avoid race
+    if (!confirm('このスロットを削除します。よろしいですか？')) return;
+    try {
+      const res = await fetch(API_ITEMS, { method: "DELETE", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ groupKey, slotId }) });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok || d?.error) throw new Error(d?.error || 'delete failed');
+      setRows((r) => (r || []).filter((x) => x.slotId !== slotId));
+    } catch (e: any) {
+      alert('削除に失敗しました: ' + (e?.message || e));
+    }
   };
 
   // Add a temporary local row (not immediately persisted) so unsaved fields are preserved
-  const addRow = () => {
-    const id = `tmp-${Date.now()}`;
-    const newRow: SlotType = { slotId: id, order: rows.length, timeRange: "", theme: "", enabled: true };
-    setRows((r) => [...r, newRow]);
+  // Create new record immediately on server and append to rows
+  const addRow = async () => {
+    if (savingRef.current) return;
+    const id = String(Date.now());
+    const payload: any = { groupKey, slotId: id, order: rows.length, timeRange: "", theme: "", enabled: true, secondStageWanted: false };
+    try {
+      const res = await fetch(API_ITEMS, { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify(payload) });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok || d?.error) throw new Error(d?.error || 'create failed');
+      const newRow: SlotType = { slotId: id, order: rows.length, timeRange: "", theme: "", enabled: true };
+      setRows((r) => [...r, newRow]);
+    } catch (e: any) {
+      alert('追加に失敗しました: ' + (e?.message || e));
+    }
   };
 
   const setField = (i: number, key: keyof SlotType, value: any) => {
@@ -419,8 +459,8 @@ function SlotEditor({ groupKey, items, loading, onReload }: { groupKey: string; 
       <div className="flex justify-between items-center mb-2">
         <div className="font-semibold">スロット（最大10件）</div>
         <div className="space-x-2">
-          <button className="bg-green-600 text-white px-3 py-1 rounded" onClick={addRow}>＋追加</button>
-          <button className="bg-blue-600 text-white px-3 py-1 rounded" onClick={saveAll}>保存</button>
+          <button className="bg-green-600 text-white px-3 py-1 rounded" onClick={addRow} disabled={isSavingSlots}>＋追加</button>
+          <button className="bg-blue-600 text-white px-3 py-1 rounded" onClick={saveAll} disabled={isSavingSlots}>{isSavingSlots ? '保存中...' : '保存'}</button>
         </div>
       </div>
       {loading ? (

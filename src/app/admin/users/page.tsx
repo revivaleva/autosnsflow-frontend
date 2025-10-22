@@ -1,6 +1,4 @@
-// [MOD] Emailクリックで編集モーダルを開く。背景クリックでキャンセル。
-//      管理停止・自動投稿トグル／当日上限を編集 → PATCH /api/admin/users で保存
-// [ADD] AdminGuard を巻いて未権限ユーザーをダッシュボードにリダイレクト
+// Merged and cleaned version of Admin Users page
 "use client";
 
 import { useEffect, useState } from "react";
@@ -13,6 +11,7 @@ type AdminUserRow = {
   userId: string;
   username?: string;
   maxThreadsAccounts?: number;
+  registeredAccounts?: number;
   planType: string;
   apiDailyLimit: number;
   apiUsedCount: number;
@@ -152,55 +151,54 @@ export default function AdminUsersPage() {
   return (
     <AdminGuard redirectTo={DASHBOARD_PATH}>
       <AppLayout>
-        <div className="p-6 max-w-7xl mx-auto">
+      <div className="p-6 max-w-[2200px] mx-auto">
           <h1 className="text-2xl font-bold mb-4">管理者用：ユーザー一覧</h1>
 
-          <div className="flex gap-3 mb-3">
-            <input
-              className="border rounded px-3 py-2 w-full"
-              placeholder="email / userId / username で検索"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-            />
-            <button className="px-4 py-2 rounded bg-indigo-600 text-white nowrap-button w-24" onClick={load}>
-              再読込
-            </button>
-            <button className="px-4 py-2 rounded bg-indigo-600 text-white/90 nowrap-button w-28" onClick={() => setDebugOpen(true)}>
-              デバッグ表示
-            </button>
-          </div>
+            <div className="flex gap-3 mb-3">
+              <input
+                className="border rounded px-3 py-2 flex-1"
+                placeholder="email / userId / username で検索"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+              />
+              <button className="px-4 py-2 rounded bg-indigo-600 text-white nowrap-button w-28" onClick={load}>
+                再読込
+              </button>
+              <button className="px-4 py-2 rounded bg-indigo-600 text-white/90 nowrap-button debug-button" onClick={() => setDebugOpen(true)}>
+                デバッグ
+              </button>
+            </div>
 
           {error && <div className="mb-3 text-red-600 text-sm break-all">{error}</div>}
 
-          <div className="overflow-x-auto bg-white dark:bg-gray-900 border rounded">
-            <table className="min-w-full text-sm">
-              <colgroup>
-                <col style={{ width: '30%' }} />
+            <div className="overflow-x-auto bg-white dark:bg-gray-900 border rounded">
+            <table className="min-w-full text-sm" style={{ minWidth: '1400px' }}>
+               <colgroup>
+                <col style={{ width: '18%' }} />
+                <col style={{ width: '15%' }} />
+                <col style={{ width: '16%' }} />
+                <col style={{ width: '6%' }} />
                 <col style={{ width: '24%' }} />
-                <col style={{ width: '12%' }} />
                 <col style={{ width: '6%' }} />
-                <col style={{ width: '10%' }} />
-                <col style={{ width: '6%' }} />
-                <col style={{ width: '6%' }} />
+                <col style={{ width: '26%' }} />
+                <col style={{ width: '4%' }} />
                 <col style={{ width: '3%' }} />
-                <col style={{ width: '2%' }} />
-                <col style={{ width: '1%' }} />
-              </colgroup>
+                <col style={{ width: '3%' }} />
+                <col style={{ width: '7%' }} />
+               </colgroup>
               <thead className="bg-gray-100 dark:bg-gray-800">
                 <tr>
                   <th className="px-3 py-2 text-left">Email</th>
                   <th className="px-3 py-2 text-left">UserId</th>
                   <th className="px-3 py-2 text-left">Username</th>
                   <th className="px-3 py-2">Plan</th>
-                  <th className="px-3 py-2 text-center">
-                    <div>当日使用</div>
-                    <div>/ 上限</div>
-                  </th>
+                  <th className="px-3 py-2 text-center">当日使用</th>
                   <th className="px-3 py-2">Max Threads</th>
-                  <th className="px-3 py-2">管理停止</th>
+                      <th className="px-3 py-2">管理停止</th>
                   <th className="px-3 py-2">自動投稿（UserSettings）</th>
                   <th className="px-3 py-2">更新</th>
                   <th className="px-3 py-2">作成日</th>
+                  <th className="px-3 py-2">アクション</th>
                 </tr>
               </thead>
               <tbody>
@@ -219,7 +217,7 @@ export default function AdminUsersPage() {
                 ) : (
                   filtered.map((r) => (
                     <tr key={r.userId} className="border-t">
-                      <td className="px-3 py-2">
+                      <td className="px-3 py-2 admin-email-col">
                         {/* [ADD] Emailクリックで編集モーダル */}
                         <div className="cell-content">
                           <button className="text-indigo-600 font-medium hover:underline nowrap-button" onClick={() => openEdit(r)}>
@@ -234,12 +232,9 @@ export default function AdminUsersPage() {
                         <div className="cell-content">{r.username || ""}</div>
                       </td>
                       <td className="px-3 py-2 text-center">{r.planType}</td>
-                      <td className="px-3 py-2 text-center">
-                        <div>{r.apiUsedCount ?? 0}</div>
-                        <div>/ {r.apiDailyLimit}</div>
-                      </td>
-                      <td className="px-3 py-2 text-center">{r.maxThreadsAccounts ?? 0}</td>
-                      <td className="px-3 py-2 text-center">{r.autoPostAdminStop ? "停止" : "—"}</td>
+                      <td className="px-3 py-2 text-center">{(r.apiUsedCount ?? 0) + ' / ' + (r.apiDailyLimit ?? 0)}</td>
+                      <td className="px-3 py-2 text-center">{r.registeredAccounts ?? 0} / {r.maxThreadsAccounts ?? 0}</td>
+                      <td className="px-3 py-2 text-center admin-stop-col">{r.autoPostAdminStop ? "停止" : "—"}</td>
                       <td className="px-3 py-2 text-center">{r.autoPost ? "有効" : "無効"}</td>
                       <td className="px-3 py-2 text-center">
                         {r.updatedAt ? new Date(r.updatedAt * 1000).toLocaleString() : "—"}
@@ -250,7 +245,7 @@ export default function AdminUsersPage() {
                       </td>
                       <td className="px-3 py-2 text-center">
                         <button
-                          className="px-2 py-1 bg-green-600 text-white rounded text-xs"
+                          className="user-open-button px-2 py-1 bg-green-600 text-white rounded text-xs"
                           onClick={async () => {
                             try {
                               const res = await fetch('/api/admin/impersonate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ userId: r.userId }) });
@@ -283,6 +278,12 @@ export default function AdminUsersPage() {
                 overflow: hidden;
                 white-space: normal;
               }
+              /* Layout adjustments: narrow Email column, widen action button column */
+              .admin-email-col { width: 180px; max-width: 180px; }
+              .user-open-button { min-width: 234px; padding-top: 12px; padding-bottom: 12px; }
+              .user-open-button, .user-open-button > * { line-height: 1.4; }
+              .admin-stop-col { width: 312px; }
+              .debug-button { min-width: 260px !important; }
             `}</style>
           </div>
 
@@ -300,7 +301,7 @@ export default function AdminUsersPage() {
                       ×
                     </button>
                   </div>
-                  <pre className="text-xs whitespace-pre-wrap break-all bg-gray-50 p-3 rounded max-h-[70vh] overflow-auto">
+                  <pre className="text-xsWhitespace-pre-wrap break-all bg-gray-50 p-3 rounded max-h-[70vh] overflow-auto">
                     {JSON.stringify(raw, null, 2)}
                   </pre>
                 </div>
