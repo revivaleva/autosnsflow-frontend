@@ -10,6 +10,23 @@ description:
 - **staging**：通常の開発・修正・デバッグはここへ。特段の指示が無い場合は staging。
 - **lambda**：定期実行関連は必ずここへ push。共通部分は staging 経由で反映。
 
+**追加ルール（staging→lambda ワークフロー）**
+
+- **重要（staging 動作確認）**: staging 側での CI ビルド/デプロイを待つ必要はありません。staging への push 後に自動でビルドが走ることを避けたい運用のため、staging の動作確認は**ローカルでのビルド／smoke test による確認で代替**して構いません。
+
+- **lambda 反映時のビルドポリシー（必読）**:
+  - lambda へ反映する際は **自動でリモート CI（Amplify 等）が起動しない状態**で行ってください。自動ビルドを走らせたくない場合の選択肢:
+    1. Amplify Console の該当ブランチの "Auto build / Continuous deployment" をオフにする（UI での手動設定）。
+    2. 事前に CI 側でビルドをスキップする環境変数（例: `SKIP_AMPLIFY_BUILD=1`）を設定しておき、自動ビルド時に早期終了させる（`amplify.yml` 側の guard を利用）。
+  - どちらの方法を用いるかはチームの運用に合わせて選択してください。手順が不明な場合は管理者に相談のうえ実施します。
+
+- **lambda への反映手順（短縮版）**
+  1. `staging` に push（ローカルでのビルド/チェックは任意で実施）。
+  2. lambda に反映する際は、事前に「自動ビルドが無効になっている」ことを確認する。
+  3. `git checkout lambda && git merge --no-ff origin/staging` を行い、`lambda` を `git push origin lambda` する。
+
+- **注意**: 誰かから「lambda に push して」と指示があった場合は、必ず **自動ビルドが無効であること** を確認してから実行してください。確認が取れない場合は実行を保留し、確認事項（Auto-build の状態 or SKIP_AMPLIFY_BUILD の設定）を指示出し者へ問い合わせてください。
+
 <!-- 追記: このファイルに定期実行（prune）関連の運用追記を行いました（編集日: 2025-10-14）。
      変更点: Lambda ビルドトリガ説明、テスト実行手順、prune dry-run 用の注意を追加しています。 -->
 
