@@ -183,7 +183,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       post: {
         scheduledPostId,
         postId,
-        ...(permalink?.url ? { postUrl: permalink.url } : {}),
+        ...(permalinkUrl ? { postUrl: permalinkUrl } : {}),
         postedAt: now,
         status: "posted",
         ...(secondStageContent?.trim() ? { doublePostStatus: "waiting" } : {}),
