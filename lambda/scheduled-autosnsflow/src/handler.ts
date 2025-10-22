@@ -1795,7 +1795,11 @@ const randomTimeInRangeJst = (range: any, baseJstDate: any, forNextDay = false) 
   if (!Number.isFinite(sm) || !Number.isFinite(em)) return null;
 
   const baseMs = epochStartOfJstDayMs(baseJstDate.getTime()) + (forNextDay ? MS_PER_DAY : 0);
-  const pickedMin = sm + Math.floor(Math.random() * (em - sm + 1));
+  // Latest allowed minute is 6 minutes before range end
+  const latestAllowedMin = em - 6;
+  const cappedLatestMin = latestAllowedMin < sm ? sm : latestAllowedMin;
+  const span = cappedLatestMin - sm;
+  const pickedMin = span > 0 ? sm + Math.floor(Math.random() * (span + 1)) : sm;
   return new Date(baseMs + pickedMin * MS_PER_MIN);
 };
 

@@ -115,7 +115,11 @@ function randomTimeInRange(range?: string | null): string | null {
   const start = sh * 60 + (sm || 0);
   const end = eh * 60 + (em || 0);
   if (end < start) return null;
-  const r = start + Math.floor(Math.random() * (end - start + 1));
+  // latest allowed is 6 minutes before range end
+  const latestAllowed = end - 6;
+  const cappedLatest = latestAllowed < start ? start : latestAllowed;
+  const span = cappedLatest - start;
+  const r = span > 0 ? start + Math.floor(Math.random() * (span + 1)) : start;
   return `${pad(Math.floor(r / 60))}:${pad(r % 60)}`;
 }
 
