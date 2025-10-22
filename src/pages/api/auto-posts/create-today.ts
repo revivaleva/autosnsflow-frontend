@@ -179,6 +179,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           autoPostGroupId: { S: groupTypeStr },
           theme: { S: themeForAI || '' },
           content: { S: '' },
+          // GSIマーカー: 本文生成が必要であることを示す（生成ワーカーが参照する）
+          needsContentAccount: { S: acct.accountId },
+          nextGenerateAt: { N: '0' },
+          // GSIマーカー: 未投稿かつ scheduled の場合に posting ジョブが参照する
+          pendingForAutoPostAccount: { S: acct.accountId },
           scheduledAt: { N: String(scheduledAt) },
           postedAt: { N: '0' },
           status: { S: 'scheduled' },
