@@ -23,6 +23,7 @@ export default function AppLayout({ children }) {
   const router = useRouter();
   const [isAdmin, setIsAdmin] = useState(false);
   const [userIdDisplay, setUserIdDisplay] = useState(null);
+  const [showX, setShowX] = useState(false);
 
   // デバッグDLG（?debugAuth=1）— 既存があればそのまま
   const [authDebugOpen, setAuthDebugOpen] = useState(false);
@@ -41,6 +42,15 @@ export default function AppLayout({ children }) {
         const res = await fetch('/api/auth/me', { credentials: 'include' });
         const data = await res.json().catch(() => ({}));
         setUserIdDisplay(data?.sub || null);
+        // load per-user settings to determine whether to show X menu
+        try {
+          const s = await fetch('/api/user-settings', { credentials: 'include', cache: 'no-store' });
+          if (s.ok) {
+            const sj = await s.json().catch(() => ({}));
+            const enable = !!(sj?.settings && sj.settings.enableX === true);
+            setShowX(enable);
+          }
+        } catch (_) {}
       } catch {}
 
       const open =
@@ -156,6 +166,31 @@ export default function AppLayout({ children }) {
                   }`}
                 >
                   管理（トークン一覧）
+                </Link>
+              </li>
+            </>
+          )}
+          {/* Per-user X menu: show when user's settings.enableX is true */}
+          {showX && (
+            <>
+              <li>
+                <Link
+                  href="/x/accounts"
+                  className={`block px-3 py-2 rounded hover:bg-gray-700 ${
+                    pathname === "/x/accounts" ? "bg-gray-700 font-semibold" : ""
+                  }`}
+                >
+                  X：アカウント一覧
+                </Link>
+              </li>
+              <li>
+                <Link
+                  href="/x/scheduled-posts"
+                  className={`block px-3 py-2 rounded hover:bg-gray-700 ${
+                    pathname === "/x/scheduled-posts" ? "bg-gray-700 font-semibold" : ""
+                  }`}
+                >
+                  X：予約投稿一覧
                 </Link>
               </li>
             </>

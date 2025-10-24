@@ -42,6 +42,44 @@
   - 概要: Lambda の予約同時実行を `1` に設定し、every-5min 実行時の二重投稿を一時的に防止する。運用影響（全ユーザーのスループット低下）を理解した上で適用すること。
 
 - `Implement postingLock in runAutoPostForAccount to prevent duplicate external posts` — pending
+### X（旧Twitter）統合タスク（新規）
+
+- `Add DB schema for X accounts and scheduled posts (separate tables: x_accounts, x_scheduled_posts)` — in_progress
+  - 説明: `x_accounts` と `x_scheduled_posts` を DynamoDB に追加。PK/SK は `USER#<userId>` を採用。`appOnly` と `isDeleted` は `x_accounts` に不要、`theme` と `generateByAI` は `x_scheduled_posts` に不要。
+
+- `Create backend CRUD API for X accounts` — in_progress
+  - 説明: `GET/POST/PATCH/DELETE` を提供しフロントの編集モーダルと連携する。
+  - 作業中: API ルート設計を `pjspec.mdc` に追記
+
+- `Create backend CRUD API for X scheduled posts` — pending
+  - 説明: 予約投稿の作成・編集・一覧・削除を行う。`pendingForAutoPostAccount` を設定して自動ジョブで拾えるようにする。
+
+- `Implement OAuth callback flow for X (Authorization Code + PKCE, callback https://threadsbooster.jp/api/auth/x/callback)` — pending
+  - 説明: Threads のフローを流用し、state/PKCE/refresh トークン処理を実装する。リフレッシュ失敗は 3 回で `reauth_required` にする。
+
+- `Create frontend Xアカウント一覧ページと編集モーダル (不要カラムは全て削除)` — pending
+  - 説明: 編集モーダルは `アカウント名, ID, clientId, clientSecret, 認可URLコピー, 認証状態, アプリボタン, 削除ボタン` のみ。
+
+- `Create frontend X予約投稿一覧ページと編集モーダル (不要カラムは全て削除)` — pending
+  - 説明: 一覧は `アカウント, 予約投稿日時, 本文テキスト, 投稿日時, 投稿ID, アクション` のみ。編集モーダルは `アカウント, テーマ, AIで生成ボタン, 予約日時, 本文テキスト, 保存` のみ（生成は手動トリガ、スケジューラは生成しない）。
+
+- `Add scheduled job to post to X every 5 minutes (lambda branch)` — pending
+  - 説明: `lambda/scheduled-autosnsflow` に組み込み。予約が due のものを取得して投稿、成功時は `postedAt` と `postId` を保存。
+
+- `Include X scheduled posts in prune deletion job` — pending
+  - 説明: 既存の prune ロジックを拡張して X の予約投稿レコードも対象とする。
+
+- `Add logging, error handling, and retry logic for X posting` — pending
+  - 説明: 失敗はログに出力し、必要に応じて再試行（指数バックオフ）を行う。重複抑止は既存の Threads ロジックを流用。
+
+- `Store X client secrets in DB table (plain text, initial - follow Threads pattern)` — pending
+  - 説明: 当面は Threads と同様に DB（Dynamo）に保存。将来的な Secrets Manager 移行フローを文書化。
+
+- `Write tests for OAuth and scheduled posting` — pending
+  - 説明: 単体テストと E2E を想定。モックで OAuth/token をテスト可能にする。
+
+- `Update docs and deployment notes for X integration` — pending
+  - 説明: デプロイ手順、環境変数、Lambda IAM 権限、運用ルールを追記。
   - 概要: 投稿前に条件付き UpdateItem で `postingLock` を設定し、ロック取得に成功したワーカーのみが Threads へ投稿する。投稿後はロックを解除することで、Lambda の並列実行があっても同一予約件の二重投稿を防止する。 
 
 ### Threads Resolver（username→numericId）タスク
