@@ -75,7 +75,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     } catch (e) {}
   }
   // Determine code_verifier deterministically from SESSION_SECRET + state (no cookie or DB state required)
-  const sessionSecret = getEnvVar('SESSION_SECRET') || process.env.SESSION_SECRET || '';
+  let sessionSecret = getEnvVar('SESSION_SECRET') || process.env.SESSION_SECRET || '';
+  if (!sessionSecret) {
+    try {
+      const cfg = await import('@/lib/config');
+      const m = await cfg.loadConfig();
+      sessionSecret = m['SESSION_SECRET'] || m['SESSIONSECRET'] || '';
+      if (sessionSecret) console.log('[api/x/callback] using SESSION_SECRET from AppConfig fallback');
+    } catch (e) {
+      console.warn('[api/x/callback] AppConfig fallback for SESSION_SECRET failed', String(e));
+    }
+  }
   if (!sessionSecret) return res.status(500).json({ error: 'server_misconfigured' });
   let codeVerifierFromStore = '';
   try {

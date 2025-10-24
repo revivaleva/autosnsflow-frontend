@@ -20,7 +20,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const codeChallenge = base64url(crypto.createHash('sha256').update(codeVerifier).digest());
 
     // Use deterministic PKCE: require authenticated user and derive code_verifier from SESSION_SECRET and state
-    const sessionSecret = getEnvVar('SESSION_SECRET') || process.env.SESSION_SECRET || '';
+    let sessionSecret = getEnvVar('SESSION_SECRET') || process.env.SESSION_SECRET || '';
+    if (!sessionSecret) {
+      try {
+        const cfg = await import('@/lib/config');
+        const m = await cfg.loadConfig();
+        sessionSecret = m['SESSION_SECRET'] || m['SESSIONSECRET'] || '';
+        if (sessionSecret) console.log('[api/x/authorize] using SESSION_SECRET from AppConfig fallback');
+      } catch (e) {
+        console.warn('[api/x/authorize] AppConfig fallback for SESSION_SECRET failed', String(e));
+      }
+    }
     if (!sessionSecret) return res.status(500).json({ error: 'server_misconfigured' });
 
     // require authentication (Threads-style) so we can identify user and find per-account clientId
