@@ -19,25 +19,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Read account token from XAccounts table
     const out = await ddb.send(new GetItemCommand({ TableName: TBL_X, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } } }));
     const it: any = (out as any).Item || {};
-    const token = it.oauthAccessToken?.S || it.accessToken?.S || '';
-    // if not present, try AppConfig fallback account credentials (not recommended)
+    const tokenFromDb = String(it.oauthAccessToken?.S || it.accessToken?.S || '');
+    let token = tokenFromDb;
+    let usingFallback = false;
     if (!token) {
       try {
         const cfg = await import('@/lib/config');
         const m = await cfg.loadConfig();
         const fallbackToken = m['X_APP_DEFAULT_TOKEN'] || '';
-        if (fallbackToken) {
-          // allow admin immediate posts using AppConfig token
-          // NOTE: prefer per-account token in DB
-        }
-      } catch (e) {}
+        if (fallbackToken) { token = fallbackToken; usingFallback = true; }
+      } catch (e) { console.warn('[api/x/tweet] loadConfig failed', String(e)); }
     }
+    try { console.log('[api/x/tweet] token_present_from_db:', !!tokenFromDb, 'using_fallback:', usingFallback, 'oauthSavedAt:', it.oauthSavedAt?.S || null); } catch(_) {}
     if (!token) return res.status(403).json({ error: 'no_token' });
 
     // forward to X API
     const r = await fetch('https://api.x.com/2/tweets', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) return res.status(500).json({ error: 'post_failed', detail: j });
+    if (!r.ok) {
+      try { console.warn('[api/x/tweet] external API error', { status: r.status, body: j }); } catch(_) {}
+      return res.status(500).json({ error: 'post_failed', detail: j });
+    }
+    try { console.log('[api/x/tweet] posted', { status: r.status, body: j }); } catch(_) {}
     return res.status(200).json(j);
   } catch (e: any) { return res.status(500).json({ error: String(e) }); }
 }
