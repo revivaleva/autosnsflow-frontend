@@ -76,11 +76,17 @@ export default function XAccountModal({ open, onClose, mode = "create", account,
 
   const handleCopyAuthUrl = async () => {
     try {
-      const r = await fetch(`/api/x/authorize?accountId=${encodeURIComponent(accountId)}&raw=1`);
+      const r = await fetch(`/api/x/authorize?accountId=${encodeURIComponent(accountId)}&raw=1`, { credentials: 'include' });
+      // If response is JSON with auth_url, use it. Otherwise fail loudly so caller doesn't get a relative fallback URL.
+      if (!r.ok) {
+        const txt = await r.text().catch(() => '');
+        throw new Error(`認可URL取得エラー: HTTP ${r.status} ${txt}`);
+      }
       const j = await r.json().catch(() => ({}));
-      const url = j.auth_url || (typeof window !== 'undefined' ? `${window.location.origin}/api/x/authorize?accountId=${encodeURIComponent(accountId)}` : `/api/x/authorize?accountId=${encodeURIComponent(accountId)}`);
+      const url = j.auth_url || '';
+      if (!url) throw new Error('認可URLが返却されませんでした');
       try { await navigator.clipboard.writeText(url); alert('認可URLをコピーしました'); } catch { alert('クリップボードへコピーできませんでした: ' + url); }
-    } catch (e) { alert('認可URL取得に失敗しました'); }
+    } catch (e) { alert('認可URL取得に失敗しました: ' + String(e)); }
   };
 
   const handleOpenApp = () => {
