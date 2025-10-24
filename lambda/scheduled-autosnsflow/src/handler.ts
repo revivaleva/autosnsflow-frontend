@@ -513,6 +513,35 @@ async function getThreadsAccounts(userId = DEFAULT_USER_ID) {
   }));
 }
 
+// X アカウント取得（簡易版）
+async function getXAccounts(userId = DEFAULT_USER_ID) {
+  const TBL_X = process.env.TBL_X_ACCOUNTS || 'XAccounts';
+  let lastKey: any; let items: any[] = [];
+  do {
+    const res: any = await ddb.send(new QueryCommand({
+      TableName: TBL_X,
+      KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
+      ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'ACCOUNT#' } },
+      ProjectionExpression: 'SK, accountId, username, autoPostEnabled, oauthAccessToken, accessToken, #st, createdAt, updatedAt',
+      ExpressionAttributeNames: { '#st': 'authState' },
+      ExclusiveStartKey: lastKey,
+    }));
+    items = items.concat(res.Items || []);
+    lastKey = res.LastEvaluatedKey;
+  } while (lastKey);
+
+  return items.map((i: any) => ({
+    accountId: (i.SK?.S || '').replace(/^ACCOUNT#/, ''),
+    username: i.username?.S || '',
+    autoPostEnabled: i.autoPostEnabled?.BOOL === true,
+    oauthAccessToken: i.oauthAccessToken?.S || '',
+    accessToken: i.accessToken?.S || '',
+    authState: i.authState?.S || '',
+    createdAt: i.createdAt?.N ? Number(i.createdAt.N) : 0,
+    updatedAt: i.updatedAt?.N ? Number(i.updatedAt.N) : 0,
+  }));
+}
+
 async function getAutoPostGroup(userId: any, groupId: any) {
   if (!groupId) return null;
   const gid = groupId.startsWith("GROUP#") ? groupId.slice(6) : groupId;
@@ -3055,6 +3084,19 @@ async function runFiveMinJobForUser(userId: any) {
     } catch(_) {}
 
     const a = await runAutoPostForAccount(acct, userId, settings);
+    // X のアカウントがあれば同一ユーザ内の X アカウントについても投稿を試みる
+    try {
+      const xAccounts = await getXAccounts(userId);
+      for (const xacct of xAccounts) {
+        try {
+          // runAutoPostForXAccount は別モジュール
+          const xmod = await import('./post-to-x');
+          if (typeof xmod.runAutoPostForXAccount === 'function') {
+            try { const xr = await xmod.runAutoPostForXAccount(xacct, userId); (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_AUTO_POST_RESULT', payload: { accountId: xacct.accountId, result: xr } }); } catch (e) { console.warn('[warn] runAutoPostForXAccount failed', e); }
+          }
+        } catch (e) { console.warn('[warn] post-to-x import or run failed', e); }
+      }
+    } catch (e) { console.warn('[warn] getXAccounts failed', e); }
     try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_AUTO_POST_RESULT', payload: { accountId: acct.accountId, result: a } }); } catch(_) {}
 
     const r = await runRepliesForAccount(acct, userId, settings);
