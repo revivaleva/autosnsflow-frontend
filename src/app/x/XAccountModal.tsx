@@ -108,10 +108,7 @@ export default function XAccountModal({ open, onClose, mode = "create", account,
     <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-40 z-50">
       <div className="bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 p-6 rounded w-[640px]">
         <h3 className="text-lg font-bold mb-4">{mode === 'edit' ? 'アカウント編集 (X)' : 'X アカウント追加'}</h3>
-        <form onSubmit={handleSave} autoComplete="off">
-          {/* Prevent Chrome autofill: hidden dummy fields */}
-          <input type="text" name="fake-username" autoComplete="username" style={{display: 'none'}} />
-          <input type="password" name="fake-password" autoComplete="current-password" style={{display: 'none'}} />
+        <form onSubmit={handleSave}>
           <label className="block">アカウント名</label>
           <input className="mb-2 border rounded px-2 py-1 w-full" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
           <label className="block">ID</label>

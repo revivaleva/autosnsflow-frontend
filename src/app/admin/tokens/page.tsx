@@ -158,8 +158,8 @@ export default function TokenManagementPage() {
 
           {message && <div className="mb-3 text-red-600 text-sm break-all">{message}</div>}
 
-          <div className="overflow-x-auto bg-white dark:bg-gray-900 border rounded">
-            <table className="min-w-full text-sm text-gray-900 dark:text-gray-100">
+          <div className="overflow-x-auto bg-white border rounded">
+            <table className="min-w-full text-sm">
               <colgroup>
                 <col style={{ width: '12%' }} />
                 <col style={{ width: '12%' }} />
@@ -170,7 +170,7 @@ export default function TokenManagementPage() {
                 <col style={{ width: '14%' }} />
                 <col style={{ width: '20%' }} />
               </colgroup>
-              <thead className="bg-gray-100 dark:bg-gray-800">
+              <thead className="bg-gray-100">
                 <tr>
                   <th className="px-3 py-2 text-left">トークン</th>
                   <th className="px-3 py-2 text-left">Username</th>

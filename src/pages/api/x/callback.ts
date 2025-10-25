@@ -123,8 +123,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const authHeader = `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString('base64')}`;
     const r = await fetch(tokenUrl, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: authHeader }, body: params });
     tokenResp = await r.json().catch(() => ({}));
-    // Log full token response for diagnostics (do NOT log clientSecret)
-    try { console.log('[x:callback] token exchange response:', JSON.stringify(tokenResp)); } catch(_) {}
     if (!r.ok) {
       console.error('[x:callback] token exchange failed', { status: r.status, body: tokenResp });
       return res.status(500).json({ error: 'token exchange failed', detail: tokenResp });
