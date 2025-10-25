@@ -637,6 +637,9 @@ export default function SNSAccountModal({
           onSubmit={handleSubmit}
           autoComplete="off"
         >
+          {/* Prevent Chrome autofill */}
+          <input type="text" name="fake-username" autoComplete="username" style={{ display: 'none' }} />
+          <input type="password" name="fake-password" autoComplete="current-password" style={{ display: 'none' }} />
         <h2 className="text-xl font-bold mb-4">
           {mode === "edit" ? "アカウント編集" : "新規アカウント追加"}
         </h2>

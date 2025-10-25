@@ -60,11 +60,44 @@ export default function XPostModal({ open, onClose, post }: Props) {
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || 'AI生成失敗');
       const text = j.text || (j?.personaSimple || '') || '';
-      if (text) setContent(String(text));
-      else alert('AIから本文が生成されませんでした');
+      if (text) {
+        setContent(String(text));
+        // set scheduledAt to now when AI generates
+        const now = new Date();
+        setScheduledAt(formatLocalDatetime(now));
+      } else {
+        alert('AIから本文が生成されませんでした');
+      }
     } catch (e) {
       alert('AI生成エラー: ' + String(e));
     } finally { setAiLoading(false); }
+  };
+
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const formatLocalDatetime = (d: Date) => {
+    const year = d.getFullYear();
+    const month = pad(d.getMonth() + 1);
+    const day = pad(d.getDate());
+    const hh = pad(d.getHours());
+    const mm = pad(d.getMinutes());
+    return `${year}-${month}-${day}T${hh}:${mm}`;
+  };
+
+  const handleNow = () => setScheduledAt(formatLocalDatetime(new Date()));
+  const handleTomorrow = () => {
+    const base = scheduledAt ? new Date(scheduledAt) : new Date();
+    const dt = new Date(base.getTime() + 24 * 3600 * 1000);
+    setScheduledAt(formatLocalDatetime(dt));
+  };
+  const handleAddHours = (hours: number) => {
+    const base = scheduledAt ? new Date(scheduledAt) : new Date();
+    const dt = new Date(base.getTime() + hours * 3600 * 1000);
+    setScheduledAt(formatLocalDatetime(dt));
+  };
+  const handleRoundToHour = () => {
+    const base = scheduledAt ? new Date(scheduledAt) : new Date();
+    base.setMinutes(0, 0, 0);
+    setScheduledAt(formatLocalDatetime(base));
   };
 
   return (
@@ -86,6 +119,13 @@ export default function XPostModal({ open, onClose, post }: Props) {
         </div>
           <label className="block">予約日時</label>
           <input type="datetime-local" className="mb-2 border rounded px-2 py-1 w-full" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} />
+          <div className="flex gap-2 mb-2">
+            <button type="button" className="px-2 py-1 border rounded" onClick={handleNow}>現在</button>
+            <button type="button" className="px-2 py-1 border rounded" onClick={handleTomorrow}>明日</button>
+            <button type="button" className="px-2 py-1 border rounded" onClick={() => handleAddHours(5)}>5時間後</button>
+            <button type="button" className="px-2 py-1 border rounded" onClick={() => handleAddHours(3)}>3時間後</button>
+            <button type="button" className="px-2 py-1 border rounded" onClick={handleRoundToHour}>:00</button>
+          </div>
           <label className="block">本文テキスト</label>
           <textarea className="mb-2 border rounded p-2 w-full min-h-[120px]" value={content} onChange={(e) => setContent(e.target.value)} />
           <div className="flex justify-end gap-2">

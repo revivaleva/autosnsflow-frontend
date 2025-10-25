@@ -36,17 +36,19 @@ export default function XScheduledPostsTable() {
   const handleCreate = () => { setSelected(null); setModalOpen(true); };
 
   return (
-    <div className="max-w-5xl mx-auto">
-      <div className="flex justify-between items-center mb-4">
-        <h1 className="text-2xl font-bold">X 予約投稿一覧</h1>
+    <div className="max-w-5xl mx-auto mt-10">
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">X 予約投稿一覧</h1>
         <div className="flex gap-2">
-          <button className="bg-blue-500 text-white px-3 py-1 rounded" onClick={load}>再読み込み</button>
-          <button className="bg-green-500 text-white px-3 py-1 rounded" onClick={handleCreate}>＋予約作成</button>
+          <button className="bg-blue-500 text-white rounded px-4 py-2 hover:bg-blue-600" onClick={load}>再読み込み</button>
+          <button className="bg-green-500 text-white rounded px-4 py-2 hover:bg-green-600" onClick={handleCreate}>＋予約作成</button>
         </div>
       </div>
-      {loading ? <div className="text-center py-8">読み込み中...</div> : (
-        <table className="w-full border">
-          <thead className="bg-gray-100"><tr>
+      {loading ? (
+        <div className="text-center py-8">読み込み中...</div>
+      ) : (
+        <table className="w-full border shadow bg-white dark:bg-gray-900 rounded overflow-hidden">
+          <thead className="bg-gray-100 dark:bg-gray-800"><tr>
             <th className="py-2 px-3 text-left">アカウント</th>
             <th className="py-2 px-3 text-left">予約投稿日時</th>
             <th className="py-2 px-3 text-left">本文テキスト</th>
@@ -56,8 +58,8 @@ export default function XScheduledPostsTable() {
           </tr></thead>
           <tbody>
             {posts.map(p => (
-              <tr key={p.scheduledPostId} className="border-t">
-                <td className="py-2 px-3 text-left"><button className="text-blue-600" onClick={() => {}}>{p.accountId}</button></td>
+              <tr key={p.scheduledPostId} className="border-t text-center">
+                <td className="py-2 px-3 text-left"><button className="text-indigo-600 dark:text-indigo-300 hover:underline" onClick={() => {}}>{p.accountId}</button></td>
                 <td className="py-2 px-3 text-left">{p.scheduledAt ? new Date(p.scheduledAt * 1000).toLocaleString() : ''}</td>
                 <td className="py-2 px-3 text-left">{p.content && p.content.length > 80 ? p.content.slice(0,80) + '…' : p.content}</td>
                 <td className="py-2 px-3">{p.postedAt ? new Date(p.postedAt * 1000).toLocaleString() : '-'}</td>
