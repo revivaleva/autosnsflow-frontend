@@ -1724,7 +1724,7 @@ export const handler = async (event: any = {}) => {
   try {
     const userIds = await getActiveUserIds();
     let succeeded = 0;
-    const totals: any = { totalAuto: 0, totalReply: 0, totalTwo: 0, rateSkipped: 0 };
+    const totals: any = { totalAuto: 0, totalReply: 0, totalTwo: 0, totalX: 0, rateSkipped: 0 };
     for (const uid of userIds) {
       try {
         const res = await runFiveMinJobForUser(uid);
@@ -3092,7 +3092,12 @@ async function runFiveMinJobForUser(userId: any) {
           // runAutoPostForXAccount は別モジュール
           const xmod = await import('./post-to-x');
           if (typeof xmod.runAutoPostForXAccount === 'function') {
-            try { const xr = await xmod.runAutoPostForXAccount(xacct, userId); (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_AUTO_POST_RESULT', payload: { accountId: xacct.accountId, result: xr } }); } catch (e) { console.warn('[warn] runAutoPostForXAccount failed', e); }
+            try {
+              const xr = await xmod.runAutoPostForXAccount(xacct, userId);
+              (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+              (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_AUTO_POST_RESULT', payload: { accountId: xacct.accountId, result: xr } });
+              if (xr && typeof xr.posted === 'number') totals.totalX += Number(xr.posted || 0);
+            } catch (e) { console.warn('[warn] runAutoPostForXAccount failed', e); }
           }
         } catch (e) { console.warn('[warn] post-to-x import or run failed', e); }
       }
@@ -3149,6 +3154,10 @@ async function runFiveMinJobForUser(userId: any) {
     { label: "2段階投稿", value: totalTwo },
     { label: "失効(rate-limit)", value: rateSkipped },
   ], "every-5min");
+  // include X posted count in the metrics if present
+  if ((totals as any).totalX) {
+    try { metrics += ` / X投稿: ${(totals as any).totalX}`; } catch(_) {}
+  }
   const content = metrics === "every-5min：実行なし" ? metrics : `**[定期実行レポート] ${now} (every-5min)**\n${metrics}`;
   await postDiscordLog({ userId, content });
   return { userId, totalAuto, totalReply, totalTwo, rateSkipped };
