@@ -130,6 +130,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   } catch (e) { console.error('[x:callback] token request error', e); return res.status(500).json({ error: String(e) }); }
 
   const accessToken = tokenResp.access_token;
+  const refreshToken = tokenResp.refresh_token || '';
+  const scopeStr = tokenResp.scope || '';
+  const expiresIn = Number(tokenResp.expires_in || 0);
+  const expiresAt = expiresIn ? Math.floor(Date.now() / 1000) + expiresIn : 0;
+  try { console.log('[x:callback] token fields present:', !!accessToken, !!refreshToken, !!scopeStr, 'expires_in', expiresIn); } catch(_) {}
 
   // fetch user info
   try {
@@ -148,7 +153,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (it2 && it2.PK && it2.PK.S) { const pk = String(it2.PK.S || ''); targetUserId = pk.startsWith('USER#') ? pk.replace(/^USER#/, '') : pk; }
       } catch (e) {}
       if (targetUserId) {
-        await ddb.send(new UpdateItemCommand({ TableName: TBL_X, Key: { PK: { S: `USER#${targetUserId}` }, SK: { S: `ACCOUNT#${accountIdFromState}` } }, UpdateExpression: 'SET oauthAccessToken = :at, oauthSavedAt = :now, providerUserId = :pid', ExpressionAttributeValues: { ':at': { S: String(accessToken) }, ':now': { N: String(Math.floor(Date.now()/1000)) }, ':pid': { S: String(providerUserId) } } }));
+        await ddb.send(new UpdateItemCommand({
+          TableName: TBL_X,
+          Key: { PK: { S: `USER#${targetUserId}` }, SK: { S: `ACCOUNT#${accountIdFromState}` } },
+          UpdateExpression: 'SET oauthAccessToken = :at, refreshToken = :rt, oauthScope = :sc, oauthSavedAt = :now, oauthTokenExpiresAt = :exp, providerUserId = :pid',
+          ExpressionAttributeValues: {
+            ':at': { S: String(accessToken) },
+            ':rt': { S: String(refreshToken) },
+            ':sc': { S: String(scopeStr) },
+            ':now': { N: String(Math.floor(Date.now()/1000)) },
+            ':exp': { N: String(expiresAt || 0) },
+            ':pid': { S: String(providerUserId) }
+          }
+        }));
         // cleanup stored state
         try { await ddb.send(new (require('@aws-sdk/client-dynamodb').DeleteItemCommand)({ TableName: TBL_X, Key: { PK: { S: `STATE#${state}` }, SK: { S: 'META' } } })); } catch (e) {}
       }
