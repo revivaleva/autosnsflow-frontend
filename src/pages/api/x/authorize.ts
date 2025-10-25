@@ -78,9 +78,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (!clientId) return res.status(400).json({ error: 'client_id not configured' });
 
     const redirectUri = process.env.X_REDIRECT_URI || `https://threadsbooster.jp/api/x/callback`;
-    const scope = encodeURIComponent((process.env.X_SCOPES || 'tweet.write users.read offline.access').trim());
+    // Prefer AppConfig value for X_SCOPES; fall back to env var, then default
+    let scopeRaw = '';
+    try {
+      const cfg = await import('@/lib/config');
+      const m = await cfg.loadConfig();
+      scopeRaw = m['X_SCOPES'] || m['X_DEFAULT_SCOPES'] || '';
+      if (scopeRaw) console.log('[api/x/authorize] using X_SCOPES from AppConfig');
+    } catch (e) {
+      // ignore and fall back to env var
+    }
+    if (!scopeRaw) scopeRaw = process.env.X_SCOPES || '';
+    // ensure tweet.read is present in scopes
+    const scopeList = (scopeRaw || 'tweet.write users.read offline.access').trim().split(/\s+/).filter(Boolean);
+    if (!scopeList.includes('tweet.read')) scopeList.push('tweet.read');
+    const scope = encodeURIComponent(scopeList.join(' '));
 
-    const url = `https://x.com/i/oauth2/authorize?response_type=code&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scope}&state=${encodeURIComponent(state)}&code_challenge=${encodeURIComponent(codeChallengeDerived)}&code_challenge_method=S256`;
+    // build url with consistent parameter order: client_id, response_type, redirect_uri, state, code_challenge, code_challenge_method, scope
+    const url = `https://x.com/i/oauth2/authorize?client_id=${encodeURIComponent(clientId)}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}&code_challenge=${encodeURIComponent(codeChallengeDerived)}&code_challenge_method=S256&scope=${scope}`;
 
     if (req.query.raw === '1' || (req.headers.accept || '').includes('application/json')) {
       return res.status(200).json({ auth_url: url });
