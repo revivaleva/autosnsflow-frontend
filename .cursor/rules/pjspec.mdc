@@ -106,6 +106,124 @@
 - `ThreadsAccounts.status` に新しい値 `reauth_required` を追加。UI はこのステータスを検出して、アカウント一覧の状態欄に「要再認証」バッジと再認証ボタンを表示すること。
 - ステータス変更はバッチ処理中に発生する可能性があるため、UI 側はリアルタイム更新を考慮する（ポーリングまたは WebSocket）。
 
+
+---
+
+### X（旧Twitter）統合仕様（追加）
+
+- API ベース: `https://api.x.com/2`
+- 認可方式: OAuth2.0（Authorization Code + PKCE）
+- Token 取得: `POST https://api.x.com/2/oauth2/token`
+- スコープ (初期): `tweet.write tweet.read users.read offline.access media.write`
+- コールバック: `https://threadsbooster.jp/api/auth/x/callback`
+
+方針メモ:
+- Threads と同様の認証フロー（state + PKCE, リフレッシュ処理）を再利用する。
+- clientSecret 等は当面 DB テーブルに平文で保存（Threads と同様）。将来的に Secrets Manager へ移行推奨。
+
+重要（clientId/clientSecret とトークン取得の方針）:
+- **必須方針**: X の `clientId` / `clientSecret` 系は **一切の環境変数フォールバックを行わない**。必ず対象のアカウントレコード（`x_accounts` テーブル内の該当 `ACCOUNT#<accountId>`）から読み出すこと。複数アカウント運用を前提に、ソースコードの可読性と運用の一貫性を保つためです。
+- 実装要件:
+  - 認可開始（`/api/x/authorize`）およびコールバック（`/api/x/callback`）は、該当アカウントの `clientId` / `clientSecret` を **DB から取得**することを前提に実装する。
+  - DB に対象の `clientId` または `clientSecret` が存在しない場合は、処理は **即時エラー終了** とし、明確なエラーメッセージ（例: `client_id or client_secret not configured`）を返すこと。環境変数や AppConfig に値があっても X 用のクライアント情報のフォールバックには使わない。
+- トークン取得/投稿時のトークン非存在時挙動:
+  - 投稿処理（`/api/x/tweet` や定期ジョブ）は、対象アカウントから `oauthAccessToken`（または `accessToken` のフォールバックは不可とする）を取得できない場合、即時エラー（403 または 4xx）で終了してよい。
+  - システムログ及び ExecutionLogs に該当の `accountId` とエラー詳細を記録すること（トークン自体や client_secret の値はログに出力しない）。
+
+
+#### DynamoDB スキーマ案（要点・簡潔）
+
+- テーブル名（環境変数で指定）
+  - `TBL_X_ACCOUNTS`（例: `XAccounts`）
+  - `TBL_X_SCHEDULED`（例: `XScheduledPosts`）
+
+- `x_accounts`（ユーザごとの X アカウント）主要属性:
+  - PK: `USER#${userId}` (S)
+  - SK: `ACCOUNT#${accountId}` (S)
+  - `accountId` (S)
+  - `providerUserId` (S) — X 側の user id/handle
+  - `username` (S) — 表示名/handle
+  - `clientId` (S)
+  - `clientSecret` (S) — 当面平文保存
+  - `accessToken` (S)
+  - `refreshToken` (S)
+  - `tokenExpiresAt` (N)
+  - `scopes` (S)
+  - `authState` (S) — `authorized`|`reauth_required`|`revoked`
+  - `autoPostEnabled` (BOOL)
+  - `createdAt` (N), `updatedAt` (N)
+
+  注: `appOnly` と `isDeleted` は今回不要のため削除（保存しない）。
+
+- `x_scheduled_posts`（予約投稿）主要属性:
+  - PK: `USER#${userId}` (S)
+  - SK: `SCHEDULEDPOST#${scheduledPostId}` (S)
+  - `scheduledPostId` (S)
+  - `accountId` (S)
+  - `accountName` (S)
+  - `content` (S)
+  - `scheduledAt` (N)
+  - `postedAt` (N) — 未投稿は `0`
+  - `status` (S) — `pending`|`posted`|`failed`|`cancelled`
+  - `postId` (S)
+  - `generateAttempts` (N), `retryCount` (N), `nextRetryAt` (N)
+  - `isDeleted` (BOOL)
+  - `createdAt` (N), `updatedAt` (N)
+  - `pendingForAutoPostAccount` (S) = accountId（自動投稿ジョブ用索引用）
+
+  注: `theme` と `generateByAI` は今回不要のため削除（保存しない）。
+
+#### インデックス/検索について
+- GSI (例): `GSI_PendingByAccount` (PK=`pendingForAutoPostAccount`, SK=`scheduledAt`) — 自動投稿ワーカー用。
+- GSI (例): `GSI_ByAccount` (PK=`accountId`, SK=`scheduledAt`) — フロントのアカウント単位一覧用。
+
+#### 運用ルール（既定）
+- リフレッシュ失敗: 3 回失敗で `authState = 'reauth_required'` とする。
+- 重複投稿抑止・再試行: Threads と同様の既存ロジックを流用する（postingLock や条件付き UpdateItem を利用）。
+- prune: Threads と同一ルールを適用（既存の prune ロジックに X の予約投稿レコードを含める）。
+
+#### Backend: CRUD API 設計（X アカウント）
+
+API の設計方針:
+- Next.js API ルートを利用（`src/pages/api/x-accounts/*`）で既存の実装スタイルに合わせる。
+- 認証: 既存の `verifyUserFromRequest` を必須とし、ユーザ固有の `userId` を PK 前提で扱う。
+- バリデーション: `zod` またはハンドメイドのバリデーションを用いて入力チェック。
+
+エンドポイント一覧（概要）:
+
+- GET `/api/x-accounts` — ユーザの全アカウント一覧取得
+  - Query: none
+  - Response: 200 `{ accounts: Array<{ accountId, providerUserId, username, autoPostEnabled, authState, createdAt, updatedAt }> }`
+
+- GET `/api/x-accounts?accountId=<id>` — 単一取得（クエリ or path で実装可）
+  - Response: 200 `{ account: { ...full attributes... } }` / 404
+
+- POST `/api/x-accounts` — 新規アカウント作成（保存は clientId/clientSecret を含む）
+  - Body: `{ accountId?: string, providerUserId?: string, username: string, clientId: string, clientSecret: string, autoPostEnabled?: boolean }`
+  - Validation: `username` と `clientId`/`clientSecret` 必須
+  - Response: 201 `{ accountId }`
+
+- PATCH `/api/x-accounts` — 更新（例: clientId 更新、autoPostEnabled 切替、deauthorize）
+  - Body: `{ accountId: string, username?: string, clientId?: string, clientSecret?: string, autoPostEnabled?: boolean, oauthAccessToken?: string }`
+  - 特殊: oauthAccessToken を `''` にしてトークン削除（deauthorize）を実行可能
+  - Response: 200 `{ ok: true }`
+
+- DELETE `/api/x-accounts` — アカウント削除
+  - Body: `{ accountId: string }`
+  - Behavior: Threads 実装に準じて関連 ScheduledPosts の削除も実行（`deletePostsForAccount` を呼ぶ）
+  - Response: 200 `{ deleted: true }`
+
+セキュリティ・実装ノート:
+- 全ての更新系は `verifyUserFromRequest` を通す。
+- `clientSecret` はレスポンスで返却時はマスク（例: `*****` のサフィックス表示）する。
+- DB 更新は条件付き UpdateItem を使い、存在しない場合はエラーを返す（idempotency のため）。
+
+エラーコード例:
+- 400: validation_error
+- 401: unauthorized
+- 404: not_found
+- 500: internal_error
+
 ---
 
 ## Threads Resolver（変換API）仕様（v1）
