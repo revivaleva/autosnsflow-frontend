@@ -77,16 +77,29 @@ export default function XPostModal({ open, onClose, post }: Props) {
 
       // collect main and extra posts
       const toCreate: Array<{accountId:string, content:string, scheduledAt:number}> = [];
+      const datetimeLocalToJstEpoch = (s: string) => {
+        if (!s) return 0;
+        // s is YYYY-MM-DDTHH:mm in local input; interpret as JST
+        const m = s.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
+        if (m) {
+          const year = Number(m[1]), month = Number(m[2]), day = Number(m[3]), hour = Number(m[4]), minute = Number(m[5]);
+          // JST -> UTC = JST - 9 hours
+          const utcMs = Date.UTC(year, month - 1, day, hour - 9, minute, 0, 0);
+          return Math.floor(utcMs / 1000);
+        }
+        try { return Math.floor(new Date(s).getTime()/1000); } catch { return 0; }
+      };
+
       if (extraPosts.length === 0) {
         // no extras -> require main
-        if (scheduledAt) toCreate.push({ accountId, content, scheduledAt: Math.floor(new Date(scheduledAt).getTime()/1000) });
+        if (scheduledAt) toCreate.push({ accountId, content, scheduledAt: datetimeLocalToJstEpoch(scheduledAt) });
       } else {
         // extras exist -> include extras only; if main has content, also include it
         if (content && String(content).trim() !== '' && scheduledAt) {
-          toCreate.push({ accountId, content, scheduledAt: Math.floor(new Date(scheduledAt).getTime()/1000) });
+          toCreate.push({ accountId, content, scheduledAt: datetimeLocalToJstEpoch(scheduledAt) });
         }
         for (const ex of extraPosts) {
-          toCreate.push({ accountId, content: ex.content || '', scheduledAt: Math.floor(new Date(ex.scheduledAt).getTime()/1000) });
+          toCreate.push({ accountId, content: ex.content || '', scheduledAt: datetimeLocalToJstEpoch(ex.scheduledAt) });
         }
       }
 
