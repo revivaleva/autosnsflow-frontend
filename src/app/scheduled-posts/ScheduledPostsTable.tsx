@@ -425,21 +425,33 @@ export default function ScheduledPostsTable() {
 
   // [FIX] 即時投稿：実行中フラグのセット/解除と成功後の反映
   const handleManualRun = async (p: ScheduledPostType) => {
-    if (!confirm("即時投稿を実行しますか？")) return;
+    // ensure browser confirm is used
+    if (typeof window === 'undefined' || !window.confirm("即時投稿を実行しますか？")) return;
+    const payload = { scheduledPostId: p.scheduledPostId };
+    const url = "/api/scheduled-posts/manual-post";
     try {
       setPostingId(p.scheduledPostId); // [FIX] 実行中フラグON
       setLoadingOverlayOpen(true);
-      const resp = await fetch("/api/scheduled-posts/manual-post", {
+
+      // Log request
+      try { console.info('[manual-post] request', { url, method: 'POST', payload }); } catch (_) {}
+
+      const resp = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ scheduledPostId: p.scheduledPostId }),
+        body: JSON.stringify(payload),
       });
       const data = await resp.json().catch(() => ({}));
+
+      // Log response
+      try { console.info('[manual-post] response', { status: resp.status, ok: resp.ok, body: data }); } catch (_) {}
+
       if (!resp.ok || !data?.ok) {
         alert(`即時投稿に失敗しました: ${data?.error || resp.statusText}`);
         return;
       }
+
       // 成功したら postUrl / postId / postedAt / status / doublePostStatus を反映
       setPosts((prev) =>
         prev.map((x) =>
@@ -455,6 +467,13 @@ export default function ScheduledPostsTable() {
             : x
         )
       );
+
+      // ユーザへの即時フィードバック: 成功アラートを表示
+      try {
+        const postId = data?.post?.postId || "";
+        const postUrl = data?.post?.postUrl || (postId ? `https://www.threads.net/post/${postId}` : "");
+        alert(`✅ 即時投稿に成功しました\n投稿ID: ${postId || "—"}\nURL: ${postUrl || "—"}`);
+      } catch (_) {}
     } finally {
       setPostingId(""); // [FIX] 実行中フラグOFF
       setLoadingOverlayOpen(false);

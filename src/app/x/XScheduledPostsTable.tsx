@@ -112,12 +112,19 @@ export default function XScheduledPostsTable() {
                 <td className="py-2 px-3 w-72">{p.postId || '-'}</td>
                 <td className="py-2 px-3 w-96">
                   <div className="flex gap-3 justify-center items-center">
-                    {(!p.postedAt || p.postedAt === 0) ? (
+                    {(p.status !== 'posted') ? (
                       <>
                         <button className="px-6 py-2 bg-green-600 text-white rounded min-w-[140px]" onClick={async () => {
+                          // Confirm and debug logging
+                          if (typeof window === 'undefined' || !window.confirm('即時投稿を実行しますか？')) return;
+                          const url = '/api/x/tweet';
+                          const payload = { accountId: p.accountId, text: p.content };
                           try {
-                            const res = await fetch('/api/x/tweet', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accountId: p.accountId, text: p.content }) });
-                            if (!res.ok) throw new Error(await res.text());
+                            try { console.info('[x-manual-post] request', { url, payload }); } catch(_) {}
+                            const res = await fetch(url, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                            const body = await res.json().catch(async () => { try { return JSON.parse(await res.text()); } catch(_) { return {}; } });
+                            try { console.info('[x-manual-post] response', { status: res.status, ok: res.ok, body }); } catch(_) {}
+                            if (!res.ok) throw new Error(body?.error || (body && JSON.stringify(body)) || String(res.status));
                             await load();
                           } catch (e) { alert('投稿失敗: ' + String(e)); }
                         }}>即時投稿</button>

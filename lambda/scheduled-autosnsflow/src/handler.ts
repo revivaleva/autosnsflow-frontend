@@ -1454,6 +1454,11 @@ export const handler = async (event: any = {}) => {
         }
         const c = await pruneOldScheduledPosts(uid);
         totalDeleted += Number(c || 0);
+        // Also prune X scheduled posts for this user (same DB-only deletion semantics)
+        try {
+          const cx = await pruneOldXScheduledPosts(uid);
+          totalDeleted += Number(cx || 0);
+        } catch (e) { console.warn('[warn] pruneOldXScheduledPosts failed for', uid, e); }
         // 実行ログも削除
         try {
           const dl = await pruneOldExecutionLogs(uid);
@@ -1694,6 +1699,9 @@ export const handler = async (event: any = {}) => {
         }
 
         const allDeleted = await pruneOldScheduledPostsAll();
+        // full-table prune for X scheduled posts as well
+        let allXDeleted = 0;
+        try { allXDeleted = await pruneOldXScheduledPostsAll(); } catch (_) { allXDeleted = 0; }
         // also perform full-table execution logs prune
         let allLogDeleted = 0;
         try { allLogDeleted = await pruneOldExecutionLogsAll(); } catch (_) { allLogDeleted = 0; }
@@ -1702,7 +1710,7 @@ export const handler = async (event: any = {}) => {
         try { orphanLogDeleted = await pruneOrphanExecutionLogsAll(); } catch (_) { orphanLogDeleted = 0; }
         const finishedAt = Date.now();
     const pruneMsAll = finishedAt - prunePhaseStart;
-    const t = { candidates: totalCandidates, scanned: totalScanned, deleted: allDeleted, preFilterTotal, logDeleted: allLogDeleted, orphanLogDeleted, pruneMs: pruneMsAll } as any;
+        const t = { candidates: totalCandidates, scanned: totalScanned, deleted: allDeleted + (allXDeleted||0), xDeleted: allXDeleted, preFilterTotal, logDeleted: allLogDeleted, orphanLogDeleted, pruneMs: pruneMsAll } as any;
         await postDiscordMaster(formatMasterMessage({ job: "daily-prune", startedAt, finishedAt, userTotal: userIds.length, userSucceeded, totals: t }));
         return { statusCode: 200, body: JSON.stringify({ deleted: allDeleted, logDeleted: allLogDeleted, preFilterTotal }) };
       } catch (e) {
@@ -3426,6 +3434,76 @@ async function pruneOldScheduledPosts(userId: any) {
     return totalDeleted;
   } catch (e) {
     console.warn("[warn] pruneOldScheduledPosts failed:", e);
+    throw e;
+  }
+}
+
+// X scheduled posts prune: delete XScheduledPosts for userId using same retention logic as Threads scheduled posts
+async function pruneOldXScheduledPosts(userId: any) {
+  try {
+    try { await config.loadConfig(); } catch(_) {}
+    const retentionDays = Number(config.getConfigValue('RETENTION_DAYS') || '7') || 7;
+    const thresholdSec = Math.floor(Date.now() / 1000) - (retentionDays * 24 * 60 * 60);
+    let lastKey: any = undefined;
+    let totalDeleted = 0;
+    const perAccountLimit = Number(config.getConfigValue('PER_ACCOUNT_PRUNE_LIMIT') || process.env.PER_ACCOUNT_PRUNE_LIMIT || '20') || 20;
+    const deletedByAccount: Record<string, number> = {};
+    const TBL_X_SCHEDULED_LOCAL = config.getConfigValue('TBL_X_SCHEDULED') || process.env.TBL_X_SCHEDULED || 'XScheduledPosts';
+    do {
+      const q = await ddb.send(new QueryCommand({
+        TableName: TBL_X_SCHEDULED_LOCAL,
+        KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
+        ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'SCHEDULEDPOST#' } },
+        ProjectionExpression: 'PK,SK,scheduledAt,postedAt,accountId',
+        Limit: 1000,
+        ExclusiveStartKey: lastKey,
+      }));
+
+      for (const it of (q.Items || [])) {
+        try {
+          const scheduledAt = normalizeEpochSec(getN(it.scheduledAt) || 0);
+          const postedAt = normalizeEpochSec(getN(it.postedAt) || 0);
+          const compareAt = postedAt > 0 ? postedAt : scheduledAt;
+          if (!compareAt) continue;
+          if (compareAt <= thresholdSec) {
+            const acctId = getS(it.accountId) || '__unknown__';
+            const cur = deletedByAccount[acctId] || 0;
+            if (cur >= perAccountLimit) continue;
+            await ddb.send(new DeleteItemCommand({ TableName: TBL_X_SCHEDULED_LOCAL, Key: { PK: it.PK, SK: it.SK } }));
+            totalDeleted++;
+            deletedByAccount[acctId] = cur + 1;
+          }
+        } catch (e) {
+          console.warn('[warn] prune X scheduled delete failed for item', e);
+        }
+      }
+
+      const allReached = Object.values(deletedByAccount).every(v => v >= perAccountLimit) && Object.keys(deletedByAccount).length > 0;
+      if (allReached) break;
+      lastKey = q.LastEvaluatedKey;
+    } while (lastKey);
+
+    if (totalDeleted > 0) {
+      await putLog({ userId, type: 'prune', status: 'info', message: `古い X 予約投稿 ${totalDeleted} 件を削除しました` });
+    }
+    return totalDeleted;
+  } catch (e) {
+    console.warn('[warn] pruneOldXScheduledPosts failed:', e);
+    throw e;
+  }
+}
+
+async function pruneOldXScheduledPostsAll() {
+  try {
+    const userIds = await getActiveUserIds();
+    let totalDeleted = 0;
+    for (const uid of userIds) {
+      const c = await pruneOldXScheduledPosts(uid);
+      totalDeleted += Number(c || 0);
+    }
+    return totalDeleted;
+  } catch (e) {
+    console.warn('[warn] pruneOldXScheduledPostsAll failed:', e);
     throw e;
   }
 }

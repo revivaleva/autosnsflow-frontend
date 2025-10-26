@@ -126,10 +126,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const values: Record<string, any> = {
       ":posted": { S: "posted" },
       ":ts": { N: String(now) },
-      ":pid": { S: postId },
       ":f": { BOOL: false },
     };
-    const sets = ["#st = :posted", "postedAt = :ts", "postId = :pid"];
+    const sets = ["#st = :posted", "postedAt = :ts"];
+    // include postId only when present to avoid DynamoDB validation of empty strings
+    if (postId && String(postId).trim().length > 0) {
+      values[":pid"] = { S: String(postId) };
+      sets.push("postId = :pid");
+    }
     
     // Debug: log publish numeric and update values before DB update
     try {
@@ -147,7 +151,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     try {
       console.info('[DBG manual-post] updateValues(final)', values, 'sets', sets);
     } catch (e) { console.warn('[DBG manual-post] debug log failed 2', e); }
-    
+
     if (permalinkUrl) {
       sets.push("postUrl = :purl");
       values[":purl"] = { S: permalinkUrl };
@@ -165,30 +169,44 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       values[":waiting"] = { S: "waiting" };
     }
 
-    await ddb.send(
-      new UpdateItemCommand({
-        TableName: TBL_SCHEDULED,
-        Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${scheduledPostId}` } },
-        UpdateExpression: `SET ${sets.join(", ")}`,
-        ConditionExpression:
-          "(attribute_not_exists(#st) OR #st <> :posted) AND (attribute_not_exists(isDeleted) OR isDeleted = :f)",
-        ExpressionAttributeNames: names,
-        ExpressionAttributeValues: values,
-      })
-    );
+    let dbUpdateFailed = false;
+    let dbUpdateError: string | null = null;
+    try {
+      await ddb.send(
+        new UpdateItemCommand({
+          TableName: TBL_SCHEDULED,
+          Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${scheduledPostId}` } },
+          UpdateExpression: `SET ${sets.join(", ")}`,
+          ConditionExpression:
+            "(attribute_not_exists(#st) OR #st <> :posted) AND (attribute_not_exists(isDeleted) OR isDeleted = :f)",
+          ExpressionAttributeNames: names,
+          ExpressionAttributeValues: values,
+        })
+      );
+    } catch (e: any) {
+      dbUpdateFailed = true;
+      try { console.error('[manual-post] DB update failed', String(e?.message || e), { scheduledPostId, sets }); } catch (_) {}
+      dbUpdateError = String(e?.message || e);
+    }
+    // (DB update attempted above)
 
     // [MOD] レスポンス：postUrl は取得できた場合のみ返す
-    res.status(200).json({
-      ok: true,
-      post: {
-        scheduledPostId,
-        postId,
-        ...(permalinkUrl ? { postUrl: permalinkUrl } : {}),
-        postedAt: now,
-        status: "posted",
-        ...(secondStageContent?.trim() ? { doublePostStatus: "waiting" } : {}),
-      },
-    });
+    const respPost: any = {
+      scheduledPostId,
+      ...(postId ? { postId } : {}),
+      ...(permalinkUrl ? { postUrl: permalinkUrl } : {}),
+      postedAt: now,
+      status: "posted",
+      ...(secondStageContent?.trim() ? { doublePostStatus: "waiting" } : {}),
+    };
+    const respBody: any = { ok: true, post: respPost };
+    if (dbUpdateFailed) {
+      // include non-sensitive debug hint so caller can surface the issue; do not include full values
+      respBody.dbUpdateFailed = true;
+      respBody.dbUpdateError = dbUpdateError;
+      try { console.warn('[manual-post] responding with dbUpdateFailed flag', { scheduledPostId }); } catch (_) {}
+    }
+    res.status(200).json(respBody);
   } catch (e: any) {
     res.status(e?.statusCode || 500).json({ error: e?.message || "internal_error" });
   }
