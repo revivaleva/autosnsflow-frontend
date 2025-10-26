@@ -3165,8 +3165,8 @@ async function runFiveMinJobForUser(userId: any) {
     { label: "失効(rate-limit)", value: rateSkipped },
   ], "every-5min");
   // include X posted count in the metrics if present
-  if ((totals as any).totalX) {
-    try { metrics += ` / X投稿: ${(totals as any).totalX}`; } catch(_) {}
+  if (typeof totalX !== 'undefined' && totalX) {
+    try { metrics += ` / X投稿: ${totalX}`; } catch(_) {}
   }
   const content = metrics === "every-5min：実行なし" ? metrics : `**[定期実行レポート] ${now} (every-5min)**\n${metrics}`;
   await postDiscordLog({ userId, content });
