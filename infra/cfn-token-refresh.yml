@@ -1,0 +1,43 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: EventBridge rule to trigger Token Refresh Lambda and Lambda permission for invocation
+
+Parameters:
+  TokenRefreshLambdaName:
+    Type: String
+    Description: Existing Lambda function name to invoke for token refresh
+  ScheduleExpression:
+    Type: String
+    Default: rate(1 hour)
+    Description: EventBridge schedule expression (cron or rate)
+
+Resources:
+  TokenRefreshScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "token-refresh-schedule-${AWS::StackName}"
+      ScheduleExpression: !Ref ScheduleExpression
+      State: ENABLED
+      Targets:
+        - Arn: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${TokenRefreshLambdaName}"
+          Id: TokenRefreshTarget
+          RetryPolicy:
+            MaximumEventAgeInSeconds: 86400
+            MaximumRetryAttempts: 2
+
+  TokenRefreshPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref TokenRefreshLambdaName
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt TokenRefreshScheduleRule.Arn
+
+Outputs:
+  EventRuleName:
+    Description: Name of the created EventBridge rule
+    Value: !Ref TokenRefreshScheduleRule
+  EventRuleArn:
+    Description: ARN of the created EventBridge rule
+    Value: !GetAtt TokenRefreshScheduleRule.Arn
+
+

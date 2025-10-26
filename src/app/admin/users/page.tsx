@@ -19,6 +19,8 @@ type AdminUserRow = {
   autoPost: boolean;
   updatedAt: number;
   createdAt?: number;
+  // 新規: X 管理表示フラグ
+  enableX?: boolean;
 };
 
 export default function AdminUsersPage() {
@@ -46,12 +48,15 @@ export default function AdminUsersPage() {
     autoPost: boolean;
     username: string;
     maxThreadsAccounts: number;
+    enableX: boolean;
   }>({
     apiDailyLimit: 200,
     autoPostAdminStop: false,
     autoPost: false,
     username: "",
     maxThreadsAccounts: 0,
+    // 新規: X 管理表示フラグ
+    enableX: false,
   });
 
   // [EDIT] 403(forbidden) を検知したらリダイレクトして終了
@@ -91,12 +96,13 @@ export default function AdminUsersPage() {
 
   const openEdit = (r: AdminUserRow) => {
     setTarget(r);
-    setForm({
+      setForm({
       apiDailyLimit: r.apiDailyLimit ?? 200,
       autoPostAdminStop: !!r.autoPostAdminStop,
       autoPost: !!r.autoPost,
       username: r.username ?? "",
       maxThreadsAccounts: r.maxThreadsAccounts ?? 0,
+        enableX: (r as any).enableX || false,
     });
     setEditOpen(true);
   };
@@ -119,6 +125,7 @@ export default function AdminUsersPage() {
         autoPost: Boolean(form.autoPost),
         username: String(form.username || ""),
         maxThreadsAccounts: Number(form.maxThreadsAccounts || 0),
+        enableX: Boolean(form.enableX),
       };
       const res = await fetch("/api/admin/users", {
         method: "PATCH",
@@ -374,6 +381,19 @@ export default function AdminUsersPage() {
                           className="sr-only peer"
                           checked={form.autoPost}
                           onChange={(e) => setForm((v) => ({ ...v, autoPost: e.target.checked }))}
+                        />
+                        <div className="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:bg-blue-600 relative after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:w-5 after:h-5 after:rounded-full after:transition-all peer-checked:after:translate-x-full" />
+                      </label>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <label className="font-medium">X 管理表示</label>
+                      <label className="inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          className="sr-only peer"
+                          checked={form.enableX}
+                          onChange={(e) => setForm((v) => ({ ...v, enableX: e.target.checked }))}
                         />
                         <div className="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:bg-blue-600 relative after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:w-5 after:h-5 after:rounded-full after:transition-all peer-checked:after:translate-x-full" />
                       </label>

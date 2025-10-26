@@ -5,6 +5,7 @@ import { putLog } from '@/lib/logger';
 
 const ddb = createDynamoClient();
 const TBL = process.env.TBL_THREADS_ACCOUNTS || 'ThreadsAccounts';
+// WARNING: Do not use global env client secrets for X; token-refresh for X uses per-account clientSecret from XAccounts table.
 const CLIENT_SECRET = process.env.THREADS_CLIENT_SECRET || '';
 const CLIENT_ID = process.env.THREADS_CLIENT_ID || '';
 const TOKEN_EXCHANGE_URL = process.env.THREADS_TOKEN_EXCHANGE_URL || 'https://graph.threads.net/access_token';

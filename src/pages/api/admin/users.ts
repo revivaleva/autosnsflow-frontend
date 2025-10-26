@@ -148,6 +148,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           autoPostAdminStop: Boolean(item.autoPostAdminStop?.BOOL || false),
           autoPost:          Boolean(item.autoPost?.BOOL || false),
           updatedAt:         Number(item.updatedAt?.N || 0),
+          enableX:           item.enableX?.BOOL === true,
           // Cognito の作成日時（秒）
           createdAt:         u.UserCreateDate ? Math.floor(new Date(u.UserCreateDate as any).getTime() / 1000) : 0,
           registeredAccounts,
@@ -161,14 +162,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (req.method === "PATCH") {
       const user = await verifyUserFromRequest(req);
       assertAdmin(user);
+      // Debug: log incoming payload for troubleshooting
+      try { console.log('[admin/users] PATCH payload:', JSON.stringify(req.body)); } catch(_) {}
 
-    const { userId, apiDailyLimit, autoPostAdminStop, autoPost, username, maxThreadsAccounts } = (req.body || {}) as {
+      const { userId, apiDailyLimit, autoPostAdminStop, autoPost, username, maxThreadsAccounts, enableX } = (req.body || {}) as {
       userId?: string;
       apiDailyLimit?: number | string;
       autoPostAdminStop?: boolean;
       autoPost?: boolean;
       username?: string;
       maxThreadsAccounts?: number | string;
+        enableX?: boolean;
     };
 
       if (!userId) return res.status(400).json({ error: "userId is required" });
@@ -186,6 +190,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const key = { PK: { S: `USER#${userId}` }, SK: { S: "SETTINGS" } };
       // Build update expression dynamically to include optional fields (username, maxThreadsAccounts)
       const sets: string[] = ["apiDailyLimit = :lim", "autoPostAdminStop = :stp", "autoPost = :aut", "updatedAt = :u"];
+      const names: Record<string, string> = {};
       const values: Record<string, any> = {
         ":lim": { N: String(Math.floor(limitNum)) },
         ":stp": { BOOL: !!autoPostAdminStop },
@@ -201,16 +206,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         sets.push("maxThreadsAccounts = :mta");
         values[":mta"] = { N: String(Math.floor(maxThreadsNum)) };
       }
+      if (typeof enableX !== 'undefined') {
+        names['#ex'] = 'enableX';
+        values[':ex'] = { BOOL: !!enableX };
+        sets.push('#ex = :ex');
+      }
 
-      await ddb.send(new UpdateItemCommand({
-        TableName: TBL_SETTINGS,
-        Key: key,
-        UpdateExpression: `SET ${sets.join(', ')}`,
-        ExpressionAttributeValues: values,
-        ReturnValues: "NONE",
-      }));
-
-      return res.status(200).json({ ok: true });
+      try {
+        await ddb.send(new UpdateItemCommand({
+          TableName: TBL_SETTINGS,
+          Key: key,
+          UpdateExpression: `SET ${sets.join(', ')}`,
+          ExpressionAttributeNames: names,
+          ExpressionAttributeValues: values,
+          ReturnValues: "NONE",
+        }));
+        try { console.log('[admin/users] PATCH success for userId:', userId, 'updates:', sets); } catch(_) {}
+        return res.status(200).json({ ok: true });
+      } catch (e) {
+        console.error('[admin/users] PATCH failed for userId:', userId, 'error:', String(e));
+        throw e;
+      }
     }
 
     // [MOD] 未対応メソッドは405
