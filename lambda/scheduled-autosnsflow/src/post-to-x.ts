@@ -1,4 +1,3 @@
-import fetch from 'node-fetch';
 import { createDynamoClient } from '@/lib/ddb';
 import { PutItemCommand, QueryCommand, UpdateItemCommand, GetItemCommand } from '@aws-sdk/client-dynamodb';
 

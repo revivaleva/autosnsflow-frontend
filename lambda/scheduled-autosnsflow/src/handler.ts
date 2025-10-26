@@ -26,6 +26,8 @@ import config from '@/lib/config';
 // @ts-expect-error: path aliases resolved at build time
 import { postToThreads as sharedPostToThreads, postQuoteToThreads as sharedPostQuoteToThreads } from '@/lib/threads';
 import crypto from "crypto";
+// @ts-expect-error: path aliases resolved at build time
+import { deleteThreadsPostWithToken } from '@/lib/threads-delete';
 import { unmarshall } from "@aws-sdk/util-dynamodb";
 
 // Disable test-only global output collector (no-op stub) to avoid test-only side-effects.
@@ -3072,7 +3074,7 @@ async function runFiveMinJobForUser(userId: any) {
   }
 
   const accounts = await getThreadsAccounts(userId);
-  let totalAuto = 0, totalReply = 0, totalTwo = 0, rateSkipped = 0;
+  let totalAuto = 0, totalReply = 0, totalTwo = 0, rateSkipped = 0, totalX = 0;
   const perAccount: any[] = [];
 
   for (const acct of accounts) {
@@ -3105,7 +3107,7 @@ async function runFiveMinJobForUser(userId: any) {
               const xr = await xmod.runAutoPostForXAccount(xacct, userId);
               (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
               (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_AUTO_POST_RESULT', payload: { accountId: xacct.accountId, result: xr } });
-              if (xr && typeof xr.posted === 'number') totals.totalX += Number(xr.posted || 0);
+            if (xr && typeof xr.posted === 'number') totalX += Number(xr.posted || 0);
             } catch (e) { console.warn('[warn] runAutoPostForXAccount failed', e); }
           }
         } catch (e) { console.warn('[warn] post-to-x import or run failed', e); }
@@ -3157,19 +3159,19 @@ async function runFiveMinJobForUser(userId: any) {
 
   const urls = await getDiscordWebhooks(userId);
   const now = new Date().toISOString();
-  const metrics = formatNonZeroLine([
+  let metrics = formatNonZeroLine([
     { label: "自動投稿", value: totalAuto },
     { label: "リプ返信", value: totalReply },
     { label: "2段階投稿", value: totalTwo },
     { label: "失効(rate-limit)", value: rateSkipped },
   ], "every-5min");
   // include X posted count in the metrics if present
-  if ((totals as any).totalX) {
-    try { metrics += ` / X投稿: ${(totals as any).totalX}`; } catch(_) {}
+  if (totalX) {
+    try { metrics += ` / X投稿: ${totalX}`; } catch(_) {}
   }
   const content = metrics === "every-5min：実行なし" ? metrics : `**[定期実行レポート] ${now} (every-5min)**\n${metrics}`;
   await postDiscordLog({ userId, content });
-  return { userId, totalAuto, totalReply, totalTwo, rateSkipped };
+  return { userId, totalAuto, totalReply, totalTwo, totalX, rateSkipped };
 }
 
 // 指定アカウントの予約から deleteScheduledAt が過ぎているものを削除する処理
@@ -3234,47 +3236,42 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
       const postId = getS(it.postId) || "";
       const secondId = getS(it.secondStagePostId) || "";
       const deleteParent = it.deleteParentAfter?.BOOL === true;
+      // ログ重複防止フラグは try の外で宣言しておく（catch でも参照するため）
+      let _logSaved = false;
 
-      // 削除対象を判定してThreads APIで削除を試みる（共通ユーティリティ経由、詳細ログ追加）
+      // 削除対象を判定してThreads APIで削除を試みる（投稿一括削除と同じ共通ユーティリティを使用）
         try {
-          // dynamic import workaround for monorepo path resolution in Lambda build
-        let deleteThreadPost: any = null;
-        try {
-          // attempt to load from package name (might not exist in lambda build)
-          // @ts-expect-error - optional package import, may not have types in this compilation context
-          const pkgMod = await import("@autosnsflow/backend-core").catch(() => null);
-          if (pkgMod && pkgMod.deleteThreadPost) deleteThreadPost = pkgMod.deleteThreadPost;
-          else deleteThreadPost = null;
-        } catch (e2) {
-          deleteThreadPost = null;
-        }
-
         // トークンハッシュを作成（ログにそのままトークンを出さない）
         const tokenHash = acct.oauthAccessToken ? crypto.createHash("sha256").update(acct.oauthAccessToken).digest("hex").slice(0, 12) : (acct.accessToken ? crypto.createHash("sha256").update(acct.accessToken).digest("hex").slice(0, 12) : "");
-        
+        // 重複ログ挿入防止フラグ（既に上で宣言済み）
+
+        // フォールバック: acct に token が無ければエラー扱い（必要なら getTokenForAccount を呼ぶ実装へ拡張可能）
+        const tokenToUse = acct.oauthAccessToken || acct.accessToken || '';
         let deleteResult: any = null;
-        if (deleteThreadPost) {
-          const tokenToUse = acct.oauthAccessToken || acct.accessToken || '';
-          if (!tokenToUse) {
-            // no token available, mark as error
-            deleteResult = { ok: false, status: 0, body: 'no_token_available' };
-          } else {
-            if (deleteParent && postId) {
-              deleteResult = await deleteThreadPost({ postId, accessToken: tokenToUse });
-            }
-            if (!deleteParent && secondId) {
-              deleteResult = await deleteThreadPost({ postId: secondId, accessToken: tokenToUse });
-            }
-          }
+        if (!tokenToUse) {
+          deleteResult = { ok: false, status: 0, body: 'no_token_available' };
         } else {
-          // Could not load deleteThreadPost module; mark as skipped
-          deleteResult = { ok: false, status: 0, body: 'deleteThreadPost module missing' };
+          // 削除ターゲットを決める（親投稿 or 二段階投稿）
+          try {
+            if (deleteParent && postId) {
+              await deleteThreadsPostWithToken({ postId, token: tokenToUse });
+              deleteResult = { ok: true, status: 200, body: 'deleted' };
+            } else if (!deleteParent && secondId) {
+              await deleteThreadsPostWithToken({ postId: secondId, token: tokenToUse });
+              deleteResult = { ok: true, status: 200, body: 'deleted' };
+            } else {
+              deleteResult = { ok: false, status: 0, body: 'no_delete_target' };
+            }
+          } catch (err: any) {
+            deleteResult = { ok: false, status: err?.status || 0, body: String(err?.message || err) };
+          }
         }
 
         // Delete result must be checked
         if (!deleteResult || !deleteResult.ok) {
           // 保存用だけputLogして上位catchへ投げる
           await putLog({ userId, type: "second-stage-delete", accountId: acct.accountId, targetId: sk, status: "error", message: "二段階投稿削除に失敗(HTTP)", detail: { whichFlagUsed: flagSource || 'unknown', deleteTarget: deleteParent ? 'parent' : 'second-stage', postId: postId || secondId || '', statusCode: deleteResult?.status || 0, bodySnippet: (deleteResult?.body || '').slice(0, 1000), accessTokenHash: tokenHash } });
+          _logSaved = true;
           throw new Error(`threads delete failed: ${deleteResult?.status} ${deleteResult?.body}`);
         }
 
@@ -3288,7 +3285,12 @@ async function performScheduledDeletesForAccount(acct: any, userId: any, setting
 
         await putLog({ userId, type: "second-stage-delete", accountId: acct.accountId, targetId: sk, status: "ok", message: "二段階投稿削除を実行", detail: { whichFlagUsed: flagSource || 'unknown', deleteTarget: deleteParent ? 'parent' : 'second-stage', postId: postId || secondId || '', statusCode: deleteResult.status, bodySnippet: (deleteResult.body || '').slice(0, 1000), accessTokenHash: tokenHash } });
       } catch (e) {
-        await putLog({ userId, type: "second-stage-delete", accountId: acct.accountId, targetId: sk, status: "error", message: "二段階投稿削除に失敗", detail: { error: String(e), whichFlagUsed: flagSource || 'unknown', deleteTarget: deleteParent ? 'parent' : 'second-stage', postId: postId || '', secondId: secondId || '' } });
+        // 二段階削除で既にエラーログを残していれば重複しないようにする
+        try {
+          if (!(typeof _logSaved === 'boolean' && _logSaved)) {
+            await putLog({ userId, type: "second-stage-delete", accountId: acct.accountId, targetId: sk, status: "error", message: "二段階投稿削除に失敗", detail: { error: String(e), whichFlagUsed: flagSource || 'unknown', deleteTarget: deleteParent ? 'parent' : 'second-stage', postId: postId || '', secondId: secondId || '' } });
+          }
+        } catch (_) {}
       }
     }
 
