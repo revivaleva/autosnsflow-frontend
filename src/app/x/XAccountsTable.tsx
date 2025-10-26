@@ -39,7 +39,7 @@ export default function XAccountsTable() {
   return (
     <div className="max-w-5xl mx-auto">
       <div className="flex justify-between items-center mb-4">
-        <h1 className="text-2xl font-bold">Xアカウント一覧</h1>
+        <div />
         <div className="flex gap-2">
           <button className="bg-blue-500 text-white px-3 py-1 rounded" onClick={load}>再読み込み</button>
           <button className="bg-green-500 text-white px-3 py-1 rounded" onClick={handleAdd}>＋新規追加</button>
@@ -47,12 +47,12 @@ export default function XAccountsTable() {
       </div>
       {loading ? <div className="text-center py-8">読み込み中...</div> : (
         <table className="w-full border">
-          <thead className="bg-gray-100"><tr>
-            <th className="py-2 px-3 text-left">アカウント名</th>
-            <th className="py-2 px-3">ID</th>
-            <th className="py-2 px-3">登録日</th>
-            <th className="py-2 px-3">自動投稿</th>
-            <th className="py-2 px-3">アプリ</th>
+          <thead className="bg-gray-100 dark:bg-gray-800"><tr>
+            <th className="py-2 px-3 text-left text-gray-900 dark:text-gray-100">アカウント名</th>
+            <th className="py-2 px-3 text-gray-900 dark:text-gray-100">ID</th>
+            <th className="py-2 px-3 text-gray-900 dark:text-gray-100">登録日</th>
+            <th className="py-2 px-3 text-gray-900 dark:text-gray-100">自動投稿</th>
+            <th className="py-2 px-3 text-gray-900 dark:text-gray-100">アプリ</th>
           </tr></thead>
           <tbody>
             {accounts.map((a) => (

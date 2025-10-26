@@ -1,6 +1,6 @@
 import fetch from 'node-fetch';
 import { createDynamoClient } from '@/lib/ddb';
-import { PutItemCommand, QueryCommand, UpdateItemCommand } from '@aws-sdk/client-dynamodb';
+import { PutItemCommand, QueryCommand, UpdateItemCommand, GetItemCommand } from '@aws-sdk/client-dynamodb';
 
 const ddb = createDynamoClient();
 const TBL_X_SCHEDULED = process.env.TBL_X_SCHEDULED || 'XScheduledPosts';
@@ -51,7 +51,7 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
   const now = Math.floor(Date.now() / 1000);
   const accountId = acct.accountId;
 
-  const candidates = await fetchDueXScheduledForAccount(accountId, now, 5);
+  const candidates = await fetchDueXScheduledForAccount(accountId, now, 1);
   let postedCount = 0;
   for (const it of candidates) {
     try {
@@ -59,15 +59,73 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
       const content = it.content.S || '';
       // Prevent double-posting: ensure status is pending
       if ((it.status && it.status.S) && it.status.S !== 'pending') continue;
-      const r = await postToX({ accessToken: acct.oauthAccessToken || acct.accessToken, text: content });
+      // Try posting, attempt refresh once on failure
+      let accessToken = acct.oauthAccessToken || acct.accessToken || '';
+      let r;
+      try {
+        r = await postToX({ accessToken, text: content });
+      } catch (postErr) {
+        // Try token refresh using stored refreshToken
+        try {
+          const newToken = await refreshXAccountToken(userId, accountId);
+          if (newToken) {
+            accessToken = newToken;
+            r = await postToX({ accessToken, text: content });
+          } else {
+            throw postErr;
+          }
+        } catch (refreshErr) {
+          throw postErr;
+        }
+      }
       const postId = (r && r.data && (r.data.id || r.data?.id_str)) || '';
       await markXScheduledPosted(pk, sk, String(postId));
       postedCount++;
+      // notify user-level discord webhooks
+      try {
+        const content = `【X 投稿】アカウント ${accountId} にて予約投稿が実行されました\npostId: ${postId}\ncontent: ${String(content).slice(0,200)}`;
+        try { await postDiscordLog({ userId, content }); } catch(e) {}
+      } catch(e) {}
+      // notify master webhook
+      try { await postDiscordMaster(`**[X POSTED]** user=${userId} account=${accountId} postId=${postId}\n${String(content).slice(0,200)}`); } catch(e) {}
     } catch (e) {
       // TODO: implement retries, logging, update status to 'failed'
     }
   }
   return { posted: postedCount };
+}
+
+// Refresh a single X account token using stored refresh_token and client credentials
+async function refreshXAccountToken(userId: string, accountId: string) {
+  const TBL_X = process.env.TBL_X_ACCOUNTS || 'XAccounts';
+  try {
+    const out = await ddb.send(new GetItemCommand({ TableName: TBL_X, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } } }));
+    const it: any = (out as any).Item || {};
+    const clientId = it.clientId?.S || it.client_id?.S || '';
+    const clientSecret = it.clientSecret?.S || it.client_secret?.S || '';
+    const refreshToken = it.refreshToken?.S || it.oauthRefreshToken?.S || '';
+    if (!refreshToken) return null;
+    const tokenUrl = 'https://api.x.com/2/oauth2/token';
+    const params = new URLSearchParams();
+    params.append('grant_type', 'refresh_token');
+    params.append('refresh_token', refreshToken);
+    if (clientId && !clientSecret) params.append('client_id', clientId);
+    const headers: any = { 'Content-Type': 'application/x-www-form-urlencoded' };
+    if (clientId && clientSecret) headers['Authorization'] = `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString('base64')}`;
+    const resp = await fetch(tokenUrl, { method: 'POST', headers, body: params });
+    const j = await resp.json().catch(() => ({}));
+    if (!resp.ok || !j.access_token) return null;
+    const at = String(j.access_token || '');
+    const rt = String(j.refresh_token || refreshToken);
+    const expiresIn = Number(j.expires_in || 0);
+    const expiresAt = expiresIn ? Math.floor(Date.now() / 1000) + expiresIn : 0;
+    try {
+      await ddb.send(new UpdateItemCommand({ TableName: TBL_X, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } }, UpdateExpression: 'SET oauthAccessToken = :at, refreshToken = :rt, oauthTokenExpiresAt = :exp, oauthSavedAt = :now', ExpressionAttributeValues: { ':at': { S: at }, ':rt': { S: rt }, ':exp': { N: String(expiresAt || 0) }, ':now': { N: String(Math.floor(Date.now() / 1000)) } } }));
+    } catch (_) {}
+    return at;
+  } catch (e) {
+    return null;
+  }
 }
 
 

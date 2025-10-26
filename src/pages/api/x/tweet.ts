@@ -5,6 +5,7 @@ import { verifyUserFromRequest } from '@/lib/auth';
 
 const ddb = createDynamoClient();
 const TBL_X = process.env.TBL_X_ACCOUNTS || 'XAccounts';
+const TBL_X_SCHEDULED = process.env.TBL_X_SCHEDULED || 'XScheduledPosts';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
@@ -13,7 +14,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // debug logging removed
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
     const body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
-    const { accountId, text } = body || {};
+    const { accountId, text, scheduledPostId } = body || {};
     if (!accountId || !text) return res.status(400).json({ error: 'accountId and text required' });
 
     // Read account token from XAccounts table
@@ -102,8 +103,44 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (!r.ok) {
       return res.status(500).json({ error: 'post_failed', detail: j });
     }
-    return res.status(200).json(j);
-    return res.status(200).json(j);
+
+    // try to extract post id from X response
+    const postId = (j && (j.data?.id || j.id || j?.data?.id_str)) ? String(j.data?.id || j.id || j.data?.id_str) : '';
+    const now = Math.floor(Date.now() / 1000);
+
+    // If caller provided scheduledPostId, attempt to persist postedAt/postId/status
+    let dbUpdateFailed = false;
+    let dbUpdateError: string | null = null;
+    if (scheduledPostId) {
+      try {
+        const names: Record<string,string> = { '#st': 'status' };
+        const values: Record<string, any> = {
+          ':posted': { S: 'posted' },
+          ':ts': { N: String(now) },
+          ':f': { BOOL: false }
+        };
+        const sets: string[] = ['#st = :posted', 'postedAt = :ts'];
+        if (postId && postId.trim().length > 0) {
+          values[':pid'] = { S: postId };
+          sets.push('postId = :pid');
+        }
+
+        await ddb.send(new UpdateItemCommand({
+          TableName: TBL_X_SCHEDULED,
+          Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${scheduledPostId}` } },
+          UpdateExpression: `SET ${sets.join(', ')}`,
+          ConditionExpression: "(attribute_not_exists(#st) OR #st <> :posted) AND (attribute_not_exists(isDeleted) OR isDeleted = :f)",
+          ExpressionAttributeNames: names,
+          ExpressionAttributeValues: values
+        }));
+      } catch (e: any) {
+        dbUpdateFailed = true;
+        dbUpdateError = String(e?.message || e);
+        try { console.warn('[api/x/tweet] failed to persist scheduled post update', dbUpdateError, { scheduledPostId, userId }); } catch(_) {}
+      }
+    }
+
+    return res.status(200).json({ ok: true, result: j, postId: postId || undefined, postedAt: now, dbUpdateFailed, dbUpdateError });
   } catch (e: any) { return res.status(500).json({ error: String(e) }); }
 }
 
