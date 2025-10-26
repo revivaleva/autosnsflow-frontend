@@ -117,7 +117,8 @@ const isValidUrl = (s: any) => {
   }
 };
 
-/// ========== 共通ユーティリティ ==========
+/// ========== 共通ユーティリティ ==========// trigger: lambda build noop change - ensure CI picks up
+
 const TZ = "Asia/Tokyo";
 const nowSec = () => Math.floor(Date.now() / 1000);
 const toEpochSec = (d: any) => Math.floor(d.getTime() / 1000);
