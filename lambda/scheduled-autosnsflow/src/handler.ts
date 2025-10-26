@@ -3072,6 +3072,8 @@ async function runFiveMinJobForUser(userId: any) {
 
   const accounts = await getThreadsAccounts(userId);
   let totalAuto = 0, totalReply = 0, totalTwo = 0, rateSkipped = 0;
+  // track X posted count per-user for aggregation
+  let totalX = 0;
   const perAccount: any[] = [];
 
   for (const acct of accounts) {
@@ -3104,7 +3106,7 @@ async function runFiveMinJobForUser(userId: any) {
               const xr = await xmod.runAutoPostForXAccount(xacct, userId);
               (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
               (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_AUTO_POST_RESULT', payload: { accountId: xacct.accountId, result: xr } });
-              if (xr && typeof xr.posted === 'number') totals.totalX += Number(xr.posted || 0);
+              if (xr && typeof xr.posted === 'number') totalX += Number(xr.posted || 0);
             } catch (e) { console.warn('[warn] runAutoPostForXAccount failed', e); }
           }
         } catch (e) { console.warn('[warn] post-to-x import or run failed', e); }
@@ -3168,7 +3170,7 @@ async function runFiveMinJobForUser(userId: any) {
   }
   const content = metrics === "every-5min：実行なし" ? metrics : `**[定期実行レポート] ${now} (every-5min)**\n${metrics}`;
   await postDiscordLog({ userId, content });
-  return { userId, totalAuto, totalReply, totalTwo, rateSkipped };
+  return { userId, totalAuto, totalReply, totalTwo, totalX, rateSkipped };
 }
 
 // 指定アカウントの予約から deleteScheduledAt が過ぎているものを削除する処理
