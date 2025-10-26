@@ -80,12 +80,19 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
       const postId = (r && r.data && (r.data.id || r.data?.id_str)) || '';
       await markXScheduledPosted(pk, sk, String(postId));
       postedCount++;
-      // notify user-level discord webhooks
+      // notify user-level discord webhooks only if user has enableX=true in settings
       try {
-        const content = `【X 投稿】アカウント ${accountId} にて予約投稿が実行されました\npostId: ${postId}\ncontent: ${String(content).slice(0,200)}`;
-        try { await postDiscordLog({ userId, content }); } catch(e) {}
-      } catch(e) {}
-      // notify master webhook
+        const settingsOut = await ddb.send(new GetItemCommand({ TableName: process.env.TBL_SETTINGS || 'UserSettings', Key: { PK: { S: `USER#${userId}` }, SK: { S: 'SETTINGS' } }, ProjectionExpression: 'enableX' }));
+        const enableX = Boolean(settingsOut?.Item?.enableX?.BOOL === true);
+        const userContent = `【X 投稿】アカウント ${accountId} にて予約投稿が実行されました\npostId: ${postId}\ncontent: ${String(content).slice(0,200)}`;
+        if (enableX) {
+          try { await postDiscordLog({ userId, content: userContent }); } catch (e) { /* ignore */ }
+        }
+      } catch (e) {
+        // log but don't fail posting
+        try { console.warn('[warn] check enableX or postDiscordLog failed', String(e)); } catch(_) {}
+      }
+      // notify master webhook (always)
       try { await postDiscordMaster(`**[X POSTED]** user=${userId} account=${accountId} postId=${postId}\n${String(content).slice(0,200)}`); } catch(e) {}
     } catch (e) {
       // TODO: implement retries, logging, update status to 'failed'
