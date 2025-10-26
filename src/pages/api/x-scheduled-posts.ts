@@ -39,9 +39,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const body = safeBody(req.body);
       try { console.log('[api/x-scheduled-posts] POST payload:', JSON.stringify(body)); } catch(_) {}
       const { scheduledPostId, accountId, content, scheduledAt } = body || {};
-      if (!accountId || !content || !scheduledAt) return res.status(400).json({ error: 'accountId, content, scheduledAt required' });
+      if (!accountId || !content || (typeof scheduledAt === 'undefined' || scheduledAt === null || scheduledAt === '')) return res.status(400).json({ error: 'accountId, content, scheduledAt required' });
       const id = scheduledPostId || `sp-${Date.now().toString(36)}`;
       const now = `${Math.floor(Date.now() / 1000)}`;
+      // normalize scheduledAt: accept numeric epoch (seconds) or 'YYYY-MM-DDTHH:mm' treated as JST
+      const parsedScheduledAt = parseScheduledAtToEpochSec(scheduledAt);
+      if (!parsedScheduledAt) return res.status(400).json({ error: 'invalid scheduledAt' });
       const item: any = {
         PK: { S: `USER#${userId}` },
         SK: { S: `SCHEDULEDPOST#${id}` },
@@ -49,7 +52,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         accountId: { S: accountId },
         accountName: { S: body.accountName || '' },
         content: { S: String(content) },
-        scheduledAt: { N: String(Math.floor(Number(scheduledAt) || 0)) },
+        scheduledAt: { N: String(Math.floor(Number(parsedScheduledAt) || 0)) },
         postedAt: { N: '0' },
         status: { S: 'pending' },
         pendingForAutoPostAccount: { S: String(accountId) },
@@ -121,6 +124,25 @@ function unmarshallScheduled(it: any) {
     createdAt: it.createdAt?.N ? Number(it.createdAt.N) : 0,
     updatedAt: it.updatedAt?.N ? Number(it.updatedAt.N) : 0,
   };
+}
+
+// Parse scheduledAt input to epoch seconds (JST interpretation for YYYY-MM-DDTHH:mm without timezone)
+function parseScheduledAtToEpochSec(v: any): number {
+  if (v == null || v === '') return 0;
+  if (typeof v === 'number') return Math.floor(v);
+  const s = String(v).trim();
+  if (/^\d+$/.test(s)) return Number(s.length > 10 ? Math.floor(Number(s) / 1000) : s);
+  // match YYYY-MM-DDTHH:mm (no timezone) and treat as JST
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
+  if (m) {
+    const year = Number(m[1]), month = Number(m[2]), day = Number(m[3]), hour = Number(m[4]), minute = Number(m[5]);
+    // JST -> UTC = JST - 9 hours
+    const utcMs = Date.UTC(year, month - 1, day, hour - 9, minute, 0, 0);
+    return Math.floor(utcMs / 1000);
+  }
+  const d = new Date(s);
+  if (!isNaN(d.getTime())) return Math.floor(d.getTime() / 1000);
+  return 0;
 }
 
 
