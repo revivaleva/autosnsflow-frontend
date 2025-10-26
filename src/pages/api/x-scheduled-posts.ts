@@ -77,7 +77,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const sets: string[] = ['updatedAt = :ts'];
       const vals: any = { ':ts': { N: `${Math.floor(Date.now() / 1000)}` } };
       if (typeof content !== 'undefined') { sets.push('content = :content'); vals[':content'] = { S: String(content || '') }; }
-      if (typeof scheduledAt !== 'undefined') { sets.push('scheduledAt = :scheduledAt'); vals[':scheduledAt'] = { N: String(Math.floor(Number(scheduledAt) || 0)) }; }
+      if (typeof scheduledAt !== 'undefined') {
+        // normalize incoming scheduledAt (accept epoch or YYYY-MM-DDTHH:mm treated as JST)
+        const parsed = parseScheduledAtToEpochSec(scheduledAt);
+        sets.push('scheduledAt = :scheduledAt');
+        vals[':scheduledAt'] = { N: String(Math.floor(Number(parsed) || 0)) };
+      }
       if (typeof status !== 'undefined') { sets.push('status = :status'); vals[':status'] = { S: String(status || '') }; }
       if (sets.length === 1) return res.status(400).json({ error: 'no updatable fields' });
       try {
