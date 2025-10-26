@@ -49,9 +49,10 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
   if (!acct || !acct.autoPostEnabled) return { posted: 0 };
   const now = Math.floor(Date.now() / 1000);
   const accountId = acct.accountId;
-
   const candidates = await fetchDueXScheduledForAccount(accountId, now, 1);
   let postedCount = 0;
+  const debug: any = { candidates: (candidates || []).length, tokenPresent: !!(acct.oauthAccessToken || acct.accessToken), errors: [] };
+  try { console.info('[x-auto] fetched candidates', { userId, accountId, candidateCount: debug.candidates }); } catch(_) {}
   for (const it of candidates) {
     try {
       const pk = it.PK.S; const sk = it.SK.S;
@@ -74,7 +75,10 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
             throw postErr;
           }
         } catch (refreshErr) {
-          throw postErr;
+          // capture error and continue to next candidate
+          try { console.warn('[x-auto] post failed and refresh failed', { userId, accountId, sk, err: String(postErr) }); } catch(_) {}
+          debug.errors.push({ sk, err: String(postErr) });
+          continue;
         }
       }
       const postId = (r && r.data && (r.data.id || r.data?.id_str)) || '';
@@ -95,10 +99,13 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
       // notify master webhook (always)
       try { await postDiscordMaster(`**[X POSTED]** user=${userId} account=${accountId} postId=${postId}\n${String(content).slice(0,200)}`); } catch(e) {}
     } catch (e) {
-      // TODO: implement retries, logging, update status to 'failed'
+      try { console.warn('[x-auto] runAutoPostForXAccount item failed', { userId, accountId, err: String(e) }); } catch(_) {}
+      debug.errors.push({ err: String(e) });
+      // continue with next candidate
+      continue;
     }
   }
-  return { posted: postedCount };
+  return { posted: postedCount, debug };
 }
 
 // Refresh a single X account token using stored refresh_token and client credentials
