@@ -17,9 +17,27 @@ export default function XPostModal({ open, onClose, post }: Props) {
 
   useEffect(() => {
     if (!open) return;
+    // helper: convert epoch seconds -> YYYY-MM-DDTHH:mm in JST
+    const epochSecToJstDatetimeLocal = (sec: number) => {
+      try {
+        const ms = Number(sec || 0) * 1000;
+        if (!isFinite(ms) || ms <= 0) return formatLocalDatetime(new Date());
+        const d = new Date(ms);
+        // convert to JST by shifting UTC time +9h
+        const jstMs = d.getTime() + (9 * 60 * 60 * 1000);
+        const jd = new Date(jstMs);
+        const year = jd.getUTCFullYear();
+        const month = String(jd.getUTCMonth() + 1).padStart(2, '0');
+        const day = String(jd.getUTCDate()).padStart(2, '0');
+        const hh = String(jd.getUTCHours()).padStart(2, '0');
+        const mm = String(jd.getUTCMinutes()).padStart(2, '0');
+        return `${year}-${month}-${day}T${hh}:${mm}`;
+      } catch (_) { return formatLocalDatetime(new Date()); }
+    };
+
     if (post) {
       setAccountId(post.accountId || '');
-      setScheduledAt(post.scheduledAt ? new Date(post.scheduledAt * 1000).toISOString().slice(0,16) : formatLocalDatetime(new Date()));
+      setScheduledAt(post.scheduledAt ? epochSecToJstDatetimeLocal(Number(post.scheduledAt)) : formatLocalDatetime(new Date()));
       setContent(post.content || '');
       setExtraPosts([]);
     } else {
@@ -77,29 +95,57 @@ export default function XPostModal({ open, onClose, post }: Props) {
 
       // collect main and extra posts
       const toCreate: Array<{accountId:string, content:string, scheduledAt:number}> = [];
+      const datetimeLocalToJstEpoch = (s: string) => {
+        if (!s) return 0;
+        // s is YYYY-MM-DDTHH:mm in local input; interpret as JST
+        const m = s.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
+        if (m) {
+          const year = Number(m[1]), month = Number(m[2]), day = Number(m[3]), hour = Number(m[4]), minute = Number(m[5]);
+          // JST -> UTC = JST - 9 hours
+          const utcMs = Date.UTC(year, month - 1, day, hour - 9, minute, 0, 0);
+          return Math.floor(utcMs / 1000);
+        }
+        try { return Math.floor(new Date(s).getTime()/1000); } catch { return 0; }
+      };
+
       if (extraPosts.length === 0) {
         // no extras -> require main
-        if (scheduledAt) toCreate.push({ accountId, content, scheduledAt: Math.floor(new Date(scheduledAt).getTime()/1000) });
+        if (scheduledAt) toCreate.push({ accountId, content, scheduledAt: datetimeLocalToJstEpoch(scheduledAt) });
       } else {
         // extras exist -> include extras only; if main has content, also include it
         if (content && String(content).trim() !== '' && scheduledAt) {
-          toCreate.push({ accountId, content, scheduledAt: Math.floor(new Date(scheduledAt).getTime()/1000) });
+          toCreate.push({ accountId, content, scheduledAt: datetimeLocalToJstEpoch(scheduledAt) });
         }
         for (const ex of extraPosts) {
-          toCreate.push({ accountId, content: ex.content || '', scheduledAt: Math.floor(new Date(ex.scheduledAt).getTime()/1000) });
+          toCreate.push({ accountId, content: ex.content || '', scheduledAt: datetimeLocalToJstEpoch(ex.scheduledAt) });
         }
       }
 
       const failures: string[] = [];
-      // serial POST
-      for (const item of toCreate) {
+      // If editing existing post (post prop present) and there are no extraPosts,
+      // perform PATCH to update the existing scheduled record instead of creating a new one.
+      if (post && extraPosts.length === 0) {
         try {
-          const res = await fetch('/api/x-scheduled-posts', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(item) });
+          const payload: any = { scheduledPostId: post.scheduledPostId };
+          if (typeof content !== 'undefined') payload.content = content;
+          if (scheduledAt) payload.scheduledAt = datetimeLocalToJstEpoch(scheduledAt);
+          const res = await fetch('/api/x-scheduled-posts', { method: 'PATCH', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
           if (!res.ok) {
             const txt = await res.text().catch(()=>res.statusText);
-            failures.push(`${item.scheduledAt}: ${txt}`);
+            failures.push(`patch:${post.scheduledPostId}: ${txt}`);
           }
         } catch (err:any) { failures.push(String(err)); }
+      } else {
+        // serial POST for new items and extras; if editing with extras, also POST extras
+        for (const item of toCreate) {
+          try {
+            const res = await fetch('/api/x-scheduled-posts', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(item) });
+            if (!res.ok) {
+              const txt = await res.text().catch(()=>res.statusText);
+              failures.push(`${item.scheduledAt}: ${txt}`);
+            }
+          } catch (err:any) { failures.push(String(err)); }
+        }
       }
 
       if (failures.length > 0) {
