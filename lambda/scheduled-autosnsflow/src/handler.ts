@@ -3156,7 +3156,7 @@ async function runFiveMinJobForUser(userId: any) {
 
   const urls = await getDiscordWebhooks(userId);
   const now = new Date().toISOString();
-  const metrics = formatNonZeroLine([
+  let metrics = formatNonZeroLine([
     { label: "自動投稿", value: totalAuto },
     { label: "リプ返信", value: totalReply },
     { label: "2段階投稿", value: totalTwo },
