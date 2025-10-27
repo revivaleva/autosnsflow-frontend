@@ -18,7 +18,8 @@ export async function postToX({ accessToken, text }: { accessToken: string; text
 // Fetch due X scheduled posts for an account (uses GSI_PendingByAccount)
 export async function fetchDueXScheduledForAccount(accountId: string, nowSec: number, limit = 10) {
   try {
-    const q = await ddb.send(new QueryCommand({
+    // Build base params for Query. We'll page through results until we collect up to `limit`
+    const baseParams: any = {
       TableName: TBL_X_SCHEDULED,
       IndexName: 'GSI_PendingByAccount',
       KeyConditionExpression: 'pendingForAutoPostAccount = :acc AND scheduledAt <= :now',
@@ -27,7 +28,24 @@ export async function fetchDueXScheduledForAccount(accountId: string, nowSec: nu
       ExpressionAttributeNames: { '#st': 'status' },
       ExpressionAttributeValues: { ':acc': { S: accountId }, ':now': { N: String(nowSec) }, ':pending': { S: 'pending' }, ':f': { BOOL: false } },
       Limit: limit,
-    }));
+    };
+
+    // Page through Query results to account for FilterExpression removing items
+    const collectedItems: any[] = [];
+    let exclusiveStartKey: any = undefined;
+    let page = 0;
+    let lastResponse: any = null;
+    do {
+      const params: any = { ...baseParams };
+      if (exclusiveStartKey) params.ExclusiveStartKey = exclusiveStartKey;
+      lastResponse = await ddb.send(new QueryCommand(params));
+      page++;
+      try { console.info('[x-auto] rawQueryResponsePage', { accountId, page, raw: JSON.stringify(lastResponse) }); } catch(_) {}
+      const pageItems = (lastResponse as any).Items || [];
+      if (pageItems.length) collectedItems.push(...pageItems);
+      exclusiveStartKey = (lastResponse as any).LastEvaluatedKey;
+      // continue until we have enough post-filtered items or no more pages
+    } while (collectedItems.length < limit && exclusiveStartKey);
     // debug: log full query parameters and returned items for deep diagnosis
     try {
       const fullParams = {
@@ -59,13 +77,13 @@ export async function fetchDueXScheduledForAccount(accountId: string, nowSec: nu
       // additional: log raw JSON of ExpressionAttributeValues and the KeyCondition for exact-match debugging
       try { console.info('[x-auto] queryParamsRaw', { accountId, nowSec, rawExpressionAttributeValues: JSON.stringify(fullParams.ExpressionAttributeValues), KeyConditionExpression: fullParams.KeyConditionExpression, FilterExpression: fullParams.FilterExpression }); } catch(_) {}
 
-      const items = (q as any).Items || [];
+      const items = collectedItems;
       try { console.info('[x-auto] fullQueryItems', { accountId, itemCount: items.length, items }); } catch(_) {}
-      try { console.info('[x-auto] rawQueryResponse', JSON.stringify(q)); } catch(_) {}
+      try { console.info('[x-auto] rawQueryResponseAggregate', JSON.stringify(lastResponse)); } catch(_) {}
     } catch (err) {
       try { console.error('[x-auto] rawQueryLogFailed', { accountId, err: String(err) }); } catch(_) {}
     }
-    return (q as any).Items || [];
+    return collectedItems || [];
   } catch (e) {
     throw e;
   }
