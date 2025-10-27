@@ -28,6 +28,12 @@ export async function fetchDueXScheduledForAccount(accountId: string, nowSec: nu
       ExpressionAttributeValues: { ':acc': { S: accountId }, ':now': { N: String(nowSec) }, ':pending': { S: 'pending' }, ':f': { BOOL: false } },
       Limit: limit,
     }));
+    // debug: log raw query items summary for observability
+    try {
+      const items = (q as any).Items || [];
+      const summary = items.map((it: any) => ({ SK: it.SK?.S, status: it.status?.S || null, scheduledAt: it.scheduledAt?.N || null, isDeleted: it.isDeleted?.BOOL || false }));
+      try { console.info('[x-auto] rawQueryItems', { userId, accountId, nowSec, summary, itemCount: summary.length }); } catch(_) {}
+    } catch(_) {}
     return (q as any).Items || [];
   } catch (e) {
     throw e;
