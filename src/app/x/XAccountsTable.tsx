@@ -60,7 +60,29 @@ export default function XAccountsTable() {
                 <td className="py-2 px-3 text-left"><button className="text-blue-600" onClick={() => handleEdit(a)}>{a.username}</button></td>
                 <td className="py-2 px-3">{a.accountId}</td>
                 <td className="py-2 px-3">{a.createdAt ? new Date(a.createdAt * 1000).toLocaleString() : ''}</td>
-                <td className="py-2 px-3"><ToggleSwitch checked={!!a.autoPostEnabled} onChange={() => {}} disabled /></td>
+                <td className="py-2 px-3">
+                  <ToggleSwitch
+                    checked={!!a.autoPostEnabled}
+                    onChange={async (v: boolean) => {
+                      // optimistic update
+                      setAccounts(prev => prev.map(x => x.accountId === a.accountId ? { ...x, autoPostEnabled: v } : x));
+                      try {
+                        const res = await fetch('/api/x-accounts', {
+                          method: 'PATCH',
+                          headers: { 'Content-Type': 'application/json' },
+                          credentials: 'include',
+                          body: JSON.stringify({ accountId: a.accountId, autoPostEnabled: v })
+                        });
+                        const j = await res.json().catch(() => ({}));
+                        if (!res.ok || !j?.ok) throw new Error(j?.error || res.statusText);
+                      } catch (e) {
+                        // rollback on error
+                        setAccounts(prev => prev.map(x => x.accountId === a.accountId ? { ...x, autoPostEnabled: !!a.autoPostEnabled } : x));
+                        alert(`自動投稿の切替に失敗しました: ${String(e)}`);
+                      }
+                    }}
+                  />
+                </td>
                 <td className="py-2 px-3"><button className="bg-indigo-500 text-white px-2 py-1 rounded" onClick={() => { try { const name = String(a.accountId || '').replace(/^@/, ''); window.location.href = `mycontainers://open?name=${encodeURIComponent(name)}&url=${encodeURIComponent('https://x.com/' + name)}` } catch {} }}>アプリ</button></td>
               </tr>
             ))}

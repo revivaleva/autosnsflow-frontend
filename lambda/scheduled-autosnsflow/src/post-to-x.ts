@@ -49,9 +49,10 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
   if (!acct || !acct.autoPostEnabled) return { posted: 0 };
   const now = Math.floor(Date.now() / 1000);
   const accountId = acct.accountId;
-
   const candidates = await fetchDueXScheduledForAccount(accountId, now, 1);
   let postedCount = 0;
+  const debug: any = { candidates: (candidates || []).length, tokenPresent: !!(acct.oauthAccessToken || acct.accessToken), errors: [] };
+  try { console.info('[x-auto] fetched candidates', { userId, accountId, candidateCount: debug.candidates }); } catch(_) {}
   for (const it of candidates) {
     try {
       const pk = it.PK.S; const sk = it.SK.S;
@@ -74,24 +75,37 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
             throw postErr;
           }
         } catch (refreshErr) {
-          throw postErr;
+          // capture error and continue to next candidate
+          try { console.warn('[x-auto] post failed and refresh failed', { userId, accountId, sk, err: String(postErr) }); } catch(_) {}
+          debug.errors.push({ sk, err: String(postErr) });
+          continue;
         }
       }
       const postId = (r && r.data && (r.data.id || r.data?.id_str)) || '';
       await markXScheduledPosted(pk, sk, String(postId));
       postedCount++;
-      // notify user-level discord webhooks
+      // notify user-level discord webhooks only if user has enableX=true in settings
       try {
-        const content = `【X 投稿】アカウント ${accountId} にて予約投稿が実行されました\npostId: ${postId}\ncontent: ${String(content).slice(0,200)}`;
-        try { await postDiscordLog({ userId, content }); } catch(e) {}
-      } catch(e) {}
-      // notify master webhook
+        const settingsOut = await ddb.send(new GetItemCommand({ TableName: process.env.TBL_SETTINGS || 'UserSettings', Key: { PK: { S: `USER#${userId}` }, SK: { S: 'SETTINGS' } }, ProjectionExpression: 'enableX' }));
+        const enableX = Boolean(settingsOut?.Item?.enableX?.BOOL === true);
+        const userContent = `【X 投稿】アカウント ${accountId} にて予約投稿が実行されました\npostId: ${postId}\ncontent: ${String(content).slice(0,200)}`;
+        if (enableX) {
+          try { await postDiscordLog({ userId, content: userContent }); } catch (e) { /* ignore */ }
+        }
+      } catch (e) {
+        // log but don't fail posting
+        try { console.warn('[warn] check enableX or postDiscordLog failed', String(e)); } catch(_) {}
+      }
+      // notify master webhook (always)
       try { await postDiscordMaster(`**[X POSTED]** user=${userId} account=${accountId} postId=${postId}\n${String(content).slice(0,200)}`); } catch(e) {}
     } catch (e) {
-      // TODO: implement retries, logging, update status to 'failed'
+      try { console.warn('[x-auto] runAutoPostForXAccount item failed', { userId, accountId, err: String(e) }); } catch(_) {}
+      debug.errors.push({ err: String(e) });
+      // continue with next candidate
+      continue;
     }
   }
-  return { posted: postedCount };
+  return { posted: postedCount, debug };
 }
 
 // Refresh a single X account token using stored refresh_token and client credentials
