@@ -22,6 +22,8 @@
     - 概要: 再代入が不要な変数を `const` に変更して lint 指摘を解消する。
   - **Audit and remove non-essential debug `console.*` calls**
     - 概要: 本番に不要な info/verbose ログを削除または低いログレベルへ統合する。
+  - **X: 即時投稿時に GSI マーカー `pendingForAutoPostAccount` を削除する**
+    - 概要: `src/pages/api/x/tweet.ts` の即時投稿処理で投稿成功後に `pendingForAutoPostAccount` を `REMOVE` する。Lambda 側の `markXScheduledPosted` は既にこの動作を行うよう修正済みのため、API 側も同様に揃える必要がある。 [pending]
 
 - PRUNE TODOs:
   - Implement `pruneOldUsageCountersAll` with BatchWriteItem and updatedAt cutoff. [in progress]
