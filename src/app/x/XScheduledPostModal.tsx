@@ -17,6 +17,8 @@ export default function XPostModal({ open, onClose, post }: Props) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const gridRef = useRef<HTMLDivElement | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const selectedAccount = accounts.find(a => a.accountId === accountId);
+  const selectedAccountLabel = selectedAccount ? (selectedAccount.username || selectedAccount.accountId) : '';
 
   useEffect(() => {
     if (!open) return;
@@ -258,22 +260,20 @@ export default function XPostModal({ open, onClose, post }: Props) {
         <form onSubmit={handleSave}>
         {/* Label row: label on left, search on right */}
         <div className="flex items-center justify-between mb-2">
-          <label className="block">アカウント</label>
+          <div className="flex items-center gap-2">
+            <label className="block">アカウント</label>
+            {selectedAccountLabel && <div className="text-sm text-gray-600 dark:text-gray-300">{selectedAccountLabel}</div>}
+          </div>
           <div className="w-48">
             <input type="search" placeholder="アカウント検索（部分一致）" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full border rounded px-2 py-1" />
           </div>
         </div>
         {/* Button grid full width; no outer border */}
-        <div ref={gridRef as any} className="grid grid-cols-10 gap-2 h-[120px] overflow-y-auto p-1">
+        <div ref={gridRef as any} className="grid grid-cols-10 gap-1 h-[120px] overflow-y-auto p-1">
           {(() => {
-            const dummy = Array.from({ length: 40 }, (_, i) => {
-              const idx = i + 1;
-              // mix long and short names for comparison
-              if (idx % 5 === 0) return { accountId: `acct-${String(idx).padStart(2,'0')}`, username: `S${idx}` };
-              return { accountId: `acct-${String(idx).padStart(2,'0')}`, username: `TestAccountLongName${String(idx).padStart(2,'0')}` };
-            });
             const q = (searchQuery || '').toLowerCase();
-            const displayList = q ? dummy.filter(a => (a.username || a.accountId).toLowerCase().includes(q)) : dummy;
+            const list = Array.isArray(accounts) ? accounts : [];
+            const displayList = q ? list.filter(a => ((a.username || a.accountId) + '').toLowerCase().includes(q)) : list;
             return displayList.map((a) => {
               const display = a.username ? `${a.username}` : a.accountId;
               const isSelected = accountId === a.accountId;
@@ -284,11 +284,13 @@ export default function XPostModal({ open, onClose, post }: Props) {
                   <button
                     type="button"
                     title={display}
-                    onClick={() => setAccountId(isSelected ? '' : a.accountId)}
-                    className={`text-center px-0.5 border rounded text-xs h-8 min-w-0 overflow-hidden ${isSelected ? 'bg-blue-600 text-white' : ''}`}
+                    onClick={() => { if (post) return; setAccountId(isSelected ? '' : a.accountId); }}
+                    disabled={!!post}
+                    className={`text-center px-1 border rounded text-xs h-8 w-full min-w-0 overflow-hidden ${isSelected ? 'bg-blue-600 text-white' : ''} ${post ? 'opacity-80 cursor-not-allowed' : ''}`}
                     aria-pressed={isSelected}
+                    aria-disabled={post ? 'true' : 'false'}
                   >
-                    <span className="block w-full text-center whitespace-normal break-words" style={{ fontSize, lineHeight: '1rem' }}>{display}</span>
+                    <span className="block w-full text-center break-all" style={{ fontSize, lineHeight: '1' }}>{display}</span>
                   </button>
                   <div className="pointer-events-none absolute z-10 left-1/2 -translate-x-1/2 -top-8 opacity-0 group-hover:opacity-100 transition-opacity">
                     <div className="bg-black text-white text-xs px-2 py-1 rounded whitespace-nowrap">{display}</div>
@@ -301,12 +303,25 @@ export default function XPostModal({ open, onClose, post }: Props) {
         {/* Theme hidden by default; small unstyled + toggles advanced inputs */}
         <div className="flex gap-2 mb-2 items-center">
           <div className="flex-1" />
-          <button type="button" aria-label="詳細を表示" className="ml-auto text-sm w-6 h-6 flex items-center justify-center" onClick={() => setShowAdvanced(s => !s)}>＋</button>
+          <button type="button" aria-label={showAdvanced ? '詳細を閉じる' : '詳細を表示'} className="ml-auto text-sm w-6 h-6 flex items-center justify-center" onClick={() => setShowAdvanced(s => !s)}>{showAdvanced ? '−' : '＋'}</button>
         </div>
         {showAdvanced && (
           <div className="flex gap-2 mb-2 items-center">
+            <label className="block">テーマ</label>
             <input className="flex-1 border rounded px-2 py-1" value={theme} onChange={(e) => setTheme(e.target.value)} placeholder="例: 告知, 雑談" />
-            <button type="button" className="px-3 py-1 rounded" onClick={handleAIGenerate} disabled={aiLoading}>{aiLoading ? '生成中...' : 'AIで生成'}</button>
+            <button
+              type="button"
+              className={`px-3 py-2 rounded-md text-white ${aiLoading ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
+              onClick={handleAIGenerate}
+              disabled={aiLoading}
+              title={aiLoading ? 'AI生成中' : undefined}
+            >
+              {aiLoading ? (
+                <span className="loader inline-block" aria-hidden aria-label="読み込み中"></span>
+              ) : (
+                'AIで生成'
+              )}
+            </button>
           </div>
         )}
           <label className="block">予約日時</label>
