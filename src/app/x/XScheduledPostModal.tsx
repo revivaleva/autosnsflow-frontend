@@ -285,10 +285,10 @@ export default function XPostModal({ open, onClose, post }: Props) {
                   type="button"
                   title={display}
                   onClick={() => setAccountId(isSelected ? '' : a.accountId)}
-                  className={`text-center px-1 border rounded text-xs h-8 min-w-0 ${isSelected ? 'bg-blue-600 text-white' : ''}`}
+                  className={`text-center px-0.5 border rounded text-xs h-8 min-w-0 overflow-hidden ${isSelected ? 'bg-blue-600 text-white' : ''}`}
                   aria-pressed={isSelected}
                 >
-                  <span className="block w-full text-center break-all leading-tight" style={{ fontSize }}>{display}</span>
+                  <span className="block w-full text-center whitespace-normal break-words" style={{ fontSize, lineHeight: '1rem' }}>{display}</span>
                 </button>
               );
             });
