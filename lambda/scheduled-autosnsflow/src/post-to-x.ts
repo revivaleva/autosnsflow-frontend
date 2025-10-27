@@ -92,10 +92,11 @@ export async function fetchDueXScheduledForAccount(accountId: string, nowSec: nu
 // Mark scheduled item as posted (update postedAt/status/postId)
 export async function markXScheduledPosted(pk: string, sk: string, postId: string) {
   const now = Math.floor(Date.now() / 1000);
+  // Update status and postedAt/postId; also remove pendingForAutoPostAccount so it no longer appears in GSI
   await ddb.send(new UpdateItemCommand({
     TableName: TBL_X_SCHEDULED,
     Key: { PK: { S: pk }, SK: { S: sk } },
-    UpdateExpression: 'SET #st = :posted, postedAt = :ts, postId = :pid',
+    UpdateExpression: 'SET #st = :posted, postedAt = :ts, postId = :pid REMOVE pendingForAutoPostAccount',
     ExpressionAttributeNames: { '#st': 'status' },
     ExpressionAttributeValues: { ':posted': { S: 'posted' }, ':ts': { N: String(now) }, ':pid': { S: postId } },
   }));
