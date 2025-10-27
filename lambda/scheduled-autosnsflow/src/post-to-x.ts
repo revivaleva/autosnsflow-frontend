@@ -28,12 +28,24 @@ export async function fetchDueXScheduledForAccount(accountId: string, nowSec: nu
       ExpressionAttributeValues: { ':acc': { S: accountId }, ':now': { N: String(nowSec) }, ':pending': { S: 'pending' }, ':f': { BOOL: false } },
       Limit: limit,
     }));
-    // debug: log raw query items summary for observability
+    // debug: log full query parameters and returned items for deep diagnosis
     try {
+      const fullParams = {
+        TableName: TBL_X_SCHEDULED,
+        IndexName: 'GSI_PendingByAccount',
+        KeyConditionExpression: 'pendingForAutoPostAccount = :acc AND scheduledAt <= :now',
+        FilterExpression: '(attribute_not_exists(#st) OR #st = :pending) AND (attribute_not_exists(isDeleted) OR isDeleted = :f)',
+        ExpressionAttributeNames: { '#st': 'status' },
+        ExpressionAttributeValues: { ':acc': { S: accountId }, ':now': { N: String(nowSec) }, ':pending': { S: 'pending' }, ':f': { BOOL: false } },
+        Limit: limit,
+      };
+      try { console.info('[x-auto] queryParams', { userId, accountId, nowSec, fullParams }); } catch(_) {}
+
       const items = (q as any).Items || [];
-      const summary = items.map((it: any) => ({ SK: it.SK?.S, status: it.status?.S || null, scheduledAt: it.scheduledAt?.N || null, isDeleted: it.isDeleted?.BOOL || false }));
-      try { console.info('[x-auto] rawQueryItems', { userId, accountId, nowSec, summary, itemCount: summary.length }); } catch(_) {}
-    } catch(_) {}
+      try { console.info('[x-auto] fullQueryItems', { userId, accountId, itemCount: items.length, items }); } catch(_) {}
+    } catch (err) {
+      try { console.error('[x-auto] rawQueryLogFailed', { userId, accountId, err: String(err) }); } catch(_) {}
+    }
     return (q as any).Items || [];
   } catch (e) {
     throw e;
