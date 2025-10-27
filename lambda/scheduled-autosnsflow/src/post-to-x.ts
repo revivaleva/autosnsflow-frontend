@@ -53,6 +53,7 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
   const now = Math.floor(Date.now() / 1000);
   const accountId = acct.accountId;
   const candidates = await fetchDueXScheduledForAccount(accountId, now, 1);
+  try { console.info('[x-auto] nowSec', { userId, accountId, now }); } catch(_) {}
   let postedCount = 0;
   const debug: any = { candidates: (candidates || []).length, tokenPresent: !!(acct.oauthAccessToken || acct.accessToken), errors: [] };
   try { console.info('[x-auto] fetched candidates', { userId, accountId, candidateCount: debug.candidates }); } catch(_) {}
