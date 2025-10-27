@@ -39,12 +39,12 @@ export async function fetchDueXScheduledForAccount(accountId: string, nowSec: nu
         ExpressionAttributeValues: { ':acc': { S: accountId }, ':now': { N: String(nowSec) }, ':pending': { S: 'pending' }, ':f': { BOOL: false } },
         Limit: limit,
       };
-      try { console.info('[x-auto] queryParams', { userId, accountId, nowSec, fullParams }); } catch(_) {}
+      try { console.info('[x-auto] queryParams', { accountId, nowSec, fullParams }); } catch(_) {}
 
       const items = (q as any).Items || [];
-      try { console.info('[x-auto] fullQueryItems', { userId, accountId, itemCount: items.length, items }); } catch(_) {}
+      try { console.info('[x-auto] fullQueryItems', { accountId, itemCount: items.length, items }); } catch(_) {}
     } catch (err) {
-      try { console.error('[x-auto] rawQueryLogFailed', { userId, accountId, err: String(err) }); } catch(_) {}
+      try { console.error('[x-auto] rawQueryLogFailed', { accountId, err: String(err) }); } catch(_) {}
     }
     return (q as any).Items || [];
   } catch (e) {
