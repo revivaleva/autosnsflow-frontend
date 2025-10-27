@@ -255,7 +255,6 @@ export default function XPostModal({ open, onClose, post }: Props) {
         <h3 className="text-lg font-bold mb-3">{post ? '予約編集' : '予約作成'}</h3>
         {errorMsg && <div className="mb-3 text-sm text-red-600 whitespace-pre-wrap">{errorMsg}</div>}
         <form onSubmit={handleSave}>
-        <label className="block">アカウント</label>
         {/* Label row: label on left, search on right */}
         <div className="flex items-center justify-between mb-2">
           <label className="block">アカウント</label>
@@ -264,7 +263,7 @@ export default function XPostModal({ open, onClose, post }: Props) {
           </div>
         </div>
         {/* Button grid full width; no outer border */}
-        <div className="grid grid-cols-10 gap-2 max-h-[216px] overflow-y-auto p-1">
+        <div className="grid grid-cols-10 gap-2 h-[216px] overflow-y-auto p-1">
           {(() => {
             const dummy = Array.from({ length: 40 }, (_, i) => ({ accountId: `acct-${String(i+1).padStart(2,'0')}`, username: `TestAccountLongName${String(i+1).padStart(2,'0')}` }));
             const q = (searchQuery || '').toLowerCase();
@@ -274,16 +273,16 @@ export default function XPostModal({ open, onClose, post }: Props) {
               const isSelected = accountId === a.accountId;
               // responsive font-size: shrink for long names
               const fontSize = display.length > 20 ? '10px' : display.length > 14 ? '11px' : '12px';
-              return (
+                return (
                 <button
                   key={a.accountId}
                   type="button"
                   title={display}
                   onClick={() => setAccountId(isSelected ? '' : a.accountId)}
-                  className={`text-center px-2 py-1 border rounded text-xs ${isSelected ? 'bg-blue-600 text-white' : ''}`}
+                  className={`text-center px-2 border rounded text-xs h-10 flex items-center justify-center ${isSelected ? 'bg-blue-600 text-white' : ''}`}
                   aria-pressed={isSelected}
                 >
-                  <span className="block w-full break-words whitespace-normal" style={{ fontSize }}>{display}</span>
+                  <span className="block w-full text-center break-words" style={{ fontSize }}>{display}</span>
                 </button>
               );
             });
