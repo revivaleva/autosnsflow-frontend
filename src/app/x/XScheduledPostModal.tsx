@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 type Props = { open: boolean; onClose: () => void; post?: any };
 
@@ -15,6 +15,7 @@ export default function XPostModal({ open, onClose, post }: Props) {
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const gridRef = useRef<HTMLDivElement | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
@@ -284,10 +285,10 @@ export default function XPostModal({ open, onClose, post }: Props) {
                   type="button"
                   title={display}
                   onClick={() => setAccountId(isSelected ? '' : a.accountId)}
-                  className={`text-center px-2 py-0.5 border rounded text-xs h-8 flex items-center justify-center ${isSelected ? 'bg-blue-600 text-white' : ''}`}
+                  className={`text-center px-1 border rounded text-xs h-8 min-w-0 ${isSelected ? 'bg-blue-600 text-white' : ''}`}
                   aria-pressed={isSelected}
                 >
-                  <span className="block w-full text-center whitespace-normal" style={{ fontSize }}>{display}</span>
+                  <span className="block w-full text-center break-all leading-tight" style={{ fontSize }}>{display}</span>
                 </button>
               );
             });
