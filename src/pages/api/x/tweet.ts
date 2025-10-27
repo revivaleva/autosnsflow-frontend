@@ -128,7 +128,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         await ddb.send(new UpdateItemCommand({
           TableName: TBL_X_SCHEDULED,
           Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${scheduledPostId}` } },
-          UpdateExpression: `SET ${sets.join(', ')}`,
+          // Also remove GSI marker so the item is no longer visible to pending queries
+          UpdateExpression: `SET ${sets.join(', ')} REMOVE pendingForAutoPostAccount`,
           ConditionExpression: "(attribute_not_exists(#st) OR #st <> :posted) AND (attribute_not_exists(isDeleted) OR isDeleted = :f)",
           ExpressionAttributeNames: names,
           ExpressionAttributeValues: values
