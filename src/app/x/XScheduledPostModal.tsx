@@ -263,7 +263,14 @@ export default function XPostModal({ open, onClose, post }: Props) {
                 const display = a.username ? `${a.username}` : a.accountId;
                 const isSelected = accountId === a.accountId;
                 return (
-                  <button key={a.accountId} type="button" title={display} onClick={() => setAccountId(a.accountId)} className={`text-center px-2 py-1 border rounded text-xs truncate ${isSelected ? 'bg-blue-600 text-white' : ''}`}>
+                  <button
+                    key={a.accountId}
+                    type="button"
+                    title={display}
+                    onClick={() => setAccountId(isSelected ? '' : a.accountId)}
+                    className={`text-center px-2 py-1 border rounded text-xs truncate ${isSelected ? 'bg-blue-600 text-white' : ''}`}
+                    aria-pressed={isSelected}
+                  >
                     <span className="block w-full break-words" style={{ fontSize: display.length > 18 ? '10px' : display.length > 12 ? '11px' : '12px' }}>{display}</span>
                   </button>
                 );
