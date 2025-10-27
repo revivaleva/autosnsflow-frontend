@@ -18,14 +18,66 @@ export async function postToX({ accessToken, text }: { accessToken: string; text
 // Fetch due X scheduled posts for an account (uses GSI_PendingByAccount)
 export async function fetchDueXScheduledForAccount(accountId: string, nowSec: number, limit = 10) {
   try {
-    const q = await ddb.send(new QueryCommand({
+    // Build base params for Query. We'll page through results until we collect up to `limit`
+    const baseParams: any = {
       TableName: TBL_X_SCHEDULED,
       IndexName: 'GSI_PendingByAccount',
       KeyConditionExpression: 'pendingForAutoPostAccount = :acc AND scheduledAt <= :now',
-      ExpressionAttributeValues: { ':acc': { S: accountId }, ':now': { N: String(nowSec) } },
+      // Filter to only pending and not deleted items (non-key filter)
+      FilterExpression: '(attribute_not_exists(#st) OR #st = :pending) AND (attribute_not_exists(isDeleted) OR isDeleted = :f)',
+      ExpressionAttributeNames: { '#st': 'status' },
+      ExpressionAttributeValues: { ':acc': { S: accountId }, ':now': { N: String(nowSec) }, ':pending': { S: 'pending' }, ':f': { BOOL: false } },
       Limit: limit,
-    }));
-    return (q as any).Items || [];
+    };
+
+    // Page through Query results to account for FilterExpression removing items
+    const collectedItems: any[] = [];
+    let exclusiveStartKey: any = undefined;
+    let page = 0;
+    let lastResponse: any = null;
+    do {
+      const params: any = { ...baseParams };
+      if (exclusiveStartKey) params.ExclusiveStartKey = exclusiveStartKey;
+      lastResponse = await ddb.send(new QueryCommand(params));
+      page++;
+      const pageItems = (lastResponse as any).Items || [];
+      if (pageItems.length) collectedItems.push(...pageItems);
+      exclusiveStartKey = (lastResponse as any).LastEvaluatedKey;
+      // continue until we have enough post-filtered items or no more pages
+    } while (collectedItems.length < limit && exclusiveStartKey);
+
+    // minimal logging: only counts to avoid verbose output in production
+    try { console.info('[x-auto] fetchedPendingCandidates', { accountId, nowSec, returned: collectedItems.length }); } catch(_) {}
+    return collectedItems || [];
+  } catch (e) {
+    throw e;
+  }
+}
+
+// Alternate fetch: use GSI_ByAccount then filter client-side (closer to Threads approach)
+export async function fetchDueXScheduledForAccountByAccount(accountId: string, nowSec: number, limit = 10) {
+  try {
+    const params: any = {
+      TableName: TBL_X_SCHEDULED,
+      IndexName: 'GSI_ByAccount',
+      KeyConditionExpression: 'accountId = :acc AND scheduledAt <= :now',
+      ExpressionAttributeValues: { ':acc': { S: accountId }, ':now': { N: String(nowSec) } },
+      // retrieve a reasonable page to allow client-side filtering
+      Limit: Math.max(100, limit * 5),
+    };
+    try { console.info('[x-auto] queryByAccountParams', { accountId, nowSec, params: { KeyConditionExpression: params.KeyConditionExpression, ExpressionAttributeValues: JSON.stringify(params.ExpressionAttributeValues), Limit: params.Limit } }); } catch (_) {}
+    const q = await ddb.send(new QueryCommand(params));
+    try { console.info('[x-auto] rawQueryByAccountResponse', { accountId, raw: JSON.stringify(q) }); } catch (_) {}
+    const items: any[] = (q as any).Items || [];
+    const filtered = items.filter((it: any) => {
+      const st = it.status?.S || '';
+      const isDeleted = it.isDeleted?.BOOL === true;
+      // treat missing status as pending
+      const isPending = (!st || st === 'pending');
+      return isPending && !isDeleted && (Number(it.scheduledAt?.N || 0) <= Number(nowSec));
+    }).slice(0, limit);
+    try { console.info('[x-auto] fetchedByAccountFiltered', { accountId, nowSec, returned: filtered.length }); } catch(_) {}
+    return filtered;
   } catch (e) {
     throw e;
   }
@@ -34,10 +86,11 @@ export async function fetchDueXScheduledForAccount(accountId: string, nowSec: nu
 // Mark scheduled item as posted (update postedAt/status/postId)
 export async function markXScheduledPosted(pk: string, sk: string, postId: string) {
   const now = Math.floor(Date.now() / 1000);
+  // Update status and postedAt/postId; also remove pendingForAutoPostAccount so it no longer appears in GSI
   await ddb.send(new UpdateItemCommand({
     TableName: TBL_X_SCHEDULED,
     Key: { PK: { S: pk }, SK: { S: sk } },
-    UpdateExpression: 'SET #st = :posted, postedAt = :ts, postId = :pid',
+    UpdateExpression: 'SET #st = :posted, postedAt = :ts, postId = :pid REMOVE pendingForAutoPostAccount',
     ExpressionAttributeNames: { '#st': 'status' },
     ExpressionAttributeValues: { ':posted': { S: 'posted' }, ':ts': { N: String(now) }, ':pid': { S: postId } },
   }));
@@ -49,9 +102,12 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
   if (!acct || !acct.autoPostEnabled) return { posted: 0 };
   const now = Math.floor(Date.now() / 1000);
   const accountId = acct.accountId;
-
-  const candidates = await fetchDueXScheduledForAccount(accountId, now, 1);
+  // Use account-based fetch (Threads-like) to reduce filter-induced empty-results
+  const candidates = await fetchDueXScheduledForAccountByAccount(accountId, now, 1);
+  try { console.info('[x-auto] nowSec', { userId, accountId, now }); } catch(_) {}
   let postedCount = 0;
+  const debug: any = { candidates: (candidates || []).length, tokenPresent: !!(acct.oauthAccessToken || acct.accessToken), errors: [] };
+  try { console.info('[x-auto] fetched candidates', { userId, accountId, candidateCount: debug.candidates }); } catch(_) {}
   for (const it of candidates) {
     try {
       const pk = it.PK.S; const sk = it.SK.S;
@@ -74,24 +130,52 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
             throw postErr;
           }
         } catch (refreshErr) {
-          throw postErr;
+          // capture error and continue to next candidate
+          try { console.warn('[x-auto] post failed and refresh failed', { userId, accountId, sk, err: String(postErr) }); } catch(_) {}
+          debug.errors.push({ sk, err: String(postErr) });
+          continue;
         }
       }
+      // debug: log post response body for observability (do not log tokens)
+      try { console.info('[x-auto] post response', { userId, accountId, sk, response: r }); } catch(_) {}
+
       const postId = (r && r.data && (r.data.id || r.data?.id_str)) || '';
-      await markXScheduledPosted(pk, sk, String(postId));
-      postedCount++;
-      // notify user-level discord webhooks
+      if (!postId || String(postId).trim() === '') {
+        try { console.warn('[x-auto] post returned no postId', { userId, accountId, sk, response: r }); } catch(_) {}
+        debug.errors.push({ sk, err: 'no_post_id', response: r });
+        continue;
+      }
+
       try {
-        const content = `【X 投稿】アカウント ${accountId} にて予約投稿が実行されました\npostId: ${postId}\ncontent: ${String(content).slice(0,200)}`;
-        try { await postDiscordLog({ userId, content }); } catch(e) {}
-      } catch(e) {}
-      // notify master webhook
+        await markXScheduledPosted(pk, sk, String(postId));
+      } catch (e) {
+        try { console.warn('[x-auto] markXScheduledPosted failed', { userId, accountId, sk, err: String(e) }); } catch(_) {}
+        debug.errors.push({ sk, err: String(e) });
+        continue;
+      }
+      postedCount++;
+      // notify user-level discord webhooks only if user has enableX=true in settings
+      try {
+        const settingsOut = await ddb.send(new GetItemCommand({ TableName: process.env.TBL_SETTINGS || 'UserSettings', Key: { PK: { S: `USER#${userId}` }, SK: { S: 'SETTINGS' } }, ProjectionExpression: 'enableX' }));
+        const enableX = Boolean(settingsOut?.Item?.enableX?.BOOL === true);
+        const userContent = `【X 投稿】アカウント ${accountId} にて予約投稿が実行されました\npostId: ${postId}\ncontent: ${String(content).slice(0,200)}`;
+        if (enableX) {
+          try { await postDiscordLog({ userId, content: userContent }); } catch (e) { /* ignore */ }
+        }
+      } catch (e) {
+        // log but don't fail posting
+        try { console.warn('[warn] check enableX or postDiscordLog failed', String(e)); } catch(_) {}
+      }
+      // notify master webhook (always)
       try { await postDiscordMaster(`**[X POSTED]** user=${userId} account=${accountId} postId=${postId}\n${String(content).slice(0,200)}`); } catch(e) {}
     } catch (e) {
-      // TODO: implement retries, logging, update status to 'failed'
+      try { console.warn('[x-auto] runAutoPostForXAccount item failed', { userId, accountId, err: String(e) }); } catch(_) {}
+      debug.errors.push({ err: String(e) });
+      // continue with next candidate
+      continue;
     }
   }
-  return { posted: postedCount };
+  return { posted: postedCount, debug };
 }
 
 // Refresh a single X account token using stored refresh_token and client credentials

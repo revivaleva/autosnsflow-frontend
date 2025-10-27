@@ -3074,6 +3074,8 @@ async function runFiveMinJobForUser(userId: any) {
   }
 
   const accounts = await getThreadsAccounts(userId);
+  // track X accounts that already had a successful auto-post in this run
+  const processedXAccounts = new Set<string>();
   let totalAuto = 0, totalReply = 0, totalTwo = 0, rateSkipped = 0, totalX = 0;
   const perAccount: any[] = [];
 
@@ -3096,23 +3098,46 @@ async function runFiveMinJobForUser(userId: any) {
 
     const a = await runAutoPostForAccount(acct, userId, settings);
     // X のアカウントがあれば同一ユーザ内の X アカウントについても投稿を試みる
-    try {
-      const xAccounts = await getXAccounts(userId);
-      for (const xacct of xAccounts) {
-        try {
-          // runAutoPostForXAccount は別モジュール
-          const xmod = await import('./post-to-x');
-          if (typeof xmod.runAutoPostForXAccount === 'function') {
+      try {
+          const xAccounts = await getXAccounts(userId);
+          for (const xacct of xAccounts) {
+            // skip if we've already posted for this X account during this run
+            if (processedXAccounts.has(xacct.accountId)) {
+              try { console.info('[x-run] skipping already-processed xacct', { accountId: xacct.accountId }); } catch(_) {}
+              continue;
+            }
             try {
-              const xr = await xmod.runAutoPostForXAccount(xacct, userId);
-              (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
-              (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_AUTO_POST_RESULT', payload: { accountId: xacct.accountId, result: xr } });
-            if (xr && typeof xr.posted === 'number') totalX += Number(xr.posted || 0);
-            } catch (e) { console.warn('[warn] runAutoPostForXAccount failed', e); }
+              try { console.info('[x-run] invoking runAutoPostForXAccount', { userId, accountId: xacct.accountId, autoPostEnabled: !!xacct.autoPostEnabled, tokenPresent: !!(xacct.oauthAccessToken || xacct.accessToken) }); } catch(_) {}
+              // detailed sanitized account log for debugging query params
+              try {
+                const safeXacct: any = { ...xacct };
+                // redact sensitive token fields
+                if (safeXacct.oauthAccessToken) safeXacct.oauthAccessToken = '[REDACTED]';
+                if (safeXacct.accessToken) safeXacct.accessToken = '[REDACTED]';
+                if (safeXacct.refreshToken) safeXacct.refreshToken = '[REDACTED]';
+                if (safeXacct.oauthRefreshToken) safeXacct.oauthRefreshToken = '[REDACTED]';
+              try { console.info('[x-run] invoking runAutoPostForXAccount', { userId, accountId: xacct.accountId }); } catch(_) {}
+              } catch (_) {}
+              // runAutoPostForXAccount は別モジュール
+              const xmod = await import('./post-to-x');
+              if (typeof xmod.runAutoPostForXAccount === 'function') {
+                try {
+                  const xr = await xmod.runAutoPostForXAccount(xacct, userId);
+                  try { console.info('[x-run] result', { userId, accountId: xacct.accountId, result: xr }); } catch(_) {}
+                  (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+                  (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_AUTO_POST_RESULT', payload: { accountId: xacct.accountId, result: xr } });
+                  if (xr && typeof xr.posted === 'number') {
+                    totalX += Number(xr.posted || 0);
+                    if (Number(xr.posted || 0) > 0) {
+                      // mark as processed to prevent further posts for this X account in the same run
+                      processedXAccounts.add(xacct.accountId);
+                    }
+                  }
+                } catch (e) { console.warn('[warn] runAutoPostForXAccount failed', e); }
+              }
+            } catch (e) { console.warn('[warn] post-to-x import or run failed', e); }
           }
-        } catch (e) { console.warn('[warn] post-to-x import or run failed', e); }
-      }
-    } catch (e) { console.warn('[warn] getXAccounts failed', e); }
+        } catch (e) { console.warn('[warn] getXAccounts failed', e); }
     try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_AUTO_POST_RESULT', payload: { accountId: acct.accountId, result: a } }); } catch(_) {}
 
     const r = await runRepliesForAccount(acct, userId, settings);
