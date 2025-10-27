@@ -38,6 +38,12 @@
 ## TODO（実装タスク）
 - T001 - T009 を参照（`pjtodo.mdc` に記載）
 
+## 変更履歴（短縮）
+- 2025-10-27: X自動投稿の候補取得を `GSI_ByAccount` → クライアント側フィルタのフローに変更（Threads と整合）
+- 2025-10-27: 即時投稿後に `pendingForAutoPostAccount` を `REMOVE` するよう API を修正
+- 2025-10-27: 1実行内で同一 X アカウントへ複数投稿されないようガードを追加
+- 2025-10-27: デバッグ向けの冗長ログは最小化（本番向けログ量削減）
+
 - PRUNE: daily-prune の全表 Scan→削除への変更（dry-run フラグ付き、DeletionQueue 中アカウントを除外）
 - PRUNE: UsageCounters を updatedAt で全表削除（BatchWriteItem を使用）
 - PRUNE: Discord 通知を各テーブル毎の削除件数/全件数表示へ変更（実行時間含む）
