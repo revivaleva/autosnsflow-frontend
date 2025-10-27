@@ -39,7 +39,23 @@ export async function fetchDueXScheduledForAccount(accountId: string, nowSec: nu
         ExpressionAttributeValues: { ':acc': { S: accountId }, ':now': { N: String(nowSec) }, ':pending': { S: 'pending' }, ':f': { BOOL: false } },
         Limit: limit,
       };
-      try { console.info('[x-auto] queryParams', { accountId, nowSec, fullParams }); } catch(_) {}
+      // simplify ExpressionAttributeValues for readable logs
+      const simplifyAttr = (v: any) => {
+        if (!v) return null;
+        if (Object.prototype.hasOwnProperty.call(v, 'S')) return v.S;
+        if (Object.prototype.hasOwnProperty.call(v, 'N')) {
+          const n = Number(v.N);
+          return Number.isNaN(n) ? v.N : n;
+        }
+        if (Object.prototype.hasOwnProperty.call(v, 'BOOL')) return v.BOOL;
+        if (Object.prototype.hasOwnProperty.call(v, 'SS')) return v.SS;
+        return v;
+      };
+      const simplifiedEAV: any = {};
+      try {
+        for (const [k, v] of Object.entries(fullParams.ExpressionAttributeValues || {})) simplifiedEAV[k] = simplifyAttr(v);
+      } catch (_) {}
+      try { console.info('[x-auto] queryParamsSimple', { accountId, nowSec, KeyConditionExpression: fullParams.KeyConditionExpression, FilterExpression: fullParams.FilterExpression, ExpressionAttributeValues: simplifiedEAV, Limit: fullParams.Limit }); } catch(_) {}
 
       const items = (q as any).Items || [];
       try { console.info('[x-auto] fullQueryItems', { accountId, itemCount: items.length, items }); } catch(_) {}
