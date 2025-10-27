@@ -280,16 +280,20 @@ export default function XPostModal({ open, onClose, post }: Props) {
               // responsive font-size: shrink for long names
               const fontSize = display.length > 20 ? '10px' : display.length > 14 ? '11px' : '12px';
               return (
-                <button
-                  key={a.accountId}
-                  type="button"
-                  title={display}
-                  onClick={() => setAccountId(isSelected ? '' : a.accountId)}
-                  className={`text-center px-0.5 border rounded text-xs h-8 min-w-0 overflow-hidden ${isSelected ? 'bg-blue-600 text-white' : ''}`}
-                  aria-pressed={isSelected}
-                >
-                  <span className="block w-full text-center whitespace-normal break-words" style={{ fontSize, lineHeight: '1rem' }}>{display}</span>
-                </button>
+                <div key={a.accountId} className="relative group">
+                  <button
+                    type="button"
+                    title={display}
+                    onClick={() => setAccountId(isSelected ? '' : a.accountId)}
+                    className={`text-center px-0.5 border rounded text-xs h-8 min-w-0 overflow-hidden ${isSelected ? 'bg-blue-600 text-white' : ''}`}
+                    aria-pressed={isSelected}
+                  >
+                    <span className="block w-full text-center whitespace-normal break-words" style={{ fontSize, lineHeight: '1rem' }}>{display}</span>
+                  </button>
+                  <div className="pointer-events-none absolute z-10 left-1/2 -translate-x-1/2 -top-8 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="bg-black text-white text-xs px-2 py-1 rounded whitespace-nowrap">{display}</div>
+                  </div>
+                </div>
               );
             });
           })()}
