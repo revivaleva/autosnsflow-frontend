@@ -22,7 +22,10 @@ export async function fetchDueXScheduledForAccount(accountId: string, nowSec: nu
       TableName: TBL_X_SCHEDULED,
       IndexName: 'GSI_PendingByAccount',
       KeyConditionExpression: 'pendingForAutoPostAccount = :acc AND scheduledAt <= :now',
-      ExpressionAttributeValues: { ':acc': { S: accountId }, ':now': { N: String(nowSec) } },
+      // Filter to only pending and not deleted items (non-key filter)
+      FilterExpression: '(attribute_not_exists(#st) OR #st = :pending) AND (attribute_not_exists(isDeleted) OR isDeleted = :f)',
+      ExpressionAttributeNames: { '#st': 'status' },
+      ExpressionAttributeValues: { ':acc': { S: accountId }, ':now': { N: String(nowSec) }, ':pending': { S: 'pending' }, ':f': { BOOL: false } },
       Limit: limit,
     }));
     return (q as any).Items || [];
