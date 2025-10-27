@@ -15,6 +15,7 @@ export default function XPostModal({ open, onClose, post }: Props) {
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     if (!open) return;
@@ -273,21 +274,17 @@ export default function XPostModal({ open, onClose, post }: Props) {
             <input type="search" placeholder="アカウント検索（部分一致）" className="w-full border rounded px-2 py-1" onChange={(e)=>{ const q = e.target.value.toLowerCase(); setAccounts(prev => prev ? prev.filter(x=> (x.username||x.accountId).toLowerCase().includes(q)) : []); }} />
           </div>
         </div>
-        <label className="block">テーマ</label>
+        {/* Theme hidden by default; small unstyled + toggles advanced inputs */}
         <div className="flex gap-2 mb-2 items-center">
-          {showAdvanced ? (
-            <>
-              <input className="flex-1 border rounded px-2 py-1" value={theme} onChange={(e) => setTheme(e.target.value)} placeholder="例: 告知, 雑談" />
-              <button type="button" className="bg-gray-100 px-3 py-1 rounded" onClick={handleAIGenerate} disabled={aiLoading}>{aiLoading ? '生成中...' : 'AIで生成'}</button>
-              <button type="button" aria-label="閉じる" className="ml-2 text-sm px-2 py-1 border rounded" onClick={() => setShowAdvanced(false)}>−</button>
-            </>
-          ) : (
-            <>
-              <div className="flex-1" />
-              <button type="button" aria-label="詳細を表示" className="ml-auto bg-green-500 text-white rounded-full w-8 h-8 flex items-center justify-center text-sm" onClick={() => setShowAdvanced(true)}>＋</button>
-            </>
-          )}
+          <div className="flex-1" />
+          <button type="button" aria-label="詳細を表示" className="ml-auto text-sm w-6 h-6 flex items-center justify-center" onClick={() => setShowAdvanced(s => !s)}>＋</button>
         </div>
+        {showAdvanced && (
+          <div className="flex gap-2 mb-2 items-center">
+            <input className="flex-1 border rounded px-2 py-1" value={theme} onChange={(e) => setTheme(e.target.value)} placeholder="例: 告知, 雑談" />
+            <button type="button" className="px-3 py-1 rounded" onClick={handleAIGenerate} disabled={aiLoading}>{aiLoading ? '生成中...' : 'AIで生成'}</button>
+          </div>
+        )}
           <label className="block">予約日時</label>
           <input type="datetime-local" className="mb-2 border rounded px-2 py-1 w-full" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} />
 
