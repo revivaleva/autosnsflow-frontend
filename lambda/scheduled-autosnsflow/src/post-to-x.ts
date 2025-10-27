@@ -89,6 +89,35 @@ export async function fetchDueXScheduledForAccount(accountId: string, nowSec: nu
   }
 }
 
+// Alternate fetch: use GSI_ByAccount then filter client-side (closer to Threads approach)
+export async function fetchDueXScheduledForAccountByAccount(accountId: string, nowSec: number, limit = 10) {
+  try {
+    const params: any = {
+      TableName: TBL_X_SCHEDULED,
+      IndexName: 'GSI_ByAccount',
+      KeyConditionExpression: 'accountId = :acc AND scheduledAt <= :now',
+      ExpressionAttributeValues: { ':acc': { S: accountId }, ':now': { N: String(nowSec) } },
+      // retrieve a reasonable page to allow client-side filtering
+      Limit: Math.max(100, limit * 5),
+    };
+    try { console.info('[x-auto] queryByAccountParams', { accountId, nowSec, params: { KeyConditionExpression: params.KeyConditionExpression, ExpressionAttributeValues: JSON.stringify(params.ExpressionAttributeValues), Limit: params.Limit } }); } catch (_) {}
+    const q = await ddb.send(new QueryCommand(params));
+    try { console.info('[x-auto] rawQueryByAccountResponse', { accountId, raw: JSON.stringify(q) }); } catch (_) {}
+    const items: any[] = (q as any).Items || [];
+    const filtered = items.filter((it: any) => {
+      const st = it.status?.S || '';
+      const isDeleted = it.isDeleted?.BOOL === true;
+      // treat missing status as pending
+      const isPending = (!st || st === 'pending');
+      return isPending && !isDeleted && (Number(it.scheduledAt?.N || 0) <= Number(nowSec));
+    }).slice(0, limit);
+    try { console.info('[x-auto] fetchedByAccountFiltered', { accountId, nowSec, returned: filtered.length }); } catch(_) {}
+    return filtered;
+  } catch (e) {
+    throw e;
+  }
+}
+
 // Mark scheduled item as posted (update postedAt/status/postId)
 export async function markXScheduledPosted(pk: string, sk: string, postId: string) {
   const now = Math.floor(Date.now() / 1000);
@@ -108,7 +137,8 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
   if (!acct || !acct.autoPostEnabled) return { posted: 0 };
   const now = Math.floor(Date.now() / 1000);
   const accountId = acct.accountId;
-  const candidates = await fetchDueXScheduledForAccount(accountId, now, 1);
+  // Use account-based fetch (Threads-like) to reduce filter-induced empty-results
+  const candidates = await fetchDueXScheduledForAccountByAccount(accountId, now, 1);
   try { console.info('[x-auto] nowSec', { userId, accountId, now }); } catch(_) {}
   let postedCount = 0;
   const debug: any = { candidates: (candidates || []).length, tokenPresent: !!(acct.oauthAccessToken || acct.accessToken), errors: [] };
