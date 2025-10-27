@@ -3116,7 +3116,7 @@ async function runFiveMinJobForUser(userId: any) {
                 if (safeXacct.accessToken) safeXacct.accessToken = '[REDACTED]';
                 if (safeXacct.refreshToken) safeXacct.refreshToken = '[REDACTED]';
                 if (safeXacct.oauthRefreshToken) safeXacct.oauthRefreshToken = '[REDACTED]';
-                try { console.info('[x-run] invoking runAutoPostForXAccount full', { userId, accountId: xacct.accountId, xacct: safeXacct }); } catch(_) {}
+              try { console.info('[x-run] invoking runAutoPostForXAccount', { userId, accountId: xacct.accountId }); } catch(_) {}
               } catch (_) {}
               // runAutoPostForXAccount は別モジュール
               const xmod = await import('./post-to-x');

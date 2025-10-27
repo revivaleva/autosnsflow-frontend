@@ -40,49 +40,14 @@ export async function fetchDueXScheduledForAccount(accountId: string, nowSec: nu
       if (exclusiveStartKey) params.ExclusiveStartKey = exclusiveStartKey;
       lastResponse = await ddb.send(new QueryCommand(params));
       page++;
-      try { console.info('[x-auto] rawQueryResponsePage', { accountId, page, raw: JSON.stringify(lastResponse) }); } catch(_) {}
       const pageItems = (lastResponse as any).Items || [];
       if (pageItems.length) collectedItems.push(...pageItems);
       exclusiveStartKey = (lastResponse as any).LastEvaluatedKey;
       // continue until we have enough post-filtered items or no more pages
     } while (collectedItems.length < limit && exclusiveStartKey);
-    // debug: log full query parameters and returned items for deep diagnosis
-    try {
-      const fullParams = {
-        TableName: TBL_X_SCHEDULED,
-        IndexName: 'GSI_PendingByAccount',
-        KeyConditionExpression: 'pendingForAutoPostAccount = :acc AND scheduledAt <= :now',
-        FilterExpression: '(attribute_not_exists(#st) OR #st = :pending) AND (attribute_not_exists(isDeleted) OR isDeleted = :f)',
-        ExpressionAttributeNames: { '#st': 'status' },
-        ExpressionAttributeValues: { ':acc': { S: accountId }, ':now': { N: String(nowSec) }, ':pending': { S: 'pending' }, ':f': { BOOL: false } },
-        Limit: limit,
-      };
-      // simplify ExpressionAttributeValues for readable logs
-      const simplifyAttr = (v: any) => {
-        if (!v) return null;
-        if (Object.prototype.hasOwnProperty.call(v, 'S')) return v.S;
-        if (Object.prototype.hasOwnProperty.call(v, 'N')) {
-          const n = Number(v.N);
-          return Number.isNaN(n) ? v.N : n;
-        }
-        if (Object.prototype.hasOwnProperty.call(v, 'BOOL')) return v.BOOL;
-        if (Object.prototype.hasOwnProperty.call(v, 'SS')) return v.SS;
-        return v;
-      };
-      const simplifiedEAV: any = {};
-      try {
-        for (const [k, v] of Object.entries(fullParams.ExpressionAttributeValues || {})) simplifiedEAV[k] = simplifyAttr(v);
-      } catch (_) {}
-      try { console.info('[x-auto] queryParamsSimple', { accountId, nowSec, KeyConditionExpression: fullParams.KeyConditionExpression, FilterExpression: fullParams.FilterExpression, ExpressionAttributeValues: simplifiedEAV, Limit: fullParams.Limit }); } catch(_) {}
-      // additional: log raw JSON of ExpressionAttributeValues and the KeyCondition for exact-match debugging
-      try { console.info('[x-auto] queryParamsRaw', { accountId, nowSec, rawExpressionAttributeValues: JSON.stringify(fullParams.ExpressionAttributeValues), KeyConditionExpression: fullParams.KeyConditionExpression, FilterExpression: fullParams.FilterExpression }); } catch(_) {}
 
-      const items = collectedItems;
-      try { console.info('[x-auto] fullQueryItems', { accountId, itemCount: items.length, items }); } catch(_) {}
-      try { console.info('[x-auto] rawQueryResponseAggregate', JSON.stringify(lastResponse)); } catch(_) {}
-    } catch (err) {
-      try { console.error('[x-auto] rawQueryLogFailed', { accountId, err: String(err) }); } catch(_) {}
-    }
+    // minimal logging: only counts to avoid verbose output in production
+    try { console.info('[x-auto] fetchedPendingCandidates', { accountId, nowSec, returned: collectedItems.length }); } catch(_) {}
     return collectedItems || [];
   } catch (e) {
     throw e;
