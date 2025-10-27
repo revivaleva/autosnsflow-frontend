@@ -259,22 +259,27 @@ export default function XPostModal({ open, onClose, post }: Props) {
         <div className="flex gap-4 mb-2">
           <div className="flex-1">
             <div className="grid grid-cols-10 gap-2 max-h-[216px] overflow-y-auto p-1 border rounded">
-              {accounts.map((a) => {
-                const display = a.username ? `${a.username}` : a.accountId;
-                const isSelected = accountId === a.accountId;
-                return (
-                  <button
-                    key={a.accountId}
-                    type="button"
-                    title={display}
-                    onClick={() => setAccountId(isSelected ? '' : a.accountId)}
-                    className={`text-center px-2 py-1 border rounded text-xs truncate ${isSelected ? 'bg-blue-600 text-white' : ''}`}
-                    aria-pressed={isSelected}
-                  >
-                    <span className="block w-full break-words" style={{ fontSize: display.length > 18 ? '10px' : display.length > 12 ? '11px' : '12px' }}>{display}</span>
-                  </button>
-                );
-              })}
+              {(() => {
+                const dummy = Array.from({ length: 40 }, (_, i) => ({ accountId: `dummy-${i + 1}`, username: `TestAccount${i + 1}` }));
+                const q = (searchQuery || '').toLowerCase();
+                const displayList = q ? dummy.filter(a => (a.username || a.accountId).toLowerCase().includes(q)) : dummy;
+                return displayList.map((a) => {
+                  const display = a.username ? `${a.username}` : a.accountId;
+                  const isSelected = accountId === a.accountId;
+                  return (
+                    <button
+                      key={a.accountId}
+                      type="button"
+                      title={display}
+                      onClick={() => setAccountId(isSelected ? '' : a.accountId)}
+                      className={`text-center px-2 py-1 border rounded text-xs truncate ${isSelected ? 'bg-blue-600 text-white' : ''}`}
+                      aria-pressed={isSelected}
+                    >
+                      <span className="block w-full break-words" style={{ fontSize: display.length > 18 ? '10px' : display.length > 12 ? '11px' : '12px' }}>{display}</span>
+                    </button>
+                  );
+                });
+              })()}
             </div>
           </div>
           <div className="w-48">
