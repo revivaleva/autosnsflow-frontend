@@ -3096,23 +3096,25 @@ async function runFiveMinJobForUser(userId: any) {
 
     const a = await runAutoPostForAccount(acct, userId, settings);
     // X のアカウントがあれば同一ユーザ内の X アカウントについても投稿を試みる
-    try {
-      const xAccounts = await getXAccounts(userId);
-      for (const xacct of xAccounts) {
-        try {
-          // runAutoPostForXAccount は別モジュール
-          const xmod = await import('./post-to-x');
-          if (typeof xmod.runAutoPostForXAccount === 'function') {
+      try {
+          const xAccounts = await getXAccounts(userId);
+          for (const xacct of xAccounts) {
             try {
-              const xr = await xmod.runAutoPostForXAccount(xacct, userId);
-              (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
-              (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_AUTO_POST_RESULT', payload: { accountId: xacct.accountId, result: xr } });
-            if (xr && typeof xr.posted === 'number') totalX += Number(xr.posted || 0);
-            } catch (e) { console.warn('[warn] runAutoPostForXAccount failed', e); }
+              try { console.info('[x-run] invoking runAutoPostForXAccount', { userId, accountId: xacct.accountId, autoPostEnabled: !!xacct.autoPostEnabled, tokenPresent: !!(xacct.oauthAccessToken || xacct.accessToken) }); } catch(_) {}
+              // runAutoPostForXAccount は別モジュール
+              const xmod = await import('./post-to-x');
+              if (typeof xmod.runAutoPostForXAccount === 'function') {
+                try {
+                  const xr = await xmod.runAutoPostForXAccount(xacct, userId);
+                  try { console.info('[x-run] result', { userId, accountId: xacct.accountId, result: xr }); } catch(_) {}
+                  (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+                  (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_AUTO_POST_RESULT', payload: { accountId: xacct.accountId, result: xr } });
+                  if (xr && typeof xr.posted === 'number') totalX += Number(xr.posted || 0);
+                } catch (e) { console.warn('[warn] runAutoPostForXAccount failed', e); }
+              }
+            } catch (e) { console.warn('[warn] post-to-x import or run failed', e); }
           }
-        } catch (e) { console.warn('[warn] post-to-x import or run failed', e); }
-      }
-    } catch (e) { console.warn('[warn] getXAccounts failed', e); }
+        } catch (e) { console.warn('[warn] getXAccounts failed', e); }
     try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_AUTO_POST_RESULT', payload: { accountId: acct.accountId, result: a } }); } catch(_) {}
 
     const r = await runRepliesForAccount(acct, userId, settings);
