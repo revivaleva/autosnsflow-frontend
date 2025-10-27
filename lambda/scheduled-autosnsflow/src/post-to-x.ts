@@ -56,9 +56,12 @@ export async function fetchDueXScheduledForAccount(accountId: string, nowSec: nu
         for (const [k, v] of Object.entries(fullParams.ExpressionAttributeValues || {})) simplifiedEAV[k] = simplifyAttr(v);
       } catch (_) {}
       try { console.info('[x-auto] queryParamsSimple', { accountId, nowSec, KeyConditionExpression: fullParams.KeyConditionExpression, FilterExpression: fullParams.FilterExpression, ExpressionAttributeValues: simplifiedEAV, Limit: fullParams.Limit }); } catch(_) {}
+      // additional: log raw JSON of ExpressionAttributeValues and the KeyCondition for exact-match debugging
+      try { console.info('[x-auto] queryParamsRaw', { accountId, nowSec, rawExpressionAttributeValues: JSON.stringify(fullParams.ExpressionAttributeValues), KeyConditionExpression: fullParams.KeyConditionExpression, FilterExpression: fullParams.FilterExpression }); } catch(_) {}
 
       const items = (q as any).Items || [];
       try { console.info('[x-auto] fullQueryItems', { accountId, itemCount: items.length, items }); } catch(_) {}
+      try { console.info('[x-auto] rawQueryResponse', JSON.stringify(q)); } catch(_) {}
     } catch (err) {
       try { console.error('[x-auto] rawQueryLogFailed', { accountId, err: String(err) }); } catch(_) {}
     }
