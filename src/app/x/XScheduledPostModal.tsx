@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 type Props = { open: boolean; onClose: () => void; post?: any };
 
@@ -14,6 +14,11 @@ export default function XPostModal({ open, onClose, post }: Props) {
   const [selectedGroup, setSelectedGroup] = useState<string>('2投稿');
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const gridRef = useRef<HTMLDivElement | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const selectedAccount = accounts.find(a => a.accountId === accountId);
+  const selectedAccountLabel = selectedAccount ? (selectedAccount.username || selectedAccount.accountId) : '';
 
   useEffect(() => {
     if (!open) return;
@@ -253,18 +258,72 @@ export default function XPostModal({ open, onClose, post }: Props) {
         <h3 className="text-lg font-bold mb-3">{post ? '予約編集' : '予約作成'}</h3>
         {errorMsg && <div className="mb-3 text-sm text-red-600 whitespace-pre-wrap">{errorMsg}</div>}
         <form onSubmit={handleSave}>
-        <label className="block">アカウント</label>
-          <select className="mb-2 border rounded px-2 py-1 w-full" value={accountId} onChange={(e) => setAccountId(e.target.value)}>
-            <option value="">選択してください</option>
-            {accounts.map((a) => (
-              <option key={a.accountId} value={a.accountId}>{a.username ? `${a.username} (${a.accountId})` : a.accountId}</option>
-            ))}
-          </select>
-        <label className="block">テーマ</label>
-        <div className="flex gap-2 mb-2">
-          <input className="flex-1 border rounded px-2 py-1" value={theme} onChange={(e) => setTheme(e.target.value)} placeholder="例: 告知, 雑談" />
-          <button type="button" className="bg-gray-100 px-3 py-1 rounded" onClick={handleAIGenerate} disabled={aiLoading}>{aiLoading ? '生成中...' : 'AIで生成'}</button>
+        {/* Label row: label on left, search on right */}
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <label className="block">アカウント</label>
+            {selectedAccountLabel && <div className="text-sm text-gray-600 dark:text-gray-300">{selectedAccountLabel}</div>}
+          </div>
+          <div className="w-48">
+            <input type="search" placeholder="アカウント検索（部分一致）" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full border rounded px-2 py-1" />
+          </div>
         </div>
+        {/* Button grid full width; no outer border */}
+        <div ref={gridRef as any} className="grid grid-cols-10 gap-1 h-[120px] overflow-y-auto p-1">
+          {(() => {
+            const q = (searchQuery || '').toLowerCase();
+            const list = Array.isArray(accounts) ? accounts : [];
+            const displayList = q ? list.filter(a => ((a.username || a.accountId) + '').toLowerCase().includes(q)) : list;
+            return displayList.map((a) => {
+              const display = a.username ? `${a.username}` : a.accountId;
+              const isSelected = accountId === a.accountId;
+              // responsive font-size: shrink for long names
+              const fontSize = display.length > 20 ? '10px' : display.length > 14 ? '11px' : '12px';
+              return (
+                <div key={a.accountId} className="relative group">
+                  <button
+                    type="button"
+                    title={display}
+                    onClick={() => { if (post) return; setAccountId(isSelected ? '' : a.accountId); }}
+                    disabled={!!post}
+                    className={`text-center px-1 border rounded text-xs h-8 w-full min-w-0 overflow-hidden ${isSelected ? 'bg-blue-600 text-white' : ''} ${post ? 'opacity-80 cursor-not-allowed' : ''}`}
+                    aria-pressed={isSelected}
+                    aria-disabled={post ? 'true' : 'false'}
+                  >
+                    <span className="block w-full text-center break-all" style={{ fontSize, lineHeight: '1' }}>{display}</span>
+                  </button>
+                  <div className="pointer-events-none absolute z-10 left-1/2 -translate-x-1/2 -top-8 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="bg-black text-white text-xs px-2 py-1 rounded whitespace-nowrap">{display}</div>
+                  </div>
+                </div>
+              );
+            });
+          })()}
+        </div>
+        {/* Theme hidden by default; small unstyled + toggles advanced inputs */}
+        <div className="flex gap-2 mb-2 items-center">
+          <div className="flex-1" />
+          <button type="button" aria-label={showAdvanced ? '詳細を閉じる' : '詳細を表示'} className="ml-auto text-sm w-6 h-6 flex items-center justify-center" onClick={() => setShowAdvanced(s => !s)}>{showAdvanced ? '−' : '＋'}</button>
+        </div>
+        {showAdvanced && (
+          <div className="flex gap-2 mb-2 items-center">
+            <label className="block">テーマ</label>
+            <input className="flex-1 border rounded px-2 py-1" value={theme} onChange={(e) => setTheme(e.target.value)} placeholder="例: 告知, 雑談" />
+            <button
+              type="button"
+              className={`px-3 py-2 rounded-md text-white ${aiLoading ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
+              onClick={handleAIGenerate}
+              disabled={aiLoading}
+              title={aiLoading ? 'AI生成中' : undefined}
+            >
+              {aiLoading ? (
+                <span className="loader inline-block" aria-hidden aria-label="読み込み中"></span>
+              ) : (
+                'AIで生成'
+              )}
+            </button>
+          </div>
+        )}
           <label className="block">予約日時</label>
           <input type="datetime-local" className="mb-2 border rounded px-2 py-1 w-full" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} />
 
