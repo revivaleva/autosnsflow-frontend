@@ -14,6 +14,7 @@ export default function XPostModal({ open, onClose, post }: Props) {
   const [selectedGroup, setSelectedGroup] = useState<string>('2投稿');
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -254,16 +255,38 @@ export default function XPostModal({ open, onClose, post }: Props) {
         {errorMsg && <div className="mb-3 text-sm text-red-600 whitespace-pre-wrap">{errorMsg}</div>}
         <form onSubmit={handleSave}>
         <label className="block">アカウント</label>
-          <select className="mb-2 border rounded px-2 py-1 w-full" value={accountId} onChange={(e) => setAccountId(e.target.value)}>
-            <option value="">選択してください</option>
-            {accounts.map((a) => (
-              <option key={a.accountId} value={a.accountId}>{a.username ? `${a.username} (${a.accountId})` : a.accountId}</option>
-            ))}
-          </select>
+        <div className="flex gap-4 mb-2">
+          <div className="flex-1">
+            <div className="grid grid-cols-10 gap-2 max-h-[216px] overflow-y-auto p-1 border rounded">
+              {accounts.map((a) => {
+                const display = a.username ? `${a.username}` : a.accountId;
+                const isSelected = accountId === a.accountId;
+                return (
+                  <button key={a.accountId} type="button" title={display} onClick={() => setAccountId(a.accountId)} className={`text-center px-2 py-1 border rounded text-xs truncate ${isSelected ? 'bg-blue-600 text-white' : ''}`}>
+                    <span className="block w-full break-words" style={{ fontSize: display.length > 18 ? '10px' : display.length > 12 ? '11px' : '12px' }}>{display}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div className="w-48">
+            <input type="search" placeholder="アカウント検索（部分一致）" className="w-full border rounded px-2 py-1" onChange={(e)=>{ const q = e.target.value.toLowerCase(); setAccounts(prev => prev ? prev.filter(x=> (x.username||x.accountId).toLowerCase().includes(q)) : []); }} />
+          </div>
+        </div>
         <label className="block">テーマ</label>
-        <div className="flex gap-2 mb-2">
-          <input className="flex-1 border rounded px-2 py-1" value={theme} onChange={(e) => setTheme(e.target.value)} placeholder="例: 告知, 雑談" />
-          <button type="button" className="bg-gray-100 px-3 py-1 rounded" onClick={handleAIGenerate} disabled={aiLoading}>{aiLoading ? '生成中...' : 'AIで生成'}</button>
+        <div className="flex gap-2 mb-2 items-center">
+          {showAdvanced ? (
+            <>
+              <input className="flex-1 border rounded px-2 py-1" value={theme} onChange={(e) => setTheme(e.target.value)} placeholder="例: 告知, 雑談" />
+              <button type="button" className="bg-gray-100 px-3 py-1 rounded" onClick={handleAIGenerate} disabled={aiLoading}>{aiLoading ? '生成中...' : 'AIで生成'}</button>
+              <button type="button" aria-label="閉じる" className="ml-2 text-sm px-2 py-1 border rounded" onClick={() => setShowAdvanced(false)}>−</button>
+            </>
+          ) : (
+            <>
+              <div className="flex-1" />
+              <button type="button" aria-label="詳細を表示" className="ml-auto bg-green-500 text-white rounded-full w-8 h-8 flex items-center justify-center text-sm" onClick={() => setShowAdvanced(true)}>＋</button>
+            </>
+          )}
         </div>
           <label className="block">予約日時</label>
           <input type="datetime-local" className="mb-2 border rounded px-2 py-1 w-full" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} />
