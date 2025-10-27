@@ -81,8 +81,23 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
           continue;
         }
       }
+      // debug: log post response body for observability (do not log tokens)
+      try { console.info('[x-auto] post response', { userId, accountId, sk, response: r }); } catch(_) {}
+
       const postId = (r && r.data && (r.data.id || r.data?.id_str)) || '';
-      await markXScheduledPosted(pk, sk, String(postId));
+      if (!postId || String(postId).trim() === '') {
+        try { console.warn('[x-auto] post returned no postId', { userId, accountId, sk, response: r }); } catch(_) {}
+        debug.errors.push({ sk, err: 'no_post_id', response: r });
+        continue;
+      }
+
+      try {
+        await markXScheduledPosted(pk, sk, String(postId));
+      } catch (e) {
+        try { console.warn('[x-auto] markXScheduledPosted failed', { userId, accountId, sk, err: String(e) }); } catch(_) {}
+        debug.errors.push({ sk, err: String(e) });
+        continue;
+      }
       postedCount++;
       // notify user-level discord webhooks only if user has enableX=true in settings
       try {
