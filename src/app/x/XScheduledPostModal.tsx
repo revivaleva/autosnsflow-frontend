@@ -341,7 +341,7 @@ export default function XPostModal({ open, onClose, post }: Props) {
               {extraPosts.map((ex, idx) => (
                 <div key={idx} className="flex gap-2 items-start mb-2">
                   <input type="datetime-local" className="border rounded px-2 py-1" value={ex.scheduledAt} onChange={(e) => { const v = e.target.value; setExtraPosts(prev => { const copy = [...prev]; copy[idx] = { ...copy[idx], scheduledAt: v }; return copy; }); }} />
-                  <input className="border rounded px-2 py-1 flex-1" placeholder="本文(任意)" value={ex.content} onChange={(e) => { const v = e.target.value; setExtraPosts(prev => { const copy = [...prev]; copy[idx] = { ...copy[idx], content: v }; return copy; }); }} />
+                  <textarea className="border rounded px-2 py-1 flex-1 min-h-[64px]" placeholder="本文(任意)" value={ex.content} onChange={(e) => { const v = e.target.value; setExtraPosts(prev => { const copy = [...prev]; copy[idx] = { ...copy[idx], content: v }; return copy; }); }} />
                   <button type="button" className="px-2 py-1 border rounded text-sm" onClick={() => removeExtraPost(idx)}>削除</button>
                 </div>
               ))}
