@@ -46,12 +46,12 @@ export default function XAccountsTable({ onlyType }: { onlyType?: string } = {})
       <div className="flex justify-between items-center mb-4">
         <div />
         <div className="flex gap-2">
-          <button className="bg-blue-500 text-white px-3 py-1 rounded" onClick={load}>再読み込み</button>
-          <button className="bg-green-500 text-white px-3 py-1 rounded" onClick={handleAdd}>＋新規追加</button>
+          <button className="bg-blue-500 dark:bg-blue-600 text-white px-3 py-1 rounded" onClick={load}>再読み込み</button>
+          <button className="bg-green-500 dark:bg-green-600 text-white px-3 py-1 rounded" onClick={handleAdd}>＋新規追加</button>
         </div>
       </div>
       {loading ? <div className="text-center py-8">読み込み中...</div> : (
-        <table className="w-full border">
+        <table className="w-full border border-gray-200 dark:border-gray-700">
           <thead className="bg-gray-100 dark:bg-gray-800"><tr>
             <th className="py-2 px-3 text-left text-gray-900 dark:text-gray-100">アカウント名</th>
             <th className="py-2 px-3 text-gray-900 dark:text-gray-100">ID</th>
@@ -62,7 +62,7 @@ export default function XAccountsTable({ onlyType }: { onlyType?: string } = {})
           <tbody>
             {accounts.map((a) => {
               const accFail = Number(a.failureCount || 0);
-              const rowCls = accFail >= 3 ? 'bg-red-50' : '';
+              const rowCls = accFail >= 3 ? 'bg-red-50 dark:bg-red-900/30' : '';
               return (
                 <tr key={a.accountId} className={`${rowCls} border-t`}>
                   <td className="py-2 px-3 text-left"><button className="text-blue-600" onClick={() => handleEdit(a)}>{a.username}</button></td>
@@ -91,7 +91,7 @@ export default function XAccountsTable({ onlyType }: { onlyType?: string } = {})
                       }}
                     />
                   </td>
-                  <td className="py-2 px-3"><button className="bg-indigo-500 text-white px-2 py-1 rounded" onClick={() => { try { const name = String(a.accountId || '').replace(/^@/, ''); window.location.href = `mycontainers://open?name=${encodeURIComponent(name)}&url=${encodeURIComponent('https://x.com/' + name)}` } catch {} }}>アプリ</button></td>
+                  <td className="py-2 px-3"><button className="bg-indigo-500 dark:bg-indigo-600 text-white px-2 py-1 rounded" onClick={() => { try { const name = String(a.accountId || '').replace(/^@/, ''); window.location.href = `mycontainers://open?name=${encodeURIComponent(name)}&url=${encodeURIComponent('https://x.com/' + name)}` } catch {} }}>アプリ</button></td>
                 </tr>
               );
             })}

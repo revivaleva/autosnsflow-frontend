@@ -148,25 +148,25 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
   return (
     <div className="max-w-6xl mx-auto mt-8 p-4">
       <div className="mb-6">
-        <div className="text-sm text-gray-600">
+        <div className="text-sm text-gray-600 dark:text-gray-300">
           プール件数: <strong>{poolCount}</strong> ・ アカウント数: <strong>{accountsCount}</strong>
         </div>
         {/* 表示は該当種別のみ（投稿可能期日計算用） */}
-        <div className="text-sm text-gray-600">投稿可能期日: <strong>{possibleDate}</strong>（保有日数: {daysCover === null ? "－" : `${daysCover}日`})</div>
+        <div className="text-sm text-gray-600 dark:text-gray-300">投稿可能期日: <strong>{possibleDate}</strong>（保有日数: {daysCover === null ? "－" : `${daysCover}日`})</div>
       </div>
 
       <div className="mb-4">
-        <textarea className="w-full border rounded p-2 min-h-[300px]" value={content} onChange={(e) => setContent(e.target.value)} placeholder="投稿本文を入力（改行可）"></textarea>
+        <textarea className="w-full border rounded p-2 min-h-[300px] bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100" value={content} onChange={(e) => setContent(e.target.value)} placeholder="投稿本文を入力（改行可）"></textarea>
         <div className="flex items-center justify-between mt-2">
           <div className="flex items-center gap-2">
-            <label className="bg-gray-100 px-3 py-1 rounded cursor-pointer">
+            <label className="bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-100 px-3 py-1 rounded cursor-pointer">
               画像
               <input type="file" accept="image/*" multiple onChange={handleImageSelect} className="hidden" />
             </label>
           </div>
             <div className="flex items-center gap-2">
-            <div className="text-sm text-gray-500">文字数: {String(content || "").length}</div>
-            <button className="bg-green-500 text-white px-4 py-2 rounded text-sm font-medium" onClick={handleSave} disabled={loading}>{loading ? "登録中..." : "登録"}</button>
+            <div className="text-sm text-gray-500 dark:text-gray-300">文字数: {String(content || "").length}</div>
+            <button className="bg-green-500 dark:bg-green-600 text-white px-4 py-2 rounded text-sm font-medium" onClick={handleSave} disabled={loading}>{loading ? "登録中..." : "登録"}</button>
           </div>
         </div>
       </div>
@@ -181,11 +181,11 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
       {openPool && (
         <div className="mb-6">
           <div className="mb-4 flex justify-end gap-2">
-            <button className="bg-blue-500 text-white rounded px-3 py-1 text-sm" onClick={loadPool}>再読み込み</button>
+            <button className="bg-blue-500 dark:bg-blue-600 text-white rounded px-3 py-1 text-sm" onClick={loadPool}>再読み込み</button>
           </div>
           {loading ? <div>読み込み中...</div> : (
-            <table className="w-full border">
-              <thead className="bg-gray-100">
+            <table className="w-full border border-gray-200 dark:border-gray-700">
+              <thead className="bg-gray-100 dark:bg-gray-800">
                 <tr>
                   <th className="p-2 text-left">本文</th>
                   <th className="p-2 text-right" style={{ width: 140 }}>作成日</th>
@@ -194,7 +194,7 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
               </thead>
               <tbody>
                 {items.map(it => (
-                  <tr key={it.poolId} className="border-t">
+                  <tr key={it.poolId} className="border-t dark:border-gray-700">
                     <td className="px-2 py-1 align-top" style={{ verticalAlign: 'top' }}>
                       <div
                         title={it.content}
@@ -213,13 +213,13 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
                         {it.content}
                       </div>
                     </td>
-                    <td className="px-2 py-1 text-right text-sm text-gray-600">{it.createdAt ? new Date(it.createdAt * 1000).toLocaleString() : ""}</td>
+                    <td className="px-2 py-1 text-right text-sm text-gray-600 dark:text-gray-300">{it.createdAt ? new Date(it.createdAt * 1000).toLocaleString() : ""}</td>
                     <td className="px-2 py-1 text-center">
-                      <button className="bg-red-500 text-white px-2 py-1 rounded" onClick={() => handleDelete(it.poolId)}>削除</button>
+                      <button className="bg-red-500 dark:bg-red-600 text-white px-2 py-1 rounded" onClick={() => handleDelete(it.poolId)}>削除</button>
                     </td>
                   </tr>
                 ))}
-                {items.length === 0 && <tr><td colSpan={3} className="p-4 text-center text-gray-500">データがありません</td></tr>}
+                {items.length === 0 && <tr><td colSpan={3} className="p-4 text-center text-gray-500 dark:text-gray-400">データがありません</td></tr>}
               </tbody>
             </table>
           )}
@@ -231,11 +231,11 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
         {openScheduled && (
           <div>
             <div className="mb-4 flex justify-end gap-2">
-              <button className="bg-blue-500 text-white rounded px-3 py-1 text-sm" onClick={loadScheduledX}>再読み込み</button>
+              <button className="bg-blue-500 dark:bg-blue-600 text-white rounded px-3 py-1 text-sm" onClick={loadScheduledX}>再読み込み</button>
             </div>
             <div className="overflow-x-auto">
-              <table className="min-w-full bg-white border">
-                <thead>
+              <table className="min-w-full bg-white dark:bg-transparent border border-gray-200 dark:border-gray-700">
+                <thead className="bg-gray-100 dark:bg-gray-800">
                   <tr>
                     <th className="border p-2" style={{ width: 260 }}>アカウント</th>
                     <th className="border p-2" style={{ width: 180 }}>予約投稿日時</th>
@@ -246,10 +246,10 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
                 </thead>
                 <tbody>
                   {scheduledPostsX.map((p) => (
-                    <tr key={p.scheduledPostId} className="border-t">
+                    <tr key={p.scheduledPostId} className="border-t dark:border-gray-700">
                       <td className="px-2 py-1">
                         <div className="text-sm font-medium" style={{ lineHeight: '1rem', maxHeight: '3rem', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical' }} title={p.content || ''}>{p.accountName}</div>
-                        <div className="text-xs text-gray-500">{p.accountId}</div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400">{p.accountId}</div>
                       </td>
                       <td className="px-2 py-1">{p.scheduledAt ? (typeof p.scheduledAt === 'number' ? new Date(p.scheduledAt * 1000).toLocaleString() : String(p.scheduledAt)) : ''}</td>
                       <td className="px-2 py-1">
@@ -260,12 +260,12 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
                       <td className="px-2 py-1">{p.postedAt ? (typeof p.postedAt === 'number' ? new Date(p.postedAt * 1000).toLocaleString() : String(p.postedAt)) : ''}</td>
                       <td className="px-2 py-1">
                         {p.status === 'posted' && p.postId ? (
-                          <a href={`https://www.threads.net/post/${p.postId}`} target="_blank" rel="noreferrer" className="text-blue-600 underline">{String(p.postId).slice(0,30)}</a>
+                          <a href={`https://www.threads.net/post/${p.postId}`} target="_blank" rel="noreferrer" className="text-blue-600 dark:text-blue-400 underline">{String(p.postId).slice(0,30)}</a>
                         ) : ''}
                       </td>
                     </tr>
                   ))}
-                  {scheduledPostsX.length === 0 && <tr><td colSpan={5} className="p-4 text-center text-gray-500">データがありません</td></tr>}
+                  {scheduledPostsX.length === 0 && <tr><td colSpan={5} className="p-4 text-center text-gray-500 dark:text-gray-400">データがありません</td></tr>}
                 </tbody>
               </table>
             </div>

@@ -118,15 +118,15 @@ export default function XAccountModal({ open, onClose, mode = "create", account,
           <label className="block">clientSecret</label>
           {masked ? (
             <div className="flex gap-2 items-center mb-2">
-              <input readOnly value={'********'} className="flex-1 border rounded px-2 py-1 bg-gray-50" />
-              <button type="button" className="px-2 py-1 border rounded" onClick={() => { setMasked(false); setClientSecret(''); }}>変更</button>
+              <input readOnly value={'********'} className="flex-1 border rounded px-2 py-1 bg-gray-50 dark:bg-gray-800 dark:text-gray-100" />
+              <button type="button" className="px-2 py-1 border rounded bg-gray-100 dark:bg-gray-800 dark:text-gray-100" onClick={() => { setMasked(false); setClientSecret(''); }}>変更</button>
             </div>
           ) : (
-            <input type="password" className="mb-2 border rounded px-2 py-1 w-full" value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} />
+            <input type="password" className="mb-2 border rounded px-2 py-1 w-full bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100" value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} />
           )}
 
           <div className="flex items-center gap-2 mb-4">
-            <button type="button" className="bg-yellow-500 text-white px-3 py-1 rounded" onClick={handleCopyAuthUrl}>認可URLコピー</button>
+            <button type="button" className="bg-yellow-500 dark:bg-yellow-500 text-white px-3 py-1 rounded" onClick={handleCopyAuthUrl}>認可URLコピー</button>
             <button
               type="button"
               aria-label={oauthAccessTokenLocal ? '認証解除' : '未認証'}
@@ -165,7 +165,7 @@ export default function XAccountModal({ open, onClose, mode = "create", account,
             >
               {checkingAuth ? '確認中...' : (oauthAccessTokenLocal ? '認証済み' : '未認証')}
             </button>
-            <button type="button" className="ml-auto bg-indigo-500 text-white px-3 py-1 rounded" onClick={handleOpenApp}>アプリ</button>
+            <button type="button" className="ml-auto bg-indigo-500 dark:bg-indigo-600 text-white px-3 py-1 rounded" onClick={handleOpenApp}>アプリ</button>
           </div>
 
           <div className="flex justify-between">
