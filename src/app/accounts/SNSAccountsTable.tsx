@@ -26,10 +26,6 @@ export type ThreadsAccount = {
   secondStageContent?: string;
   // [ADD] アクセストークン（モーダル編集用）
   accessToken?: string;
-  // アカウント種別（例: 'general' | 'ero'）
-  type?: string;
-  // 累積投稿失敗回数（UIで3回以上で警告表示）
-  failureCount?: number;
 };
 
 export default function SNSAccountsTable() {
@@ -274,6 +270,7 @@ export default function SNSAccountsTable() {
       <div className="text-center py-8">読み込み中...</div>
     );
   }
+
   return (
     <div className="max-w-5xl mx-auto mt-10">
       <div className="flex justify-between items-center mb-6">
@@ -322,6 +319,7 @@ export default function SNSAccountsTable() {
         <tbody>
           {accounts.map((acc) => (
             <tr key={acc.accountId} className="text-center border-t">
+              {/* [MOD] クリックで編集モーダルを開く */}
               <td className="py-2 px-3 text-left">
                 {acc.status === 'deleting' ? (
                   <div className="flex items-center gap-2">
@@ -341,7 +339,7 @@ export default function SNSAccountsTable() {
               <td className="py-2 px-3">
                 {acc.createdAt ? new Date(acc.createdAt * 1000).toLocaleString() : ""}
               </td>
-              <td className="py-2 px-3">
+                <td className="py-2 px-3">
                 <ToggleSwitch
                   checked={!!acc.autoPost}
                   onChange={(v: boolean) => handleToggle(acc, "autoPost", v)}
@@ -377,6 +375,7 @@ export default function SNSAccountsTable() {
                 </div>
               </td>
               <td className="py-2 px-3">
+                {/* 削除キュー中は赤バッジを押下可能にしてキャンセルを実行 */}
                 {acc.status === 'deleting' ? (
                   <div className="flex items-center gap-2">
                     <button
@@ -430,10 +429,10 @@ export default function SNSAccountsTable() {
               </td>
               {showAppColumn && (
                 <td className="py-2 px-3">
-                  <div className="flex items-center justify-center">
+                <div className="flex items-center justify-center">
                     <div className="flex items-center justify-center">
-                      <button
-                        className={`bg-indigo-500 text-white rounded px-3 py-1 whitespace-nowrap hover:bg-indigo-600`}
+                    <button
+                      className={`bg-indigo-500 text-white rounded px-3 py-1 whitespace-nowrap hover:bg-indigo-600`}
                         onClick={() => handleOpenInApp(acc)}
                         title="アプリ"
                       >
@@ -443,6 +442,7 @@ export default function SNSAccountsTable() {
                   </div>
                 </td>
               )}
+              {/* [DEL] 一覧の編集/削除ボタンは廃止 */}
             </tr>
           ))}
         </tbody>
