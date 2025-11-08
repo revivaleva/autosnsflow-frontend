@@ -20,6 +20,10 @@
  - `アカウント編集モーダルに認証状態ラベルと認証解除ボタンを追加` — completed
    - ファイル: `src/app/accounts/SNSAccountModal.tsx`
    - 内容: 認可URLコピーボタン横に認証状態ラベルを追加し、認証解除ボタンを実装。クライアント側から `PATCH /api/threads-accounts` に `oauthAccessToken: ''` を送信して DB 上のトークンを削除する。
+ - `投稿プール：画像／動画アップロード実装（リリース後に追加）` — pending (@pjtodo.mdc)
+   - 備考: 当面はテキストのみで運用。画像/動画対応はリリース後に実装。
+ - `DynamoDB/PostPool テーブルへの IAM 権限付与` — pending
+   - 詳細: Lambda 実行ロールへ `dynamodb:Query, GetItem, PutItem, UpdateItem, DeleteItem` 等を PostPool テーブル（ARN）に対して付与する。デプロイ前に実行ロールまたは環境の IAM ポリシーを更新してください。
  - `モーダル開時に最新のトークン状態をフェッチして表示を正確化` — pending
    - 実装: `SNSAccountModal` の `useEffect` で `/api/threads-accounts?accountId=...` を呼び、`oauthAccessToken` / `accessToken` / `clientSecret` の有無を state に反映する。
  - `サーバー側: トークン削除操作を ExecutionLogs に記録する` — pending
@@ -68,6 +72,9 @@
 
 - `Include X scheduled posts in prune deletion job` — pending
   - 説明: 既存の prune ロジックを拡張して X の予約投稿レコードも対象とする。
+
+- `Extend prune job to also physically delete old PostPool items` — pending
+  - 説明: PostPool テーブル内で保有期間を過ぎたレコードを物理削除する処理を既存の prune ジョブに追加する。未投稿かつ `createdAt` が retention を超えたものを対象とする（詳細は要議論）。
 
 - `Add logging, error handling, and retry logic for X posting` — pending
   - 説明: 失敗はログに出力し、必要に応じて再試行（指数バックオフ）を行う。重複抑止は既存の Threads ロジックを流用。

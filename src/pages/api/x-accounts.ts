@@ -135,6 +135,10 @@ function unmarshallAccountSummary(it: any) {
     autoPostEnabled: it.autoPostEnabled?.BOOL === true,
     authState: it.authState?.S || '',
     hasClientSecret: !!(it.clientSecret && it.clientSecret.S),
+    // classification/type if present
+    type: it.type?.S || 'general',
+    // cumulative failure count (number)
+    failureCount: it.failureCount?.N ? Number(it.failureCount.N) : 0,
   };
 }
 
@@ -151,6 +155,9 @@ function unmarshallAccount(it: any) {
     authState: it.authState?.S || '',
     createdAt: it.createdAt?.N ? Number(it.createdAt.N) : 0,
     updatedAt: it.updatedAt?.N ? Number(it.updatedAt.N) : 0,
+    // include optional fields
+    type: it.type?.S || 'general',
+    failureCount: it.failureCount?.N ? Number(it.failureCount.N) : 0,
   };
 }
 
