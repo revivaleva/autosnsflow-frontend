@@ -24,6 +24,7 @@ export default function AppLayout({ children }) {
   const [isAdmin, setIsAdmin] = useState(false);
   const [userIdDisplay, setUserIdDisplay] = useState(null);
   const [showX, setShowX] = useState(false);
+  const [isDark, setIsDark] = useState(false);
 
   // デバッグDLG（?debugAuth=1）— 既存があればそのまま
   const [authDebugOpen, setAuthDebugOpen] = useState(false);
@@ -90,6 +91,35 @@ export default function AppLayout({ children }) {
     clearInterval(kaInterval);
   }, [pathname]);
 
+  // Initialize theme from localStorage or prefers-color-scheme
+  useEffect(() => {
+    try {
+      if (typeof window === "undefined") return;
+      const stored = localStorage.getItem("theme");
+      if (stored === "dark") {
+        document.documentElement.classList.add("dark");
+        setIsDark(true);
+      } else if (stored === "light") {
+        document.documentElement.classList.remove("dark");
+        setIsDark(false);
+      } else {
+        const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+        if (prefersDark) {
+          document.documentElement.classList.add("dark");
+          setIsDark(true);
+        }
+      }
+    } catch (e) {}
+  }, []);
+
+  const handleToggleTheme = () => {
+    try {
+      const nowDark = document.documentElement.classList.toggle("dark");
+      setIsDark(nowDark);
+      localStorage.setItem("theme", nowDark ? "dark" : "light");
+    } catch (e) {}
+  };
+
   // これがログアウトボタンの onClick で呼ばれる想定
   async function handleLogout() {
     try {
@@ -131,7 +161,16 @@ export default function AppLayout({ children }) {
   return (
     <div className="min-h-screen">
       <nav className="fixed top-0 left-0 w-64 h-screen bg-gray-900 text-white flex flex-col py-6 px-4 overflow-y-auto z-40">
-        <div className="mb-6 text-2xl font-bold">T-Booster</div>
+        <div className="mb-6 flex items-center justify-between">
+          <div className="text-2xl font-bold">T-Booster</div>
+          <button
+            onClick={handleToggleTheme}
+            aria-label="Toggle theme"
+            className="ml-2 p-1 rounded hover:bg-gray-700/50"
+          >
+            {isDark ? "🌙" : "☀️"}
+          </button>
+        </div>
         <ul className="space-y-2">
           {menu.map((item) => (
             <li key={item.href}>
