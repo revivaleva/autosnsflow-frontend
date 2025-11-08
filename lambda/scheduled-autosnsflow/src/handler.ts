@@ -43,6 +43,7 @@ const TBL_REPLIES    = "Replies";
 const TBL_GROUPS     = "AutoPostGroups";
 const TBL_LOGS       = "ExecutionLogs";
 const TBL_USAGE      = "UsageCounters";
+const TBL_POST_POOL  = process.env.TBL_POST_POOL || "PostPool";
 
 // USER_ID removed; use DEFAULT_USER_ID or explicit parameter
 
@@ -83,6 +84,62 @@ const sanitizeItem = (it: any) => {
   }
   return out;
 };
+
+// Claim a pool item for a user and poolType. Returns { poolId, content, images } or null.
+async function claimPoolItem(userId: string, poolType: string) {
+  try {
+    const out = await ddb.send(new QueryCommand({
+      TableName: TBL_POST_POOL,
+      KeyConditionExpression: "PK = :pk AND begins_with(SK, :pfx)",
+      ExpressionAttributeValues: {
+        ":pk": { S: `USER#${userId}` },
+        ":pfx": { S: "POOL#" },
+      },
+      Limit: 200,
+    }));
+    const items = (out as any).Items || [];
+    const candidates = items.filter((it: any) => (getS(it.type) || '') === String(poolType));
+    if (!candidates || candidates.length === 0) return null;
+    // shuffle
+    for (const it of candidates.sort(() => 0.5 - Math.random())) {
+      const poolId = getS(it.poolId) || (getS(it.SK) || "").replace(/^POOL#/, "");
+      if (!poolId) continue;
+      try {
+        await ddb.send(new DeleteItemCommand({
+          TableName: TBL_POST_POOL,
+          Key: { PK: { S: `USER#${userId}` }, SK: { S: `POOL#${poolId}` } },
+          ConditionExpression: "attribute_exists(PK) AND attribute_exists(SK)",
+        }));
+        return {
+          poolId,
+          content: getS(it.content) || "",
+          images: (getS(it.images) ? JSON.parse(getS(it.images)) : []),
+        };
+      } catch (e) {
+        // concurrent claim or delete failed - try next
+        continue;
+      }
+    }
+    return null;
+  } catch (e) {
+    try { await putLog({ userId, type: "post-pool", accountId: "", status: "error", message: "claim_failed", detail: { error: String(e) } }); } catch(_) {}
+    return null;
+  }
+}
+
+// Increment account failure count atomically
+async function incrementAccountFailure(userId: string, accountId: string) {
+  try {
+    await ddb.send(new UpdateItemCommand({
+      TableName: TBL_THREADS_ACCOUNTS,
+      Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } },
+      UpdateExpression: "SET failureCount = if_not_exists(failureCount, :zero) + :inc",
+      ExpressionAttributeValues: { ":zero": { N: "0" }, ":inc": { N: "1" } },
+    }));
+  } catch (e) {
+    try { await putLog({ userId, type: "auto-post", accountId, status: "error", message: "increment_failure_failed", detail: { error: String(e) } }); } catch(_) {}
+  }
+}
 
 // Normalize DynamoDB epoch value to seconds.
 // Handles values stored in seconds or milliseconds.
@@ -688,7 +745,7 @@ async function deleteUnpostedAutoPosts(userId: any, acct: any, groupTypeStr: any
   return deletedCount;
 }
 
-async function createScheduledPost(userId: any, { acct, group, type, whenJst, overrideTheme = "", overrideTimeRange = "", secondStageWanted = undefined }: any) {
+async function createScheduledPost(userId: any, { acct, group, type, whenJst, overrideTheme = "", overrideTimeRange = "", secondStageWanted = undefined, scheduledSource = undefined, poolType = undefined }: any) {
   const themeStr = (overrideTheme || ((type === 1 ? group.theme1 : type === 2 ? group.theme2 : group.theme3) || ""));
   const groupTypeStr = `${group.groupName}-自動投稿${type}`;
   const timeRange = (overrideTimeRange || (type === 1 ? (group.time1 || "05:00-08:00") : type === 2 ? (group.time2 || "12:00-13:00") : (group.time3 || "20:00-23:00")) || "");
@@ -707,6 +764,9 @@ async function createScheduledPost(userId: any, { acct, group, type, whenJst, ov
     autoPostGroupId: { S: groupTypeStr },
     theme: { S: themeStr },
     content: { S: "" },
+    // optional: mark as pool-driven reservation when requested by caller (e.g., pool-based posting)
+    ...(scheduledSource ? { type: { S: String(scheduledSource) } } : {}),
+    ...(poolType ? { poolType: { S: String(poolType) } } : {}),
     // スパースGSI用の属性（候補のみインデックスされるよう、候補時に文字列で accountId を保存）
     needsContentAccount: { S: acct.accountId },
     // nextGenerateAt を明示的に0にして GSI に入るようにする
@@ -1835,8 +1895,8 @@ const randomTimeInRangeJst = (range: any, baseJstDate: any, forNextDay = false) 
   if (!Number.isFinite(sm) || !Number.isFinite(em)) return null;
 
   const baseMs = epochStartOfJstDayMs(baseJstDate.getTime()) + (forNextDay ? MS_PER_DAY : 0);
-  // Latest allowed minute is 6 minutes before range end
-  const latestAllowedMin = em - 6;
+  // Latest allowed minute is 10 minutes before range end (ensure worker running every-5min can pick up)
+  const latestAllowedMin = em - 10;
   const cappedLatestMin = latestAllowedMin < sm ? sm : latestAllowedMin;
   const span = cappedLatestMin - sm;
   const pickedMin = span > 0 ? sm + Math.floor(Math.random() * (span + 1)) : sm;
@@ -2175,7 +2235,14 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
     await putLog({ userId, type: "auto-post", accountId: acct.accountId, status: "skip", message: `スロット未設定のためスキップ (${group.groupName})` });
     return { created: 0, deleted: 0, skipped: true, debug: [{ reason: "no_slots", group: group.groupName }] } as any;
   }
-  const useSlots = slots.slice(0, 10);
+  let useSlots = slots.slice(0, 10);
+  // Override: use fixed windows (JST) for next-day scheduling: morning/noon/eve
+  try {
+    const fixedWindows = ["07:00-09:00", "12:00-14:00", "17:00-21:00"];
+    useSlots = fixedWindows.map((w: any, i: number) => ({ timeRange: w, idx: i + 1 }));
+  } catch (e) {
+    // fallback to original slots if mapping fails
+  }
   
 
   const today = jstNow();
@@ -2196,7 +2263,7 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
-    // 既に明日分があるか？
+    // Check if a reservation for this account/group/slot already exists for tomorrow; skip if so
     const exists = await existsForDate(userId, acct, groupTypeStr, tomorrow);
 
     // 途中経過トレース
@@ -2222,11 +2289,7 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
       continue;
     }
 
-    // 前日分の未投稿自動投稿を物理削除
-    const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
-    const deletedCount = await deleteUnpostedAutoPosts(userId, acct, groupTypeStr, yesterday);
-    deleted += deletedCount;
+    // (no deletion of previous-day unposted reservations in fixed-window mode)
 
     // OpenAI クレジット確保（必要ないなら下の continue を外す）
     try {
@@ -2286,6 +2349,9 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
       overrideTimeRange: String(slot.timeRange || ""),
       // スロット単位の二段階投稿指定を予約データへ伝搬
       secondStageWanted: !!slot.secondStageWanted,
+      // Mark this reservation as pool-driven so posting time will claim from pool
+      scheduledSource: "pool",
+      poolType: (acct && acct.type) ? String(acct.type) : "general",
     });
     // 短期対応: 本文生成は同期で行わず、時間ごとの処理で段階的に生成する
     // generateAndAttachContent はここでは呼ばない
@@ -2466,7 +2532,41 @@ async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settin
   let postedQuote = 0;
   let postedNormal = 0;
   const attemptPostCandidate = async (cand: any) => {
-    const pk = cand.pk; const sk = cand.sk; const text = cand.content || '';
+    const pk = cand.pk; const sk = cand.sk;
+    let text = cand.content || '';
+    // If this reservation is pool-driven and content empty, claim from PostPool (Lambda-side)
+    try {
+      if ((cand.type === 'pool' || String(cand.type || '').toLowerCase() === 'pool') && (!text || String(text).trim() === "")) {
+        const poolType = cand.poolType || 'general';
+        const claimed = await claimPoolItem(userId, poolType);
+        if (!claimed) {
+          await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "pool_claim_failed", detail: { poolType } });
+          // increment account failure count for visibility
+          await incrementAccountFailure(userId, acct.accountId);
+          // mark scheduled-post with attempt/failure
+          try { await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } }, UpdateExpression: "SET postAttempts = if_not_exists(postAttempts, :zero) + :inc, lastPostError = :err, lastPostAttemptAt = :ts", ExpressionAttributeValues: { ":zero": { N: "0" }, ":inc": { N: "1" }, ":err": { S: "pool_claim_failed" }, ":ts": { N: String(nowSec()) } } })); } catch(_) {}
+          return { ok: false };
+        }
+        // Persist claimed content into scheduled-post so retries reuse it
+        try {
+          const updVals: any = { ":c": { S: String(claimed.content || "") }, ":ts": { N: String(nowSec()) } };
+          const updExprParts = ["content = :c", "lastClaimedAt = :ts"];
+          if (claimed.poolId) { updExprParts.push("claimedFromPoolId = :pid"); updVals[":pid"] = { S: String(claimed.poolId) }; }
+          if (claimed.images && Array.isArray(claimed.images)) { updExprParts.push("images = :imgs"); updVals[":imgs"] = { S: JSON.stringify(claimed.images) }; }
+          await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } }, UpdateExpression: `SET ${updExprParts.join(', ')}`, ExpressionAttributeValues: updVals }));
+          text = String(claimed.content || "");
+          await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "info", message: "pool_claim_ok", detail: { poolId: claimed.poolId } });
+        } catch (e) {
+          await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "pool_claim_persist_failed", detail: { error: String(e) } });
+          await incrementAccountFailure(userId, acct.accountId);
+          return { ok: false };
+        }
+      }
+    } catch (e) {
+      await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "pool_claim_exception", detail: { error: String(e) } });
+      await incrementAccountFailure(userId, acct.accountId);
+      return { ok: false };
+    }
     const isQuote = (cand as any).type === 'quote';
     const scheduledAtSec = Number(cand.scheduledAt || 0);
 
@@ -2542,6 +2642,7 @@ async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settin
     } catch (e) {
       try { await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } }, UpdateExpression: "SET postAttempts = if_not_exists(postAttempts, :zero) + :inc, lastPostError = :err, lastPostAttemptAt = :ts", ExpressionAttributeValues: { ":zero": { N: "0" }, ":inc": { N: "1" }, ":err": { S: String((e as any)?.message || String(e)).slice(0,1000) }, ":ts": { N: String(nowSec()) } } })); } catch (_) {}
       await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "投稿失敗", detail: { error: String(e) } });
+      await incrementAccountFailure(userId, acct.accountId);
       await postDiscordLog({ userId, isError: true, content: `**[ERROR auto-post] ${acct.displayName || acct.accountId}**\n${String(e).slice(0,800)}` });
       return { ok: false };
     }
