@@ -130,7 +130,7 @@ export default function AppLayout({ children }) {
 
   return (
     <div className="min-h-screen">
-      <nav className="fixed top-0 left-0 w-56 h-screen bg-gray-900 text-white flex flex-col py-6 px-4 overflow-y-auto z-40">
+      <nav className="fixed top-0 left-0 w-64 h-screen bg-gray-900 text-white flex flex-col py-6 px-4 overflow-y-auto z-40">
         <div className="mb-6 text-2xl font-bold">T-Booster</div>
         <ul className="space-y-2">
           {menu.map((item) => (
@@ -175,22 +175,62 @@ export default function AppLayout({ children }) {
             <>
               <li>
                 <Link
-                  href="/x/accounts"
+                  href="/x/general"
                   className={`block px-3 py-2 rounded hover:bg-gray-700 ${
-                    pathname === "/x/accounts" ? "bg-gray-700 font-semibold" : ""
+                    pathname === "/x/general" ? "bg-gray-700 font-semibold" : ""
                   }`}
                 >
-                  X：アカウント一覧
+                  X：一般アカウント一覧
                 </Link>
               </li>
               <li>
                 <Link
-                  href="/x/scheduled-posts"
+                  href="/x/post-pool/general"
                   className={`block px-3 py-2 rounded hover:bg-gray-700 ${
-                    pathname === "/x/scheduled-posts" ? "bg-gray-700 font-semibold" : ""
+                    pathname === "/x/post-pool/general" ? "bg-gray-700 font-semibold" : ""
                   }`}
                 >
-                  X：予約投稿一覧
+                  X：一般投稿プール
+                </Link>
+              </li>
+              <li>
+                <Link
+                  href="/x/ero"
+                  className={`block px-3 py-2 rounded hover:bg-gray-700 ${
+                    pathname === "/x/ero" ? "bg-gray-700 font-semibold" : ""
+                  }`}
+                >
+                  X: エロアカウント一覧
+                </Link>
+              </li>
+              <li>
+                <Link
+                  href="/x/post-pool/ero"
+                  className={`block px-3 py-2 rounded hover:bg-gray-700 ${
+                    pathname === "/x/post-pool/ero" ? "bg-gray-700 font-semibold" : ""
+                  }`}
+                >
+                  X: エロ投稿プール
+                </Link>
+              </li>
+              <li>
+                <Link
+                  href="/x/saikyou"
+                  className={`block px-3 py-2 rounded hover:bg-gray-700 ${
+                    pathname === "/x/saikyou" ? "bg-gray-700 font-semibold" : ""
+                  }`}
+                >
+                  X: 最強アカウント一覧
+                </Link>
+              </li>
+              <li>
+                <Link
+                  href="/x/post-pool/saikyou"
+                  className={`block px-3 py-2 rounded hover:bg-gray-700 ${
+                    pathname === "/x/post-pool/saikyou" ? "bg-gray-700 font-semibold" : ""
+                  }`}
+                >
+                  X: 最強投稿プール
                 </Link>
               </li>
             </>
@@ -226,7 +266,7 @@ export default function AppLayout({ children }) {
         </div>
       </nav>
 
-      <main className="ml-56 min-h-screen p-8 bg-[var(--background)] text-[var(--foreground)]">{children}</main>
+      <main className="ml-64 min-h-screen p-8 bg-[var(--background)] text-[var(--foreground)]">{children}</main>
 
       {/* デバッグDLG（任意） */}
       {authDebugOpen && (
