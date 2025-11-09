@@ -178,6 +178,124 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
   return { posted: postedCount, debug };
 }
 
+// Consume one PostPool item for this user/account and post it to X.
+export async function postFromPoolForAccount(userId: string, acct: any, opts: { dryRun?: boolean, lockTtlSec?: number } = {}) {
+  const TBL_POOL = process.env.TBL_POST_POOL || 'PostPool';
+  const now = Math.floor(Date.now() / 1000);
+  const lockTtl = Number(opts.lockTtlSec || 600);
+  const accountId = acct.accountId;
+  const poolType = acct.type || 'general';
+  const debug: any = { tried: 0, posted: 0, errors: [] };
+
+  // 1) Query pool items for this user and poolType
+  try {
+    const q = await ddb.send(new QueryCommand({
+      TableName: TBL_POOL,
+      KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
+      ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'POOL#' } },
+      Limit: 50,
+    }));
+    const items: any[] = (q as any).Items || [];
+    // filter by poolType
+    const candidates = items.map(it => ({
+      pk: it.PK,
+      sk: it.SK,
+      poolId: it.poolId?.S || (it.SK?.S || '').replace(/^POOL#/, ''),
+      type: it.type?.S || 'general',
+      content: it.content?.S || '',
+      createdAt: it.createdAt?.N ? Number(it.createdAt.N) : 0,
+    })).filter(x => (x.type || 'general') === poolType);
+
+    if (!candidates.length) {
+      return { posted: 0, debug: { reason: 'no_pool_items' } };
+    }
+
+    // choose oldest (FIFO)
+    candidates.sort((a,b) => (a.createdAt || 0) - (b.createdAt || 0));
+    const cand = candidates[0];
+    debug.tried = 1;
+
+    // 2) Try to acquire lock on the pool item (conditional update)
+    const owner = `worker_${process.pid}_${now}`;
+    const expiresAt = now + lockTtl;
+    try {
+      await ddb.send(new UpdateItemCommand({
+        TableName: TBL_POOL,
+        Key: { PK: { S: String(cand.pk.S) }, SK: { S: String(cand.sk.S) } },
+        UpdateExpression: 'SET postingLockOwner = :owner, postingLockExpiresAt = :exp',
+        ConditionExpression: 'attribute_not_exists(postingLockOwner) OR postingLockExpiresAt < :now',
+        ExpressionAttributeValues: { ':owner': { S: owner }, ':exp': { N: String(expiresAt) }, ':now': { N: String(now) } },
+      }));
+    } catch (e:any) {
+      // failed to acquire lock
+      debug.errors.push({ err: 'lock_failed', detail: String(e) });
+      return { posted: 0, debug };
+    }
+
+    // 3) If dryRun, record and return
+    if (opts.dryRun || (global as any).__TEST_CAPTURE__) {
+      try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'DRYRUN_POST_FROM_POOL', payload: { userId, accountId, poolId: cand.poolId } }); } catch(_) {}
+      // release lock by removing postingLockOwner/ExpiresAt
+      try {
+        await ddb.send(new UpdateItemCommand({
+          TableName: TBL_POOL,
+          Key: { PK: { S: String(cand.pk.S) }, SK: { S: String(cand.sk.S) } },
+          UpdateExpression: 'REMOVE postingLockOwner, postingLockExpiresAt',
+        }));
+      } catch (_) {}
+      return { posted: 0, debug: { dryRun: true, poolId: cand.poolId } };
+    }
+
+    // 4) perform post using acct tokens (try refresh on failure)
+    try {
+      let accessToken = acct.oauthAccessToken || acct.accessToken || '';
+      let resp;
+      try {
+        resp = await postToX({ accessToken, text: cand.content || '' });
+      } catch (postErr:any) {
+        // try refresh
+        const newToken = await refreshXAccountToken(userId, accountId);
+        if (newToken) {
+          accessToken = newToken;
+          resp = await postToX({ accessToken, text: cand.content || '' });
+        } else {
+          throw postErr;
+        }
+      }
+      const postId = (resp && resp.data && (resp.data.id || resp.data.id_str)) || '';
+      if (!postId) throw new Error('no_post_id');
+
+      // 5) delete pool item
+      try {
+        await ddb.send(new DeleteItemCommand({ TableName: TBL_POOL, Key: { PK: { S: String(cand.pk.S) }, SK: { S: String(cand.sk.S) } } }));
+      } catch (e:any) {
+        // log but continue
+        try { console.warn('[post-from-pool] delete pool item failed', String(e)); } catch(_) {}
+      }
+
+      // 6) write ExecutionLogs / Discord notification (reuse postDiscordMaster if available globally)
+      try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'POST_FROM_POOL_RESULT', payload: { userId, accountId, poolId: cand.poolId, postId } }); } catch(_) {}
+      try { await postDiscordMaster(`**[X POST FROM POOL]** user=${userId} account=${accountId} poolId=${cand.poolId} postId=${postId}\n${String(cand.content || '').slice(0,200)}`); } catch(_) {}
+
+      debug.posted = 1;
+      return { posted: 1, debug, postId };
+    } catch (e:any) {
+      debug.errors.push({ err: String(e) });
+      // release lock
+      try {
+        await ddb.send(new UpdateItemCommand({
+          TableName: TBL_POOL,
+          Key: { PK: { S: String(cand.pk.S) }, SK: { S: String(cand.sk.S) } },
+          UpdateExpression: 'REMOVE postingLockOwner, postingLockExpiresAt',
+        }));
+      } catch (_) {}
+      return { posted: 0, debug };
+    }
+  } catch (e:any) {
+    return { posted: 0, debug: { err: String(e) } };
+  }
+}
+
 // Refresh a single X account token using stored refresh_token and client credentials
 async function refreshXAccountToken(userId: string, accountId: string) {
   const TBL_X = process.env.TBL_X_ACCOUNTS || 'XAccounts';

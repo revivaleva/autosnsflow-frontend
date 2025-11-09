@@ -3219,23 +3219,31 @@ async function runFiveMinJobForUser(userId: any) {
                 if (safeXacct.oauthRefreshToken) safeXacct.oauthRefreshToken = '[REDACTED]';
               try { console.info('[x-run] invoking runAutoPostForXAccount', { userId, accountId: xacct.accountId }); } catch(_) {}
               } catch (_) {}
-              // runAutoPostForXAccount は別モジュール
+              // X posting logic: prefer pool-based posting (postFromPoolForAccount) implemented in post-to-x
               const xmod = await import('./post-to-x');
-              if (typeof xmod.runAutoPostForXAccount === 'function') {
-                try {
+              try {
+                const dryRun = Boolean((global as any).__TEST_CAPTURE__);
+                if (typeof xmod.postFromPoolForAccount === 'function') {
+                  const xr = await xmod.postFromPoolForAccount(userId, xacct, { dryRun, lockTtlSec: 600 });
+                  try { console.info('[x-run] postFromPoolForAccount result', { userId, accountId: xacct.accountId, result: xr }); } catch(_) {}
+                  (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+                  (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_POOL_POST_RESULT', payload: { accountId: xacct.accountId, result: xr } });
+                  if (xr && typeof xr.posted === 'number') {
+                    totalX += Number(xr.posted || 0);
+                    if (Number(xr.posted || 0) > 0) processedXAccounts.add(xacct.accountId);
+                  }
+                } else if (typeof xmod.runAutoPostForXAccount === 'function') {
+                  // fallback to existing function
                   const xr = await xmod.runAutoPostForXAccount(xacct, userId);
-                  try { console.info('[x-run] result', { userId, accountId: xacct.accountId, result: xr }); } catch(_) {}
+                  try { console.info('[x-run] runAutoPostForXAccount result', { userId, accountId: xacct.accountId, result: xr }); } catch(_) {}
                   (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
                   (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_AUTO_POST_RESULT', payload: { accountId: xacct.accountId, result: xr } });
                   if (xr && typeof xr.posted === 'number') {
                     totalX += Number(xr.posted || 0);
-                    if (Number(xr.posted || 0) > 0) {
-                      // mark as processed to prevent further posts for this X account in the same run
-                      processedXAccounts.add(xacct.accountId);
-                    }
+                    if (Number(xr.posted || 0) > 0) processedXAccounts.add(xacct.accountId);
                   }
-                } catch (e) { console.warn('[warn] runAutoPostForXAccount failed', e); }
-              }
+                }
+              } catch (e) { console.warn('[warn] post-to-x import or run failed', e); }
             } catch (e) { console.warn('[warn] post-to-x import or run failed', e); }
           }
         } catch (e) { console.warn('[warn] getXAccounts failed', e); }
