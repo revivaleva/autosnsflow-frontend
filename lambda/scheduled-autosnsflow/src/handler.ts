@@ -2479,24 +2479,27 @@ async function ensureNextDayAutoPostsForX(userId: any, xacct: any) {
           updatedAt: { N: now },
         };
 
-        // Dedup marker key for same account + yyyymmdd + timeRange
-        const dedupSk = `DEDUP#${xacct.accountId}#${tomorrowYmd}#${w}`;
-        const markerItem = { PK: { S: `USER#${userId}` }, SK: { S: dedupSk }, createdAt: { N: now } };
+        // Build deterministic SK for dedup: include accountId + yyyymmdd + normalized timeRange
+        const timeRangeNorm = String(w).replace(/[^0-9A-Za-z]/g, '_');
+        const skId = `SCHEDULEDPOST#${xacct.accountId}#${tomorrowYmd}#${timeRangeNorm}`;
+        item.SK = { S: skId };
+        // record scheduled date as YMD for visibility
+        (item as any).scheduledDateYmd = { S: tomorrowYmd };
 
         try {
-          await ddb.send(new TransactWriteItemsCommand({
-            TransactItems: [
-              { Put: { TableName: process.env.TBL_X_SCHEDULED || 'XScheduledPosts', Item: markerItem, ConditionExpression: 'attribute_not_exists(SK)' } },
-              { Put: { TableName: process.env.TBL_X_SCHEDULED || 'XScheduledPosts', Item: sanitizeItem(item) } }
-            ]
+          // Conditional Put: only succeed if item does not already exist at this PK+SK
+          await ddb.send(new PutItemCommand({
+            TableName: process.env.TBL_X_SCHEDULED || 'XScheduledPosts',
+            Item: sanitizeItem(item),
+            ConditionExpression: 'attribute_not_exists(PK)'
           }));
           created++;
-          await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "ok", message: "x reservation created", detail: { scheduledPostId: id, whenJst: when.toISOString(), poolType: xacct.type || 'general' } });
+          await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "ok", message: "x reservation created", detail: { scheduledPostId: id, whenJst: when.toISOString(), poolType: xacct.type || 'general', sk: skId } });
         } catch (e) {
           const msg = String((e as any)?.name || (e as any)?.message || e);
-          if (msg.includes('TransactionCanceled') || msg.includes('ConditionalCheckFailed')) {
-            // dedup marker existed -> skip
-            await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "skip", message: "duplicate reservation prevented by dedup marker", detail: { dedupSk } });
+          if (msg.includes('ConditionalCheckFailed') || msg.includes('TransactionCanceled')) {
+            // Item already exists -> skip
+            await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "skip", message: "duplicate reservation prevented by conditional put", detail: { sk: skId } });
           } else {
             await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "error", message: "x reservation create failed", detail: { error: String(e) } });
           }
