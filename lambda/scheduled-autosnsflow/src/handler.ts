@@ -2478,9 +2478,29 @@ async function ensureNextDayAutoPostsForX(userId: any, xacct: any) {
           createdAt: { N: now },
           updatedAt: { N: now },
         };
-        await ddb.send(new PutItemCommand({ TableName: process.env.TBL_X_SCHEDULED || 'XScheduledPosts', Item: sanitizeItem(item) }));
-        created++;
-        await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "ok", message: "x reservation created", detail: { scheduledPostId: id, whenJst: when.toISOString(), poolType: xacct.type || 'general' } });
+
+        // Dedup marker key for same account + yyyymmdd + timeRange
+        const dedupSk = `DEDUP#${xacct.accountId}#${tomorrowYmd}#${w}`;
+        const markerItem = { PK: { S: `USER#${userId}` }, SK: { S: dedupSk }, createdAt: { N: now } };
+
+        try {
+          await ddb.send(new TransactWriteItemsCommand({
+            TransactItems: [
+              { Put: { TableName: process.env.TBL_X_SCHEDULED || 'XScheduledPosts', Item: markerItem, ConditionExpression: 'attribute_not_exists(SK)' } },
+              { Put: { TableName: process.env.TBL_X_SCHEDULED || 'XScheduledPosts', Item: sanitizeItem(item) } }
+            ]
+          }));
+          created++;
+          await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "ok", message: "x reservation created", detail: { scheduledPostId: id, whenJst: when.toISOString(), poolType: xacct.type || 'general' } });
+        } catch (e) {
+          const msg = String((e as any)?.name || (e as any)?.message || e);
+          if (msg.includes('TransactionCanceled') || msg.includes('ConditionalCheckFailed')) {
+            // dedup marker existed -> skip
+            await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "skip", message: "duplicate reservation prevented by dedup marker", detail: { dedupSk } });
+          } else {
+            await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "error", message: "x reservation create failed", detail: { error: String(e) } });
+          }
+        }
       } catch (e) {
         await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "error", message: "x reservation create failed", detail: { error: String(e) } });
       }
