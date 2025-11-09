@@ -2454,6 +2454,8 @@ async function ensureNextDayAutoPostsForX(userId: any, xacct: any) {
         await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "error", message: "既存予約チェック失敗", detail: { error: String(e) } });
       }
 
+      // Debug: about to evaluate creating reservation (check dry-run flag)
+      try { console.info('[x-hourly] pre-create check', { userId, accountId: xacct.accountId, window: w, TEST_CAPTURE: Boolean((global as any).__TEST_CAPTURE__) }); } catch(_) {}
       // Test capture/dry-run
       if ((global as any).__TEST_CAPTURE__) {
         try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'HOURLY_X_POOL_RESERVATION', payload: { userId, accountId: xacct.accountId, whenJst: when.toISOString(), poolType: xacct.type || 'general' } }); } catch(_) {}
