@@ -9,7 +9,9 @@ type Props = {
   reload?: () => void;
 };
 
-export default function XAccountModal({ open, onClose, mode = "create", account, reload }: Props) {
+type PropsExt = Props & { defaultType?: 'general' | 'ero' | 'saikyou' };
+
+export default function XAccountModal({ open, onClose, mode = "create", account, reload, defaultType }: PropsExt) {
   const [displayName, setDisplayName] = useState("");
   const [accountId, setAccountId] = useState("");
   const [clientId, setClientId] = useState("");
@@ -19,6 +21,7 @@ export default function XAccountModal({ open, onClose, mode = "create", account,
   const [oauthAccessTokenLocal, setOauthAccessTokenLocal] = useState<string>('');
   const [checkingAuth, setCheckingAuth] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [accountType, setAccountType] = useState<'general' | 'ero' | 'saikyou'>('general');
 
   useEffect(() => {
     if (!open) return;
@@ -51,8 +54,11 @@ export default function XAccountModal({ open, onClose, mode = "create", account,
       setMasked(!!account.hasClientSecret);
       setClientSecret("");
       setAuthState(account.authState || account.status || "");
+      setAccountType((account.type as any) || 'general');
     } else {
       setDisplayName(""); setAccountId(""); setClientId(""); setClientSecret(""); setMasked(false); setAuthState("");
+      // when creating, default type is provided by parent (e.g., list context)
+      setAccountType((defaultType as any) || 'general');
     }
   }, [open, mode, account]);
 
@@ -63,7 +69,7 @@ export default function XAccountModal({ open, onClose, mode = "create", account,
     setSaving(true);
     try {
       const method = mode === "create" ? "POST" : "PUT";
-      const body: any = { accountId, username: displayName, clientId };
+      const body: any = { accountId, username: displayName, clientId, type: accountType };
       if (!masked && clientSecret) body.clientSecret = clientSecret;
       const res = await fetch('/api/x-accounts', { method, credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       if (!res.ok) throw new Error(await res.text());
@@ -108,21 +114,31 @@ export default function XAccountModal({ open, onClose, mode = "create", account,
     <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-40 z-50">
       <div className="bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 p-6 rounded w-[640px]">
         <h3 className="text-lg font-bold mb-4">{mode === 'edit' ? 'アカウント編集 (X)' : 'X アカウント追加'}</h3>
-        <form onSubmit={handleSave}>
+        <form onSubmit={handleSave} autoComplete="off">
+          {/* hidden fields to reduce browser autofill */}
+          <input type="text" name="prevent_autofill_username" autoComplete="username" className="hidden" />
+          <input type="password" name="prevent_autofill_password" autoComplete="new-password" className="hidden" />
           <label className="block">アカウント名</label>
-          <input className="mb-2 border rounded px-2 py-1 w-full" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+          <input name="displayName" autoComplete="off" className="mb-2 border rounded px-2 py-1 w-full" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
           <label className="block">ID</label>
-          <input className="mb-2 border rounded px-2 py-1 w-full" value={accountId} onChange={(e) => setAccountId(e.target.value)} />
+          <input
+            name="accountId"
+            autoComplete="off"
+            className="mb-2 border rounded px-2 py-1 w-full"
+            value={accountId}
+            onChange={(e) => setAccountId(e.target.value)}
+            disabled={mode === 'edit'}
+          />
           <label className="block">clientId</label>
-          <input className="mb-2 border rounded px-2 py-1 w-full" value={clientId} onChange={(e) => setClientId(e.target.value)} />
+          <input name="clientId" autoComplete="off" className="mb-2 border rounded px-2 py-1 w-full" value={clientId} onChange={(e) => setClientId(e.target.value)} />
           <label className="block">clientSecret</label>
           {masked ? (
             <div className="flex gap-2 items-center mb-2">
-              <input readOnly value={'********'} className="flex-1 border rounded px-2 py-1 bg-gray-50 dark:bg-gray-800 dark:text-gray-100" />
+              <input readOnly name="clientSecretMasked" autoComplete="new-password" value={'********'} className="flex-1 border rounded px-2 py-1 bg-gray-50 dark:bg-gray-800 dark:text-gray-100" />
               <button type="button" className="px-2 py-1 border rounded bg-gray-100 dark:bg-gray-800 dark:text-gray-100" onClick={() => { setMasked(false); setClientSecret(''); }}>変更</button>
             </div>
           ) : (
-            <input type="password" className="mb-2 border rounded px-2 py-1 w-full bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100" value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} />
+            <input type="password" name="clientSecret" autoComplete="new-password" className="mb-2 border rounded px-2 py-1 w-full bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100" value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} />
           )}
 
           <div className="flex items-center gap-2 mb-4">

@@ -99,7 +99,7 @@ export default function XAccountsTable({ onlyType }: { onlyType?: string } = {})
         </table>
       )}
 
-      <XAccountModal open={modalOpen} onClose={() => { setModalOpen(false); load(); }} mode={modalMode} account={selected} reload={load} />
+      <XAccountModal open={modalOpen} onClose={() => { setModalOpen(false); load(); }} mode={modalMode} account={selected} reload={load} defaultType={onlyType as any} />
     </div>
   );
 }
