@@ -2389,6 +2389,102 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
   return { created, deleted, skipped: false, debug };
 }
 
+// === X 用: 翌日分の空予約作成（pool-driven） ===
+async function ensureNextDayAutoPostsForX(userId: any, xacct: any) {
+  // Guard: X アカウントの自動投稿が有効かつアクティブであること
+  try {
+    if (!xacct || xacct.autoPostEnabled !== true) {
+      try { await putLog({ userId, type: "auto-post-x", accountId: xacct && xacct.accountId, status: "skip", message: `autoPostEnabled=${!!(xacct && xacct.autoPostEnabled)} のためスキップ` }); } catch(_) {}
+      return { created: 0, skipped: true };
+    }
+    if (xacct.status && xacct.status !== "active") {
+      try { await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "skip", message: `status=${xacct.status} のためスキップ` }); } catch(_) {}
+      return { created: 0, skipped: true };
+    }
+  } catch (e) {
+    console.warn('[warn] ensureNextDayAutoPostsForX guard failed:', String(e));
+    return { created: 0, skipped: true };
+  }
+
+  const fixedWindows = ["07:00-09:00", "12:00-14:00", "17:00-21:00"];
+  const today = jstNow();
+  let created = 0;
+
+  for (const w of fixedWindows) {
+    try {
+      const when = randomTimeInRangeJst(w, today, true); // next day
+      if (!when) {
+        await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "skip", message: `invalid window ${w}` });
+        continue;
+      }
+      // Check existing XScheduledPosts for same account/timeRange tomorrow
+      try {
+        const startEpoch = Math.floor(when.getTime() / 1000);
+        // Query by PK and filter by accountId + timeRange approximate
+        const q = await ddb.send(new QueryCommand({
+          TableName: process.env.TBL_X_SCHEDULED || 'XScheduledPosts',
+          KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
+          ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'SCHEDULEDPOST#' } },
+          ProjectionExpression: 'scheduledAt, accountId, timeRange'
+        }));
+        const items = (q as any).Items || [];
+        let exists = false;
+        for (const it of items) {
+          try {
+            const sat = Number(it.scheduledAt?.N || 0);
+            const aid = it.accountId?.S || '';
+            if (aid === xacct.accountId && Math.abs(sat - startEpoch) < 60 * 60) { exists = true; break; }
+          } catch (_) {}
+        }
+        if (exists) {
+          await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "skip", message: `既存予約あり ${w}` });
+          continue;
+        }
+      } catch (e) {
+        await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "error", message: "既存予約チェック失敗", detail: { error: String(e) } });
+      }
+
+      // Test capture/dry-run
+      if ((global as any).__TEST_CAPTURE__) {
+        try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'HOURLY_X_POOL_RESERVATION', payload: { userId, accountId: xacct.accountId, whenJst: when.toISOString(), poolType: xacct.type || 'general' } }); } catch(_) {}
+        continue;
+      }
+
+      // Create XScheduledPosts item
+      try {
+        const id = `xsp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
+        const now = `${Math.floor(Date.now() / 1000)}`;
+        const scheduledAt = Math.floor(when.getTime() / 1000);
+        const item: any = {
+          PK: { S: `USER#${userId}` },
+          SK: { S: `SCHEDULEDPOST#${id}` },
+          scheduledPostId: { S: id },
+          accountId: { S: xacct.accountId },
+          accountName: { S: xacct.username || xacct.accountId || '' },
+          content: { S: '' },
+          scheduledAt: { N: String(scheduledAt) },
+          postedAt: { N: '0' },
+          status: { S: 'scheduled' },
+          timeRange: { S: w },
+          scheduledSource: { S: 'pool' },
+          poolType: { S: xacct.type || 'general' },
+          createdAt: { N: now },
+          updatedAt: { N: now },
+        };
+        await ddb.send(new PutItemCommand({ TableName: process.env.TBL_X_SCHEDULED || 'XScheduledPosts', Item: sanitizeItem(item) }));
+        created++;
+        await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "ok", message: "x reservation created", detail: { scheduledPostId: id, whenJst: when.toISOString(), poolType: xacct.type || 'general' } });
+      } catch (e) {
+        await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "error", message: "x reservation create failed", detail: { error: String(e) } });
+      }
+    } catch (e) {
+      console.warn('[warn] ensureNextDayAutoPostsForX inner failed:', String(e));
+    }
+  }
+
+  return { created, skipped: false };
+}
+
 /// ========== プラットフォーム直接API（Threads） ======
 // ====== GAS の実装に合わせた Threads 投稿 ======
 async function postToThreads({ accessToken, oauthAccessToken, text, userIdOnPlatform, inReplyTo = undefined }: any) {
@@ -2971,22 +3067,45 @@ async function runHourlyJobForUser(userId: any) {
     createdCount += c.created || 0;
     if (c.skipped) skippedAccounts++;
 
-      // Hourly: create empty reservation from pool (empty content). Do not fetch/set content here.
+      // Hourly: create a single empty reservation from pool only if slot-based creation did not create any.
       try {
-        const whenJst = new Date(Date.now() + 24 * 3600 * 1000); // next day
-        if ((global as any).__TEST_CAPTURE__) {
-          try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'HOURLY_POOL_CREATE_DRYRUN', payload: { userId: normalizedUserId, accountId: acct.accountId, whenJst: whenJst.toISOString(), poolType: acct.type || 'general' } }); } catch(_) {}
-        } else {
-          try {
-            await createScheduledPost(normalizedUserId, { acct, group: 'pool', type: 'pool', whenJst, scheduledSource: 'pool', poolType: acct.type || 'general' });
-            createdCount++;
-          } catch (e) {
-            console.warn('[warn] createScheduledPost (hourly pool) failed:', e);
+        if (!((c && Number(c.created || 0) > 0))) {
+          const whenJst = new Date(Date.now() + 24 * 3600 * 1000); // next day
+          if ((global as any).__TEST_CAPTURE__) {
+            try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'HOURLY_POOL_CREATE_DRYRUN', payload: { userId: normalizedUserId, accountId: acct.accountId, whenJst: whenJst.toISOString(), poolType: acct.type || 'general' } }); } catch(_) {}
+          } else {
+            try {
+              await createScheduledPost(normalizedUserId, { acct, group: 'pool', type: 'pool', whenJst, scheduledSource: 'pool', poolType: acct.type || 'general' });
+              createdCount++;
+            } catch (e) {
+              console.warn('[warn] createScheduledPost (hourly pool) failed:', e);
+            }
           }
+        } else {
+          try { console.info('[info] hourly slot-based reservations exist, skipping fallback pool create', { userId: normalizedUserId, accountId: acct.accountId, created: c.created || 0 }); } catch(_) {}
         }
       } catch (e) {
         console.warn('[warn] hourly pool reservation creation failed:', e);
       }
+
+  // Hourly: also create empty reservations for X accounts (pool-driven)
+  try {
+    const xAccounts = await getXAccounts(normalizedUserId);
+    for (const xacct of xAccounts) {
+      try {
+        const xc = await ensureNextDayAutoPostsForX(normalizedUserId, xacct);
+        createdCount += xc.created || 0;
+        if (xc.skipped) skippedAccounts++;
+        try { console.info('[x-hourly] ensureNextDayAutoPostsForX', { userId: normalizedUserId, accountId: xacct.accountId, result: xc }); } catch(_) {}
+        (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+        (global as any).__TEST_OUTPUT__.push({ tag: 'HOURLY_X_POOL_RESERVATION', payload: { accountId: xacct.accountId, result: xc } });
+      } catch (e) {
+        console.warn('[warn] hourly X pool reservation failed for acct', String(xacct && xacct.accountId), String(e));
+      }
+    }
+  } catch (e) {
+    console.warn('[warn] hourly X pool reservation failed', String(e));
+  }
 
     try {
       if (!DISABLE_QUOTE_PROCESSING) {
