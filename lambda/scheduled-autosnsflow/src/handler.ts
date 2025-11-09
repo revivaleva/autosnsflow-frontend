@@ -2417,26 +2417,28 @@ async function ensureNextDayAutoPostsForX(userId: any, xacct: any) {
         await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "skip", message: `invalid window ${w}` });
         continue;
       }
-      // Check existing XScheduledPosts for same account/timeRange tomorrow
+      // Check existing XScheduledPosts for same account/timeRange on the same next-day date
       try {
-        const startEpoch = Math.floor(when.getTime() / 1000);
-        // Query by PK and filter by accountId + timeRange approximate
+        const dayStartMs = epochStartOfJstDayMs(today.getTime()) + MS_PER_DAY; // start of next day in ms
+        const dayStartSec = Math.floor(dayStartMs / 1000);
+        const dayEndSec = dayStartSec + 24 * 3600 - 1;
         const q = await ddb.send(new QueryCommand({
           TableName: process.env.TBL_X_SCHEDULED || 'XScheduledPosts',
           KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
-          ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'SCHEDULEDPOST#' } },
-          ProjectionExpression: 'scheduledAt, accountId, timeRange'
+          FilterExpression: 'accountId = :acc AND timeRange = :tr AND scheduledAt BETWEEN :s AND :e',
+          ExpressionAttributeValues: {
+            ':pk': { S: `USER#${userId}` },
+            ':pfx': { S: 'SCHEDULEDPOST#' },
+            ':acc': { S: xacct.accountId },
+            ':tr': { S: String(w) },
+            ':s': { N: String(dayStartSec) },
+            ':e': { N: String(dayEndSec) }
+          },
+          ProjectionExpression: 'scheduledAt, accountId, timeRange',
+          Limit: 1
         }));
-        const items = (q as any).Items || [];
-        let exists = false;
-        for (const it of items) {
-          try {
-            const sat = Number(it.scheduledAt?.N || 0);
-            const aid = it.accountId?.S || '';
-            if (aid === xacct.accountId && Math.abs(sat - startEpoch) < 60 * 60) { exists = true; break; }
-          } catch (_) {}
-        }
-        if (exists) {
+        const found = ((q as any).Items || []).length > 0;
+        if (found) {
           await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "skip", message: `既存予約あり ${w}` });
           continue;
         }
