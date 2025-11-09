@@ -3112,6 +3112,24 @@ async function runHourlyJobForUser(userId: any) {
   const now = new Date().toISOString();
   // minor debug: totals logged at info level only
   try { console.info('[info] hourly totals', { createdCount, fetchedReplies, replyDrafts, skippedAccounts }); } catch (e) { console.error('[error] hourly totals logging failed:', String(e)); }
+  // Hourly: also create empty reservations for X accounts (pool-driven)
+  try {
+    const xAccounts = await getXAccounts(normalizedUserId);
+    for (const xacct of xAccounts) {
+      try {
+        const xc = await ensureNextDayAutoPostsForX(normalizedUserId, xacct);
+        createdCount += xc.created || 0;
+        if (xc.skipped) skippedAccounts++;
+        try { console.info('[x-hourly] ensureNextDayAutoPostsForX', { userId: normalizedUserId, accountId: xacct.accountId, result: xc }); } catch(_) {}
+        (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+        (global as any).__TEST_OUTPUT__.push({ tag: 'HOURLY_X_POOL_RESERVATION', payload: { accountId: xacct.accountId, result: xc } });
+      } catch (e) {
+        console.warn('[warn] hourly X pool reservation failed for acct', String(xacct && xacct.accountId), String(e));
+      }
+    }
+  } catch (e) {
+    console.warn('[warn] hourly X pool reservation failed', String(e));
+  }
   // `metrics` が空（= 実行なし）の場合は簡略化して 'hourly：実行なし' のみ送る
   const metrics = formatNonZeroLine([
     { label: "予約投稿作成", value: createdCount, suffix: " 件" },
@@ -3124,24 +3142,7 @@ async function runHourlyJobForUser(userId: any) {
   return { userId, createdCount, fetchedReplies, replyDrafts, skippedAccounts, checkedShortcodes };
 }
 
-// Hourly: also create empty reservations for X accounts (pool-driven)
-try {
-  const xAccounts = await getXAccounts(normalizedUserId);
-  for (const xacct of xAccounts) {
-    try {
-      const xc = await ensureNextDayAutoPostsForX(normalizedUserId, xacct);
-      createdCount += xc.created || 0;
-      if (xc.skipped) skippedAccounts++;
-      try { console.info('[x-hourly] ensureNextDayAutoPostsForX', { userId: normalizedUserId, accountId: xacct.accountId, result: xc }); } catch(_) {}
-      (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
-      (global as any).__TEST_OUTPUT__.push({ tag: 'HOURLY_X_POOL_RESERVATION', payload: { accountId: xacct.accountId, result: xc } });
-    } catch (e) {
-      console.warn('[warn] hourly X pool reservation failed for acct', String(xacct && xacct.accountId), String(e));
-    }
-  }
-} catch (e) {
-  console.warn('[warn] hourly X pool reservation failed', String(e));
-}
+// (removed top-level X hourly loop - now executed inside runHourlyJobForUser)
 
 // === 予約レコードの本文生成をアカウント単位で段階的に処理する（短期対応） ===
 async function processPendingGenerationsForAccount(userId: any, acct: any, limit = 1) {
