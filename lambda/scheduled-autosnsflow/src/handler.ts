@@ -2420,6 +2420,10 @@ async function ensureNextDayAutoPostsForX(userId: any, xacct: any) {
         continue;
       }
         try { console.info('[x-hourly] when computed', { userId, accountId: xacct.accountId, window: w, whenJst: when.toISOString() }); } catch(_) {}
+        // compute tomorrow's YMD in JST (move out of inner try so it's in scope for dedupe)
+        const tomorrowDate = new Date(today);
+        tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+        const tomorrowYmd = yyyymmddJst(tomorrowDate);
       // Check existing XScheduledPosts for same account and identical timeRange on the same next-day date
       try {
         const q = await ddb.send(new QueryCommand({
@@ -2430,10 +2434,6 @@ async function ensureNextDayAutoPostsForX(userId: any, xacct: any) {
         }));
         const items = (q as any).Items || [];
         try { console.info('[x-hourly] existing XScheduledPosts fetched', { userId, accountId: xacct.accountId, count: (items || []).length }); } catch(_) {}
-        // compute tomorrow's YMD in JST
-        const tomorrowDate = new Date(today);
-        tomorrowDate.setDate(tomorrowDate.getDate() + 1);
-        const tomorrowYmd = yyyymmddJst(tomorrowDate);
         let exists = false;
         for (const it of items) {
           try {
