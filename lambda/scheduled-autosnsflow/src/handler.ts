@@ -3067,18 +3067,22 @@ async function runHourlyJobForUser(userId: any) {
     createdCount += c.created || 0;
     if (c.skipped) skippedAccounts++;
 
-      // Hourly: create empty reservation from pool (empty content). Do not fetch/set content here.
+      // Hourly: create a single empty reservation from pool only if slot-based creation did not create any.
       try {
-        const whenJst = new Date(Date.now() + 24 * 3600 * 1000); // next day
-        if ((global as any).__TEST_CAPTURE__) {
-          try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'HOURLY_POOL_CREATE_DRYRUN', payload: { userId: normalizedUserId, accountId: acct.accountId, whenJst: whenJst.toISOString(), poolType: acct.type || 'general' } }); } catch(_) {}
-        } else {
-          try {
-            await createScheduledPost(normalizedUserId, { acct, group: 'pool', type: 'pool', whenJst, scheduledSource: 'pool', poolType: acct.type || 'general' });
-            createdCount++;
-          } catch (e) {
-            console.warn('[warn] createScheduledPost (hourly pool) failed:', e);
+        if (!((c && Number(c.created || 0) > 0))) {
+          const whenJst = new Date(Date.now() + 24 * 3600 * 1000); // next day
+          if ((global as any).__TEST_CAPTURE__) {
+            try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'HOURLY_POOL_CREATE_DRYRUN', payload: { userId: normalizedUserId, accountId: acct.accountId, whenJst: whenJst.toISOString(), poolType: acct.type || 'general' } }); } catch(_) {}
+          } else {
+            try {
+              await createScheduledPost(normalizedUserId, { acct, group: 'pool', type: 'pool', whenJst, scheduledSource: 'pool', poolType: acct.type || 'general' });
+              createdCount++;
+            } catch (e) {
+              console.warn('[warn] createScheduledPost (hourly pool) failed:', e);
+            }
           }
+        } else {
+          try { console.info('[info] hourly slot-based reservations exist, skipping fallback pool create', { userId: normalizedUserId, accountId: acct.accountId, created: c.created || 0 }); } catch(_) {}
         }
       } catch (e) {
         console.warn('[warn] hourly pool reservation creation failed:', e);
