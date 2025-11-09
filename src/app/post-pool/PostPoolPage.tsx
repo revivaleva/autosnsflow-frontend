@@ -23,6 +23,11 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
   const [openPool, setOpenPool] = useState<boolean>(false);
   const [openScheduled, setOpenScheduled] = useState<boolean>(false);
   const [scheduledPostsX, setScheduledPostsX] = useState<any[]>([]);
+  const [xAccountsList, setXAccountsList] = useState<any[]>([]);
+  const [filterStatus, setFilterStatus] = useState<string>(''); // '' | 'scheduled' | 'posted'
+  const [filterAccount, setFilterAccount] = useState<string>('');
+  const [sortKey, setSortKey] = useState<'scheduledAt' | 'postedAt'>('scheduledAt');
+  const [sortAsc, setSortAsc] = useState<boolean>(false); // newest first by default
 
   useEffect(() => { loadPool(); loadAccountsCount(); }, [poolType]);
   useEffect(() => {
@@ -48,8 +53,11 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
       // ensure accountName present
       const postsWithNames = posts.map((p: any) => {
         const acc = xaccounts.find(a => a.accountId === p.accountId);
-        return { ...p, accountName: acc ? (acc.displayName || acc.username || acc.accountName || '') : (p.accountName || '') };
+        return { ...p, accountName: acc ? (acc.displayName || acc.username || acc.accountName || '') : (p.accountName || ''), accountObj: acc || null };
       });
+      // only include accounts matching current poolType in account filter
+      const filteredAccounts = xaccounts.filter((a: any) => (a.type || 'general') === poolType);
+      setXAccountsList(filteredAccounts);
       setScheduledPostsX(postsWithNames);
     } catch (e) {
       setScheduledPostsX([]);
@@ -62,7 +70,10 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
       const res = await fetch(`/api/post-pool?type=${encodeURIComponent(poolType)}`, { credentials: "include" });
       if (!res.ok) throw new Error("failed");
       const j = await res.json();
-      setItems(j.items || []);
+      // sort by createdAt desc (newest first)
+      const iv = j.items || [];
+      iv.sort((a: any, b: any) => (Number(b.createdAt || 0) - Number(a.createdAt || 0)));
+      setItems(iv);
     } catch (e) {
       setItems([]);
     } finally { setLoading(false); }
@@ -230,8 +241,29 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
         <h2 className="text-lg font-semibold mb-2 cursor-pointer" onClick={() => { setOpenScheduled((s) => !s); if (!openScheduled) loadScheduledX(); }}>予約投稿一覧 {openScheduled ? "▲" : "▼"}</h2>
         {openScheduled && (
           <div>
-            <div className="mb-4 flex justify-end gap-2">
-              <button className="bg-blue-500 dark:bg-blue-600 text-white rounded px-3 py-1 text-sm" onClick={loadScheduledX}>再読み込み</button>
+            <div className="mb-4 flex justify-between gap-2 items-center">
+              <div className="flex items-center gap-3">
+                <label className="text-sm">状態:</label>
+                <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="border rounded px-2 py-1">
+                  <option value="">すべて</option>
+                  <option value="scheduled">未投稿</option>
+                  <option value="posted">投稿済</option>
+                </select>
+                <label className="text-sm">アカウント:</label>
+                <select value={filterAccount} onChange={e => setFilterAccount(e.target.value)} className="border rounded px-2 py-1">
+                  <option value="">すべて</option>
+                  {xAccountsList.map((a:any) => <option key={a.accountId} value={a.accountId}>{a.displayName || a.username || a.accountId}</option>)}
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-sm">ソート:</label>
+                <select value={sortKey} onChange={e => setSortKey(e.target.value as any)} className="border rounded px-2 py-1">
+                  <option value="scheduledAt">予約日時</option>
+                  <option value="postedAt">投稿日時</option>
+                </select>
+                <button className="px-2 py-1 border rounded" onClick={() => setSortAsc(s => !s)}>{sortAsc ? '昇順' : '降順'}</button>
+                <button className="bg-blue-500 dark:bg-blue-600 text-white rounded px-3 py-1 text-sm" onClick={loadScheduledX}>再読み込み</button>
+              </div>
             </div>
             <div className="overflow-x-auto">
               <table className="min-w-full bg-white dark:bg-transparent border border-gray-200 dark:border-gray-700">
@@ -245,7 +277,15 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
                   </tr>
                 </thead>
                 <tbody>
-                  {scheduledPostsX.map((p) => (
+                  {scheduledPostsX
+                    .filter((p:any) => (filterStatus ? (filterStatus === 'posted' ? !!p.postedAt : !p.postedAt) : true))
+                    .filter((p:any) => (filterAccount ? p.accountId === filterAccount : true))
+                    .sort((a:any,b:any) => {
+                      const ka = sortKey === 'scheduledAt' ? (a.scheduledAt||0) : (a.postedAt||0);
+                      const kb = sortKey === 'scheduledAt' ? (b.scheduledAt||0) : (b.postedAt||0);
+                      return sortAsc ? ka - kb : kb - ka;
+                    })
+                    .map((p:any) => (
                     <tr key={p.scheduledPostId} className="border-t dark:border-gray-700">
                       <td className="px-2 py-1">
                         <div className="text-sm font-medium" style={{ lineHeight: '1rem', maxHeight: '3rem', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical' }} title={p.content || ''}>{p.accountName}</div>
