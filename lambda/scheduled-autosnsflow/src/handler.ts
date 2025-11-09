@@ -2419,6 +2419,7 @@ async function ensureNextDayAutoPostsForX(userId: any, xacct: any) {
         await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "skip", message: `invalid window ${w}` });
         continue;
       }
+        try { console.info('[x-hourly] when computed', { userId, accountId: xacct.accountId, window: w, whenJst: when.toISOString() }); } catch(_) {}
       // Check existing XScheduledPosts for same account and identical timeRange on the same next-day date
       try {
         const q = await ddb.send(new QueryCommand({
@@ -2465,6 +2466,7 @@ async function ensureNextDayAutoPostsForX(userId: any, xacct: any) {
       // Create XScheduledPosts item
       try {
         const id = `xsp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
+        try { console.info('[x-hourly] generated scheduledPostId', { userId, accountId: xacct.accountId, scheduledPostId: id }); } catch(_) {}
         const now = `${Math.floor(Date.now() / 1000)}`;
         const scheduledAt = Math.floor(when.getTime() / 1000);
         const item: any = {
