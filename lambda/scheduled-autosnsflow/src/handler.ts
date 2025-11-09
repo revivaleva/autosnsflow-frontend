@@ -2211,7 +2211,16 @@ async function fetchIncomingReplies(userId: any, acct: any) {
 // === 予約投稿（毎時の"翌日分作成"） ===
 async function ensureNextDayAutoPosts(userId: any, acct: any) {
   // アカウント側の大枠ガード
-  if (!acct.autoGenerate) return { created: 0, skipped: true };
+  // 注意: 自動投稿が無効なアカウントには「空の予約作成」を行わない
+  if (!acct.autoGenerate || !acct.autoPost) {
+    try {
+      await putLog({
+        userId, type: "auto-post", accountId: acct.accountId,
+        status: "skip", message: `autoGenerate=${!!acct.autoGenerate}, autoPost=${!!acct.autoPost} のためスキップ`
+      });
+    } catch (_) {}
+    return { created: 0, skipped: true };
+  }
   if (acct.status && acct.status !== "active") {
     await putLog({
       userId, type: "auto-post", accountId: acct.accountId,
