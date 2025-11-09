@@ -2962,6 +2962,23 @@ async function runHourlyJobForUser(userId: any) {
     createdCount += c.created || 0;
     if (c.skipped) skippedAccounts++;
 
+      // Hourly: create empty reservation from pool (empty content). Do not fetch/set content here.
+      try {
+        const whenJst = new Date(Date.now() + 24 * 3600 * 1000); // next day
+        if ((global as any).__TEST_CAPTURE__) {
+          try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'HOURLY_POOL_CREATE_DRYRUN', payload: { userId: normalizedUserId, accountId: acct.accountId, whenJst: whenJst.toISOString(), poolType: acct.type || 'general' } }); } catch(_) {}
+        } else {
+          try {
+            await createScheduledPost(normalizedUserId, { acct, group: 'pool', type: 'pool', whenJst, scheduledSource: 'pool', poolType: acct.type || 'general' });
+            createdCount++;
+          } catch (e) {
+            console.warn('[warn] createScheduledPost (hourly pool) failed:', e);
+          }
+        }
+      } catch (e) {
+        console.warn('[warn] hourly pool reservation creation failed:', e);
+      }
+
     try {
       if (!DISABLE_QUOTE_PROCESSING) {
         const fr = await fetchIncomingReplies(normalizedUserId, acct);
@@ -3219,23 +3236,20 @@ async function runFiveMinJobForUser(userId: any) {
                 if (safeXacct.oauthRefreshToken) safeXacct.oauthRefreshToken = '[REDACTED]';
               try { console.info('[x-run] invoking runAutoPostForXAccount', { userId, accountId: xacct.accountId }); } catch(_) {}
               } catch (_) {}
-              // runAutoPostForXAccount は別モジュール
+              // X posting logic: prefer pool-based posting (postFromPoolForAccount) implemented in post-to-x
               const xmod = await import('./post-to-x');
-              if (typeof xmod.runAutoPostForXAccount === 'function') {
-                try {
-                  const xr = await xmod.runAutoPostForXAccount(xacct, userId);
-                  try { console.info('[x-run] result', { userId, accountId: xacct.accountId, result: xr }); } catch(_) {}
-                  (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
-                  (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_AUTO_POST_RESULT', payload: { accountId: xacct.accountId, result: xr } });
-                  if (xr && typeof xr.posted === 'number') {
-                    totalX += Number(xr.posted || 0);
-                    if (Number(xr.posted || 0) > 0) {
-                      // mark as processed to prevent further posts for this X account in the same run
-                      processedXAccounts.add(xacct.accountId);
-                    }
-                  }
-                } catch (e) { console.warn('[warn] runAutoPostForXAccount failed', e); }
-              }
+              try {
+                const dryRun = Boolean((global as any).__TEST_CAPTURE__);
+                // Use pool-based posting only; no fallback to old logic
+                const xr = await xmod.postFromPoolForAccount(userId, xacct, { dryRun, lockTtlSec: 600 });
+                try { console.info('[x-run] postFromPoolForAccount result', { userId, accountId: xacct.accountId, result: xr }); } catch(_) {}
+                (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+                (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_POOL_POST_RESULT', payload: { accountId: xacct.accountId, result: xr } });
+                if (xr && typeof xr.posted === 'number') {
+                  totalX += Number(xr.posted || 0);
+                  if (Number(xr.posted || 0) > 0) processedXAccounts.add(xacct.accountId);
+                }
+              } catch (e) { console.warn('[warn] post-from-pool failed', e); }
             } catch (e) { console.warn('[warn] post-to-x import or run failed', e); }
           }
         } catch (e) { console.warn('[warn] getXAccounts failed', e); }
