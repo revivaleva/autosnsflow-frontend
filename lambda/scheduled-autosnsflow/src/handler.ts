@@ -2417,28 +2417,33 @@ async function ensureNextDayAutoPostsForX(userId: any, xacct: any) {
         await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "skip", message: `invalid window ${w}` });
         continue;
       }
-      // Check existing XScheduledPosts for same account/timeRange on the same next-day date
+      // Check existing XScheduledPosts for same account and identical timeRange on the same next-day date
       try {
-        const dayStartMs = epochStartOfJstDayMs(today.getTime()) + MS_PER_DAY; // start of next day in ms
-        const dayStartSec = Math.floor(dayStartMs / 1000);
-        const dayEndSec = dayStartSec + 24 * 3600 - 1;
         const q = await ddb.send(new QueryCommand({
           TableName: process.env.TBL_X_SCHEDULED || 'XScheduledPosts',
           KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
-          FilterExpression: 'accountId = :acc AND timeRange = :tr AND scheduledAt BETWEEN :s AND :e',
-          ExpressionAttributeValues: {
-            ':pk': { S: `USER#${userId}` },
-            ':pfx': { S: 'SCHEDULEDPOST#' },
-            ':acc': { S: xacct.accountId },
-            ':tr': { S: String(w) },
-            ':s': { N: String(dayStartSec) },
-            ':e': { N: String(dayEndSec) }
-          },
+          ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'SCHEDULEDPOST#' } },
           ProjectionExpression: 'scheduledAt, accountId, timeRange',
-          Limit: 1
         }));
-        const found = ((q as any).Items || []).length > 0;
-        if (found) {
+        const items = (q as any).Items || [];
+        // compute tomorrow's YMD in JST
+        const tomorrowDate = new Date(today);
+        tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+        const tomorrowYmd = yyyymmddJst(tomorrowDate);
+        let exists = false;
+        for (const it of items) {
+          try {
+            const aid = it.accountId?.S || '';
+            const tr = it.timeRange?.S || '';
+            if (aid !== xacct.accountId) continue;
+            if (tr !== String(w)) continue;
+            const sat = Number(it.scheduledAt?.N || 0);
+            if (!sat) continue;
+            const satYmd = yyyymmddJst(jstFromEpoch(sat));
+            if (satYmd === tomorrowYmd) { exists = true; break; }
+          } catch (_) {}
+        }
+        if (exists) {
           await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "skip", message: `既存予約あり ${w}` });
           continue;
         }
