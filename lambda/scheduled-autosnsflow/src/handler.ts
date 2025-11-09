@@ -2405,6 +2405,8 @@ async function ensureNextDayAutoPostsForX(userId: any, xacct: any) {
     console.warn('[warn] ensureNextDayAutoPostsForX guard failed:', String(e));
     return { created: 0, skipped: true };
   }
+  // Debug: log entry and target table name to help diagnose missing PutItem
+  try { console.info('[x-hourly] ensureNextDayAutoPostsForX start', { userId, accountId: xacct && xacct.accountId, TBL_X_SCHEDULED: process.env.TBL_X_SCHEDULED || 'XScheduledPosts' }); } catch(_) {}
 
   const fixedWindows = ["07:00-09:00", "12:00-14:00", "17:00-21:00"];
   const today = jstNow();
@@ -2479,31 +2481,36 @@ async function ensureNextDayAutoPostsForX(userId: any, xacct: any) {
           updatedAt: { N: now },
         };
 
-        // Build deterministic SK for dedup: include accountId + yyyymmdd + normalized timeRange
-        const timeRangeNorm = String(w).replace(/[^0-9A-Za-z]/g, '_');
-        const skId = `SCHEDULEDPOST#${xacct.accountId}#${tomorrowYmd}#${timeRangeNorm}`;
-        item.SK = { S: skId };
-        // record scheduled date as YMD for visibility
-        (item as any).scheduledDateYmd = { S: tomorrowYmd };
+      // Build deterministic SK for dedup: include accountId + yyyymmdd + normalized timeRange
+      const timeRangeNorm = String(w).replace(/[^0-9A-Za-z]/g, '_');
+      const skId = `SCHEDULEDPOST#${xacct.accountId}#${tomorrowYmd}#${timeRangeNorm}`;
+      item.SK = { S: skId };
+      // record scheduled date as YMD for visibility
+      (item as any).scheduledDateYmd = { S: tomorrowYmd };
 
-        try {
-          // Conditional Put: only succeed if item does not already exist at this PK+SK
-          await ddb.send(new PutItemCommand({
-            TableName: process.env.TBL_X_SCHEDULED || 'XScheduledPosts',
-            Item: sanitizeItem(item),
-            ConditionExpression: 'attribute_not_exists(PK)'
-          }));
-          created++;
-          await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "ok", message: "x reservation created", detail: { scheduledPostId: id, whenJst: when.toISOString(), poolType: xacct.type || 'general', sk: skId } });
-        } catch (e) {
-          const msg = String((e as any)?.name || (e as any)?.message || e);
-          if (msg.includes('ConditionalCheckFailed') || msg.includes('TransactionCanceled')) {
-            // Item already exists -> skip
-            await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "skip", message: "duplicate reservation prevented by conditional put", detail: { sk: skId } });
-          } else {
-            await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "error", message: "x reservation create failed", detail: { error: String(e) } });
-          }
+      // Debug: announce PutItem attempt
+      try { console.info('[x-hourly] attempting PutItem', { table: process.env.TBL_X_SCHEDULED || 'XScheduledPosts', sk: skId, scheduledDateYmd: tomorrowYmd, accountId: xacct.accountId }); } catch(_) {}
+
+      try {
+        // Conditional Put: only succeed if item does not already exist at this PK+SK
+        await ddb.send(new PutItemCommand({
+          TableName: process.env.TBL_X_SCHEDULED || 'XScheduledPosts',
+          Item: sanitizeItem(item),
+          ConditionExpression: 'attribute_not_exists(PK)'
+        }));
+        created++;
+        await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "ok", message: "x reservation created", detail: { scheduledPostId: id, whenJst: when.toISOString(), poolType: xacct.type || 'general', sk: skId } });
+      } catch (e:any) {
+        // Debug: surface full error for diagnosis
+        try { console.error('[x-hourly] PutItem failed', { sk: skId, err: String(e), name: e?.name, msg: e?.message, stack: e?.stack }); } catch(_) {}
+        const msg = String((e as any)?.name || (e as any)?.message || e);
+        if (msg.includes('ConditionalCheckFailed') || msg.includes('TransactionCanceled')) {
+          // Item already exists -> skip
+          await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "skip", message: "duplicate reservation prevented by conditional put", detail: { sk: skId } });
+        } else {
+          await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "error", message: "x reservation create failed", detail: { error: String(e) } });
         }
+      }
       } catch (e) {
         await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "error", message: "x reservation create failed", detail: { error: String(e) } });
       }
