@@ -3088,24 +3088,7 @@ async function runHourlyJobForUser(userId: any) {
         console.warn('[warn] hourly pool reservation creation failed:', e);
       }
 
-  // Hourly: also create empty reservations for X accounts (pool-driven)
-  try {
-    const xAccounts = await getXAccounts(normalizedUserId);
-    for (const xacct of xAccounts) {
-      try {
-        const xc = await ensureNextDayAutoPostsForX(normalizedUserId, xacct);
-        createdCount += xc.created || 0;
-        if (xc.skipped) skippedAccounts++;
-        try { console.info('[x-hourly] ensureNextDayAutoPostsForX', { userId: normalizedUserId, accountId: xacct.accountId, result: xc }); } catch(_) {}
-        (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
-        (global as any).__TEST_OUTPUT__.push({ tag: 'HOURLY_X_POOL_RESERVATION', payload: { accountId: xacct.accountId, result: xc } });
-      } catch (e) {
-        console.warn('[warn] hourly X pool reservation failed for acct', String(xacct && xacct.accountId), String(e));
-      }
-    }
-  } catch (e) {
-    console.warn('[warn] hourly X pool reservation failed', String(e));
-  }
+  // NOTE: X account hourly reservations are created in a single pass after processing Threads accounts.
 
     try {
       if (!DISABLE_QUOTE_PROCESSING) {
@@ -3139,6 +3122,25 @@ async function runHourlyJobForUser(userId: any) {
   const content = metrics === "hourly：実行なし" ? metrics : `**[定期実行レポート] ${now} (hourly)**\n${metrics}`;
   await postDiscordLog({ userId, content });
   return { userId, createdCount, fetchedReplies, replyDrafts, skippedAccounts, checkedShortcodes };
+}
+
+// Hourly: also create empty reservations for X accounts (pool-driven)
+try {
+  const xAccounts = await getXAccounts(normalizedUserId);
+  for (const xacct of xAccounts) {
+    try {
+      const xc = await ensureNextDayAutoPostsForX(normalizedUserId, xacct);
+      createdCount += xc.created || 0;
+      if (xc.skipped) skippedAccounts++;
+      try { console.info('[x-hourly] ensureNextDayAutoPostsForX', { userId: normalizedUserId, accountId: xacct.accountId, result: xc }); } catch(_) {}
+      (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+      (global as any).__TEST_OUTPUT__.push({ tag: 'HOURLY_X_POOL_RESERVATION', payload: { accountId: xacct.accountId, result: xc } });
+    } catch (e) {
+      console.warn('[warn] hourly X pool reservation failed for acct', String(xacct && xacct.accountId), String(e));
+    }
+  }
+} catch (e) {
+  console.warn('[warn] hourly X pool reservation failed', String(e));
 }
 
 // === 予約レコードの本文生成をアカウント単位で段階的に処理する（短期対応） ===
