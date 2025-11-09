@@ -19,6 +19,7 @@ export default function XAccountModal({ open, onClose, mode = "create", account,
   const [oauthAccessTokenLocal, setOauthAccessTokenLocal] = useState<string>('');
   const [checkingAuth, setCheckingAuth] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [accountType, setAccountType] = useState<'general' | 'ero' | 'saikyou'>('general');
 
   useEffect(() => {
     if (!open) return;
@@ -51,6 +52,7 @@ export default function XAccountModal({ open, onClose, mode = "create", account,
       setMasked(!!account.hasClientSecret);
       setClientSecret("");
       setAuthState(account.authState || account.status || "");
+      setAccountType((account.type as any) || 'general');
     } else {
       setDisplayName(""); setAccountId(""); setClientId(""); setClientSecret(""); setMasked(false); setAuthState("");
     }
@@ -63,7 +65,7 @@ export default function XAccountModal({ open, onClose, mode = "create", account,
     setSaving(true);
     try {
       const method = mode === "create" ? "POST" : "PUT";
-      const body: any = { accountId, username: displayName, clientId };
+      const body: any = { accountId, username: displayName, clientId, type: accountType };
       if (!masked && clientSecret) body.clientSecret = clientSecret;
       const res = await fetch('/api/x-accounts', { method, credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       if (!res.ok) throw new Error(await res.text());
@@ -115,6 +117,12 @@ export default function XAccountModal({ open, onClose, mode = "create", account,
           <input className="mb-2 border rounded px-2 py-1 w-full" value={accountId} onChange={(e) => setAccountId(e.target.value)} />
           <label className="block">clientId</label>
           <input className="mb-2 border rounded px-2 py-1 w-full" value={clientId} onChange={(e) => setClientId(e.target.value)} />
+          <label className="block">種別</label>
+          <select className="mb-2 border rounded px-2 py-1 w-full" value={accountType} onChange={(e) => setAccountType(e.target.value as any)}>
+            <option value="general">一般</option>
+            <option value="ero">エロ</option>
+            <option value="saikyou">最強</option>
+          </select>
           <label className="block">clientSecret</label>
           {masked ? (
             <div className="flex gap-2 items-center mb-2">

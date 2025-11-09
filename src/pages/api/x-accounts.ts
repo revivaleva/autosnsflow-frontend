@@ -15,6 +15,7 @@ const UPDATABLE_FIELDS = new Set([
   'oauthAccessToken',
   'autoPostEnabled',
   'authState',
+  'type',
 ]);
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -56,6 +57,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         oauthAccessToken: { S: String(oauthAccessToken || '') },
         autoPostEnabled: { BOOL: !!autoPostEnabled },
         authState: { S: 'authorized' },
+        // optional classification/type (general|ero|saikyou)
+        ...(body.type ? { type: { S: String(body.type) } } : {}),
         createdAt: { N: now },
         updatedAt: { N: now },
       };
