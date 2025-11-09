@@ -2428,6 +2428,7 @@ async function ensureNextDayAutoPostsForX(userId: any, xacct: any) {
           ProjectionExpression: 'scheduledAt, accountId, timeRange',
         }));
         const items = (q as any).Items || [];
+        try { console.info('[x-hourly] existing XScheduledPosts fetched', { userId, accountId: xacct.accountId, count: (items || []).length }); } catch(_) {}
         // compute tomorrow's YMD in JST
         const tomorrowDate = new Date(today);
         tomorrowDate.setDate(tomorrowDate.getDate() + 1);
@@ -2490,6 +2491,13 @@ async function ensureNextDayAutoPostsForX(userId: any, xacct: any) {
 
       // Debug: announce PutItem attempt
       try { console.info('[x-hourly] attempting PutItem', { table: process.env.TBL_X_SCHEDULED || 'XScheduledPosts', sk: skId, scheduledDateYmd: tomorrowYmd, accountId: xacct.accountId }); } catch(_) {}
+
+      // Debug: show sanitized item to be put
+      try {
+        const san = sanitizeItem(item);
+        // limit size for logs
+        try { console.info('[x-hourly] sanitized item preview', { sk: skId, preview: { PK: san.PK, SK: san.SK, accountId: san.accountId, scheduledAt: san.scheduledAt, timeRange: san.timeRange } }); } catch(_) {}
+      } catch(_) {}
 
       try {
         // Conditional Put: only succeed if item does not already exist at this PK+SK
