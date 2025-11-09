@@ -94,6 +94,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         clientId: (it as any).clientId || (it as any).client_id || ((it as any).client && (it as any).client.id) || "",
         // Do not expose clientSecret plaintext. Instead expose a boolean flag indicating presence.
         hasClientSecret: !!((it as any).clientSecret || (it as any).client_secret || ((it as any).client && (it as any).client.secret)),
+        // classification/type (general|ero|...)
+        type: (it as any).type || 'general',
+        // cumulative failure count for account (used by UI to mark failures)
+        failureCount: typeof (it as any).failureCount === 'number' ? (it as any).failureCount : Number((it as any).failureCount || 0),
       }));
 
       // If backend-core didn't return clientId/secret fields, fetch them directly from DynamoDB as fallback
@@ -105,8 +109,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             TableName: TBL,
             Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${acc.accountId}` } },
             // include fields so fallback read returns the attribute when present
-            ProjectionExpression: 'clientId, clientSecret, oauthAccessToken, #st, monitoredAccountId, autoQuote, quoteTimeStart, quoteTimeEnd',
-            ExpressionAttributeNames: { '#st': 'status' },
+            // Add 'type' and 'failureCount' so client can render account classification and failure badge
+            ProjectionExpression: 'clientId, clientSecret, oauthAccessToken, #st, monitoredAccountId, autoQuote, quoteTimeStart, quoteTimeEnd, #tp, failureCount',
+            ExpressionAttributeNames: { '#st': 'status', '#tp': 'type' },
           }));
           const it: any = (out as any).Item || {};
           if (!acc.clientId && it.clientId && it.clientId.S) acc.clientId = it.clientId.S;

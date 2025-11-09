@@ -15,6 +15,7 @@ const UPDATABLE_FIELDS = new Set([
   'oauthAccessToken',
   'autoPostEnabled',
   'authState',
+  'type',
 ]);
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -56,6 +57,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         oauthAccessToken: { S: String(oauthAccessToken || '') },
         autoPostEnabled: { BOOL: !!autoPostEnabled },
         authState: { S: 'authorized' },
+        // optional classification/type (general|ero|saikyou)
+        ...(body.type ? { type: { S: String(body.type) } } : {}),
         createdAt: { N: now },
         updatedAt: { N: now },
       };
@@ -77,18 +80,37 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const { accountId, ...rest } = body || {};
       if (!accountId) return res.status(400).json({ error: 'accountId required' });
 
-      const sets: string[] = ['updatedAt = :ts'];
+      // Build UpdateExpression with safe attribute name placeholders to avoid reserved keyword issues
       const vals: any = { ':ts': { N: `${Math.floor(Date.now() / 1000)}` } };
-      Object.entries(rest).forEach(([k, v], idx) => {
+      const nameMap: Record<string, string> = {};
+      const sets: string[] = [];
+
+      // updatedAt placeholder
+      const updatedAtPlaceholder = '#updatedAt';
+      nameMap[updatedAtPlaceholder] = 'updatedAt';
+      sets.push(`${updatedAtPlaceholder} = :ts`);
+
+      let fieldIndex = 0;
+      Object.entries(rest).forEach(([k, v]) => {
         if (!UPDATABLE_FIELDS.has(k)) return;
-        const ph = `:v${idx}`;
-        sets.push(`${k} = ${ph}`);
+        const ph = `:v${fieldIndex}`;
+        const namePlaceholder = `#f${fieldIndex}`;
+        nameMap[namePlaceholder] = k;
+        sets.push(`${namePlaceholder} = ${ph}`);
         vals[ph] = typeof v === 'boolean' ? { BOOL: v } : { S: String(v ?? '') };
+        fieldIndex++;
       });
+
       if (sets.length === 1) return res.status(400).json({ error: 'no updatable fields' });
 
       try {
-        await ddb.send(new UpdateItemCommand({ TableName: TBL, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } }, UpdateExpression: `SET ${sets.join(', ')}`, ExpressionAttributeValues: vals }));
+        await ddb.send(new UpdateItemCommand({
+          TableName: TBL,
+          Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } },
+          UpdateExpression: `SET ${sets.join(', ')}`,
+          ExpressionAttributeValues: vals,
+          ExpressionAttributeNames: nameMap,
+        }));
         try { console.log('[api/x-accounts] PATCH success:', { userId, accountId, updated: sets }); } catch(_) {}
         return res.status(200).json({ ok: true });
       } catch (e) {
@@ -135,6 +157,10 @@ function unmarshallAccountSummary(it: any) {
     autoPostEnabled: it.autoPostEnabled?.BOOL === true,
     authState: it.authState?.S || '',
     hasClientSecret: !!(it.clientSecret && it.clientSecret.S),
+    // classification/type if present
+    type: it.type?.S || 'general',
+    // cumulative failure count (number)
+    failureCount: it.failureCount?.N ? Number(it.failureCount.N) : 0,
   };
 }
 
@@ -151,6 +177,9 @@ function unmarshallAccount(it: any) {
     authState: it.authState?.S || '',
     createdAt: it.createdAt?.N ? Number(it.createdAt.N) : 0,
     updatedAt: it.updatedAt?.N ? Number(it.updatedAt.N) : 0,
+    // include optional fields
+    type: it.type?.S || 'general',
+    failureCount: it.failureCount?.N ? Number(it.failureCount.N) : 0,
   };
 }
 
