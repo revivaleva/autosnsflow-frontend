@@ -3083,7 +3083,6 @@ async function runHourlyJobForUser(userId: any) {
       } catch (e) {
         console.warn('[warn] hourly pool reservation creation failed:', e);
       }
-    }
 
   // Hourly: also create empty reservations for X accounts (pool-driven)
   try {
