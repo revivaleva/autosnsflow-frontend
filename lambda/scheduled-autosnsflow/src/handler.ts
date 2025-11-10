@@ -2663,11 +2663,16 @@ async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settin
     })();
 
     if (stOK && postedZero && notExpired) {
-      // deprioritize items with permanentFailure or high postAttempts
-      const attempts = Number(x.postAttempts || 0);
+      // Exclude permanentFailure items completely from candidate set
       const permFail = !!x.permanentFailure;
-      candidates.push({ pk, sk, attempts, permFail, scheduledAt: Number(x.scheduledAt || 0), ...x });
-      await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "probe", message: "candidate queued", detail: { scheduledAt: x.scheduledAt, timeRange: x.timeRange } });
+      if (permFail) {
+        try { await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "skip", message: "permanentFailure - excluded from candidates", detail: { scheduledAt: x.scheduledAt, timeRange: x.timeRange } }); } catch(_) {}
+      } else {
+        // include only non-permanent-failure candidates (deprioritization by attempts still applies)
+        const attempts = Number(x.postAttempts || 0);
+        candidates.push({ pk, sk, attempts, scheduledAt: Number(x.scheduledAt || 0), ...x });
+        await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "probe", message: "candidate queued", detail: { scheduledAt: x.scheduledAt, timeRange: x.timeRange } });
+      }
     if (debugMode && (debugInfo.items as any[]).length < 6) {
         (debugInfo.items as any[]).push({ idx: iterIndex, pk, sk, status: x.status, postedAt: x.postedAt, scheduledAt: x.scheduledAt, timeRange: x.timeRange, stOK, postedZero, notExpired });
       }
