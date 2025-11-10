@@ -175,6 +175,12 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
       continue;
     }
   }
+  // If there are collected errors, log them verbosely for debugging
+  try {
+    if (debug && Array.isArray(debug.errors) && debug.errors.length > 0) {
+      try { console.info('[x-auto] runAutoPostForXAccount debug.errors', { userId, accountId, errors: debug.errors }); } catch(_) {}
+    }
+  } catch (_) {}
   return { posted: postedCount, debug };
 }
 
