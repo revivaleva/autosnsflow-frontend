@@ -168,6 +168,8 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
         try {
           const TBL_POOL = process.env.TBL_POST_POOL || 'PostPool';
           const poolType = acct.type || 'general';
+          try { console.info('[x-auto] pool query params', { userId, accountId, TBL_POOL, poolType }); } catch(_) {}
+          try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_POOL_PARAMS', payload: { accountId: accountId, TBL_POOL, poolType } }); } catch(_) {}
           const pq = await ddb.send(new QueryCommand({
             TableName: TBL_POOL,
             KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
@@ -175,6 +177,8 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
             Limit: 50,
           }));
           const pitems: any[] = (pq as any).Items || [];
+          try { console.info('[x-auto] pool raw items count', { userId, accountId, count: (pitems || []).length }); } catch(_) {}
+          try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_POOL_RAW_COUNT', payload: { accountId: accountId, count: (pitems || []).length } }); } catch(_) {}
           const pcands = pitems.map(itm => ({
             pk: itm.PK,
             sk: itm.SK,
