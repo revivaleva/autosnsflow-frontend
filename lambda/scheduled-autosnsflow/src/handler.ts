@@ -3149,18 +3149,24 @@ async function runHourlyJobForUser(userId: any) {
   try { console.info('[info] hourly totals', { createdCount, fetchedReplies, replyDrafts, skippedAccounts }); } catch (e) { console.error('[error] hourly totals logging failed:', String(e)); }
   // Hourly: also create empty reservations for X accounts (pool-driven)
   try {
-    const xAccounts = await getXAccounts(normalizedUserId);
-    for (const xacct of xAccounts) {
-      try {
-        const xc = await ensureNextDayAutoPostsForX(normalizedUserId, xacct);
-        xCreated += xc.created || 0;
-        if (xc.skipped) xSkipped += 1;
-        try { console.info('[x-hourly] ensureNextDayAutoPostsForX', { userId: normalizedUserId, accountId: xacct.accountId, result: xc }); } catch(_) {}
-        (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
-        (global as any).__TEST_OUTPUT__.push({ tag: 'HOURLY_X_POOL_RESERVATION', payload: { accountId: xacct.accountId, result: xc } });
-      } catch (e) {
-        console.warn('[warn] hourly X pool reservation failed for acct', String(xacct && xacct.accountId), String(e));
+    if (settings && settings.enableX) {
+      const xAccounts = await getXAccounts(normalizedUserId);
+      for (const xacct of xAccounts) {
+        try {
+          const xc = await ensureNextDayAutoPostsForX(normalizedUserId, xacct);
+          xCreated += xc.created || 0;
+          if (xc.skipped) xSkipped += 1;
+          try { console.info('[x-hourly] ensureNextDayAutoPostsForX', { userId: normalizedUserId, accountId: xacct.accountId, result: xc }); } catch(_) {}
+          (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+          (global as any).__TEST_OUTPUT__.push({ tag: 'HOURLY_X_POOL_RESERVATION', payload: { accountId: xacct.accountId, result: xc } });
+        } catch (e) {
+          console.warn('[warn] hourly X pool reservation failed for acct', String(xacct && xacct.accountId), String(e));
+        }
       }
+    } else {
+      try { console.info('[info] hourly X pool reservations skipped by user setting enableX=false', { userId: normalizedUserId }); } catch(_) {}
+      (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+      (global as any).__TEST_OUTPUT__.push({ tag: 'HOURLY_X_POOL_SKIPPED_BY_SETTING', payload: { userId: normalizedUserId } });
     }
   } catch (e) {
     console.warn('[warn] hourly X pool reservation failed', String(e));
@@ -3386,9 +3392,10 @@ async function runFiveMinJobForUser(userId: any) {
 
     const a = await runAutoPostForAccount(acct, userId, settings);
     // X のアカウントがあれば同一ユーザ内の X アカウントについても投稿を試みる
-      try {
-          const xAccounts = await getXAccounts(userId);
-          for (const xacct of xAccounts) {
+    try {
+          if (settings && settings.enableX) {
+            const xAccounts = await getXAccounts(userId);
+            for (const xacct of xAccounts) {
             // skip if we've already posted for this X account during this run
             if (processedXAccounts.has(xacct.accountId)) {
               try { console.info('[x-run] skipping already-processed xacct', { accountId: xacct.accountId }); } catch(_) {}
@@ -3421,6 +3428,11 @@ async function runFiveMinJobForUser(userId: any) {
                 }
               } catch (e) { console.warn('[warn] post-from-pool failed', e); }
             } catch (e) { console.warn('[warn] post-to-x import or run failed', e); }
+            }
+          } else {
+            try { console.info('[info] every-5min X posting skipped by user setting enableX=false', { userId }); } catch(_) {}
+            (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+            (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_SKIPPED_BY_SETTING', payload: { userId } });
           }
         } catch (e) { console.warn('[warn] getXAccounts failed', e); }
     try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_AUTO_POST_RESULT', payload: { accountId: acct.accountId, result: a } }); } catch(_) {}
