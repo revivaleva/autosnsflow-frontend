@@ -746,7 +746,7 @@ async function deleteUnpostedAutoPosts(userId: any, acct: any, groupTypeStr: any
   return deletedCount;
 }
 
-async function createScheduledPost(userId: any, { acct, group, type, whenJst, overrideTheme = "", overrideTimeRange = "", secondStageWanted = undefined, scheduledSource = undefined, poolType = undefined }: any) {
+async function createScheduledPost(userId: any, { acct, group, type, whenJst, overrideTheme = "", overrideTimeRange = "", secondStageWanted = undefined, scheduledSource = undefined, poolType = undefined }: any, opts: any = {}) {
   const themeStr = (overrideTheme || ((type === 1 ? group.theme1 : type === 2 ? group.theme2 : group.theme3) || ""));
   const groupTypeStr = `${group.groupName}-自動投稿${type}`;
   const timeRange = (overrideTimeRange || (type === 1 ? (group.time1 || "05:00-08:00") : type === 2 ? (group.time2 || "12:00-13:00") : (group.time3 || "20:00-23:00")) || "");
@@ -784,12 +784,18 @@ async function createScheduledPost(userId: any, { acct, group, type, whenJst, ov
     deleteScheduledAt: (typeof overrideTheme === 'object' && overrideTheme?.deleteScheduledAt) ? { N: String(Math.floor(new Date(String(overrideTheme.deleteScheduledAt)).getTime() / 1000)) } : undefined,
     deleteParentAfter: (typeof overrideTheme === 'object' && typeof overrideTheme?.deleteParentAfter !== 'undefined') ? { BOOL: !!overrideTheme.deleteParentAfter } : undefined,
   };
+  // If dry-run is requested via opts or global test-capture, do not perform the PutItem.
+  const dryRun = !!(opts && opts.dryRun) || !!(global as any).__TEST_CAPTURE__;
+  if (dryRun) {
+    try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'DRYRUN_CREATE_SCHEDULED_POST', payload: { userId, accountId: acct.accountId, whenJst: whenJst.toISOString(), group: group.groupName, type, poolType } }); } catch(_) {}
+    return { id, groupTypeStr, themeStr };
+  }
   await ddb.send(new PutItemCommand({ TableName: TBL_SCHEDULED, Item: sanitizeItem(item) }));
   return { id, groupTypeStr, themeStr };
 }
 
 // Create a quote reservation for an account if opted-in and monitored account has a new post
-async function createQuoteReservationForAccount(userId: any, acct: any) {
+async function createQuoteReservationForAccount(userId: any, acct: any, opts: any = {}) {
   try {
     if (!acct || !acct.autoQuote) return { created: 0, skipped: true };
     const monitored = acct.monitoredAccountId || "";
@@ -915,6 +921,11 @@ async function createQuoteReservationForAccount(userId: any, acct: any) {
     // persist scheduled reservation using canonical sourcePostId
     scheduledItem.sourcePostId = { S: canonicalSource };
     try {
+      const dryRun = !!(opts && opts.dryRun) || !!(global as any).__TEST_CAPTURE__;
+      if (dryRun) {
+        try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'DRYRUN_CREATE_QUOTE_RESERVATION', payload: { userId, accountId: acct.accountId, scheduledPostId: id, sourcePostId: canonicalSource } }); } catch(_) {}
+        return { created: 1, skipped: false, sourcePostId: canonicalSource, queriedPK: pkForQuery, queriedAccountId: acctForQuery, queriedSourcePostId: canonicalSource };
+      }
       await ddb.send(new PutItemCommand({ TableName: TBL_SCHEDULED, Item: scheduledItem }));
       await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'ok', message: '引用予約を作成', detail: { scheduledPostId: id, sourcePostId: canonicalSource, queriedPK: pkForQuery, queriedAccountId: acctForQuery, queriedSourcePostId: canonicalSource } });
       return { created: 1, skipped: false, sourcePostId: canonicalSource, queriedPK: pkForQuery, queriedAccountId: acctForQuery, queriedSourcePostId: canonicalSource };
@@ -1303,7 +1314,8 @@ export const handler = async (event: any = {}) => {
 
   // If invoked as a test invocation, enable in-memory capture of debug putLog entries
   try {
-    (global as any).__TEST_CAPTURE__ = !!(event && (event.testInvocation || event.detailedDebug));
+    // Treat event.dryRun as a test-capture flag so callers can request dry-run behavior.
+    (global as any).__TEST_CAPTURE__ = !!(event && (event.testInvocation || event.detailedDebug || event.dryRun));
     if ((global as any).__TEST_CAPTURE__) (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
   } catch (_) {}
 
@@ -1373,11 +1385,11 @@ export const handler = async (event: any = {}) => {
       const accountIds = (accounts || []).map((a: any) => a.accountId).filter(Boolean);
       if (job === 'hourly') {
         // hourly job will run reservation creation; quote posting is not gated by test flag
-        const res = await runHourlyJobForUser(userId);
+        const res = await runHourlyJobForUser(userId, { dryRun: !!event?.dryRun });
         // For test mode, also process deletion queue for this user so tests exercise deletion flow
         let dqRes: any = { deletedCount: 0 };
         try {
-          dqRes = await processDeletionQueueForUser(userId);
+          dqRes = await processDeletionQueueForUser(userId, { dryRun: !!event?.dryRun });
         } catch (e) {
           console.warn('[TEST] processDeletionQueueForUser failed:', String(e));
           try { await putLog({ userId, type: 'deletion', status: 'error', message: 'test_process_deletion_failed', detail: { error: String(e) } }); } catch(_){}
@@ -1388,7 +1400,7 @@ export const handler = async (event: any = {}) => {
         return { statusCode: 200, body: JSON.stringify({ testInvocation: true, job: 'hourly', userId, accountIds, result: merged, testOutput: testOut }) };
       } else {
         
-        const res = await runFiveMinJobForUser(userId);
+        const res = await runFiveMinJobForUser(userId, { dryRun: !!event?.dryRun });
         // attach any collected test-time output from threads lib so caller can inspect POST bodies
         const testOut = (global as any).__TEST_OUTPUT__ || [];
         try { (global as any).__TEST_OUTPUT__ = []; } catch(_) {}
@@ -1413,9 +1425,9 @@ export const handler = async (event: any = {}) => {
       const userIds = await getActiveUserIds();
       const totals = { createdCount: 0, fetchedReplies: 0, replyDrafts: 0, skippedAccounts: 0, deletedCount: 0 } as any;
       let succeeded = 0;
-      for (const uid of userIds) {
+    for (const uid of userIds) {
         try {
-          const res = await runHourlyJobForUser(uid);
+          const res = await runHourlyJobForUser(uid, { dryRun: !!event?.dryRun });
           succeeded += 1;
           totals.createdCount += Number(res.createdCount || 0);
           totals.fetchedReplies += Number(res.fetchedReplies || 0);
@@ -1423,7 +1435,7 @@ export const handler = async (event: any = {}) => {
           totals.skippedAccounts += Number(res.skippedAccounts || 0);
         // Also attempt to process deletion queue for this user (batch deletions)
         try {
-          const dqRes = await processDeletionQueueForUser(uid);
+          const dqRes = await processDeletionQueueForUser(uid, { dryRun: !!event?.dryRun });
           totals.deletedCount = (totals.deletedCount || 0) + Number(dqRes?.deletedCount || 0);
         } catch (e) {
           try { await putLog({ userId: uid, type: 'prune', status: 'warn', message: 'processDeletionQueueForUser failed', detail: { error: String(e) } }); } catch(_) {}
@@ -1799,7 +1811,7 @@ export const handler = async (event: any = {}) => {
     const totals: any = { totalAuto: 0, totalReply: 0, totalTwo: 0, totalX: 0, rateSkipped: 0 };
     for (const uid of userIds) {
       try {
-        const res = await runFiveMinJobForUser(uid);
+        const res = await runFiveMinJobForUser(uid, { dryRun: !!event?.dryRun });
         succeeded += 1;
         totals.totalAuto += Number(res.totalAuto || 0);
         totals.totalReply += Number(res.totalReply || 0);
@@ -2210,7 +2222,7 @@ async function fetchIncomingReplies(userId: any, acct: any) {
 }
 
 // === 予約投稿（毎時の"翌日分作成"） ===
-async function ensureNextDayAutoPosts(userId: any, acct: any) {
+async function ensureNextDayAutoPosts(userId: any, acct: any, opts: any = {}) {
   // アカウント側の大枠ガード
   // 注意: 自動投稿が無効なアカウントには「空の予約作成」を行わない
   if (!acct.autoGenerate || !acct.autoPost) {
@@ -2362,7 +2374,7 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
       // Mark this reservation as pool-driven so posting time will claim from pool
       scheduledSource: "pool",
       poolType: (acct && acct.type) ? String(acct.type) : "general",
-    });
+    }, opts);
     // 短期対応: 本文生成は同期で行わず、時間ごとの処理で段階的に生成する
     // generateAndAttachContent はここでは呼ばない
 
@@ -2391,7 +2403,7 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
 }
 
 // === X 用: 翌日分の空予約作成（pool-driven） ===
-async function ensureNextDayAutoPostsForX(userId: any, xacct: any) {
+async function ensureNextDayAutoPostsForX(userId: any, xacct: any, opts: any = {}) {
   // Guard: X アカウントの自動投稿が有効かつアクティブであること
   try {
     if (!xacct || xacct.autoPostEnabled !== true) {
@@ -2459,7 +2471,7 @@ async function ensureNextDayAutoPostsForX(userId: any, xacct: any) {
       // Debug: about to evaluate creating reservation (check dry-run flag)
       try { console.info('[x-hourly] pre-create check', { userId, accountId: xacct.accountId, window: w, TEST_CAPTURE: Boolean((global as any).__TEST_CAPTURE__) }); } catch(_) {}
       // Test capture/dry-run
-      if ((global as any).__TEST_CAPTURE__) {
+      if ((opts && opts.dryRun) || (global as any).__TEST_CAPTURE__) {
         try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'HOURLY_X_POOL_RESERVATION', payload: { userId, accountId: xacct.accountId, whenJst: when.toISOString(), poolType: xacct.type || 'general' } }); } catch(_) {}
         continue;
       }
@@ -3082,7 +3094,7 @@ async function runSecondStageForAccount(acct: any, userId = DEFAULT_USER_ID, set
 }
 
 /// ========== ユーザー単位の実行ラッパー ==========
-async function runHourlyJobForUser(userId: any) {
+async function runHourlyJobForUser(userId: any, opts: any = {}) {
   // normalize incoming userId (strip USER# prefix if present)
   const normalizedUserId = String(userId || '').replace(/^USER#/, '');
   const settings = await getUserSettings(normalizedUserId);
@@ -3108,7 +3120,7 @@ async function runHourlyJobForUser(userId: any) {
     // First: try creating quote reservations for accounts that opted-in
     try {
       // Hourly: create quote reservations (reservation creation only)
-      const qres = await createQuoteReservationForAccount(normalizedUserId, acct);
+      const qres = await createQuoteReservationForAccount(normalizedUserId, acct, opts);
       if (qres && qres.created) threadsCreated += qres.created || 0;
       if (qres && qres.skipped) threadsSkipped += 1;
       if (qres && qres.sourcePostId) checkedShortcodes.push({ sourcePostId: String(qres.sourcePostId), queriedPK: String(qres.queriedPK || ''), queriedAccountId: String(qres.queriedAccountId || '') });
@@ -3116,7 +3128,7 @@ async function runHourlyJobForUser(userId: any) {
       console.warn('[warn] createQuoteReservationForAccount failed:', String(e));
     }
 
-    const c = await ensureNextDayAutoPosts(normalizedUserId, acct);
+    const c = await ensureNextDayAutoPosts(normalizedUserId, acct, opts);
     threadsCreated += c.created || 0;
     if (c.skipped) threadsSkipped += 1;
 
@@ -3163,7 +3175,7 @@ async function runHourlyJobForUser(userId: any) {
       const xAccounts = await getXAccounts(normalizedUserId);
       for (const xacct of xAccounts) {
         try {
-          const xc = await ensureNextDayAutoPostsForX(normalizedUserId, xacct);
+          const xc = await ensureNextDayAutoPostsForX(normalizedUserId, xacct, opts);
           xCreated += xc.created || 0;
           if (xc.skipped) xSkipped += 1;
           try { console.info('[x-hourly] ensureNextDayAutoPostsForX', { userId: normalizedUserId, accountId: xacct.accountId, result: xc }); } catch(_) {}
@@ -3371,7 +3383,7 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
   return { generated, processed };
 }
 
-async function runFiveMinJobForUser(userId: any) {
+async function runFiveMinJobForUser(userId: any, opts: any = {}) {
   const settings = await getUserSettings(userId);
   if (settings.autoPost === "inactive") {
     return { userId, totalAuto: 0, totalReply: 0, totalTwo: 0, rateSkipped: 0, skipped: "master_off" };
@@ -3426,7 +3438,7 @@ async function runFiveMinJobForUser(userId: any) {
               // X posting logic: prefer pool-based posting (postFromPoolForAccount) implemented in post-to-x
               const xmod = await import('./post-to-x');
               try {
-                const dryRun = Boolean((global as any).__TEST_CAPTURE__);
+                const dryRun = !!(opts && opts.dryRun) || Boolean((global as any).__TEST_CAPTURE__);
                 // Use pool-based posting only; no fallback to old logic
                 const xr = await xmod.postFromPoolForAccount(userId, xacct, { dryRun, lockTtlSec: 600 });
                 try { console.info('[x-run] postFromPoolForAccount result', { userId, accountId: xacct.accountId, result: xr }); } catch(_) {}
@@ -4317,7 +4329,7 @@ async function deleteUpTo100PostsForAccount(userId: any, accountId: any, limit =
 }
 
 // Process DeletionQueue: claim due items and run deletion batches
-async function processDeletionQueueForUser(userId: any) {
+async function processDeletionQueueForUser(userId: any, opts: any = {}) {
   let totalDeleted = 0;
   try {
     // scan for due queue items
@@ -4368,7 +4380,22 @@ async function processDeletionQueueForUser(userId: any) {
         await config.loadConfig();
         const batchSizeVal = config.getConfigValue('DELETION_BATCH_SIZE');
         const batchSize = Number(batchSizeVal || '100') || 100;
-        try { console.info('[info] invoking deleteUpTo100PostsForAccount', { ownerUserId, accountId, batchSize }); } catch(_) {}
+        try { console.info('[info] invoking deleteUpTo100PostsForAccount', { ownerUserId, accountId, batchSize, dryRun: !!(opts && opts.dryRun) }); } catch(_) {}
+        if (opts && opts.dryRun) {
+          // Count candidates without performing deletes
+          try {
+            const cnt = await countPostedCandidates(ownerUserId);
+            const deletedWouldBe = Number(cnt?.candidates || 0);
+            totalDeleted += deletedWouldBe;
+            try { await putLog({ userId: ownerUserId, type: 'deletion', status: 'info', message: `dry-run deletion: ${deletedWouldBe} candidates for account ${accountId}` }); } catch(_) {}
+            // release processing flag and continue
+            try { await ddb.send(new UpdateItemCommand({ TableName: dqTable, Key: { PK: { S: `ACCOUNT#${accountId}` }, SK: { S: sk } }, UpdateExpression: 'SET processing = :f, last_processed_at = :ts', ExpressionAttributeValues: { ':f': { BOOL: false }, ':ts': { N: String(now) } } })); } catch(_) {}
+            continue;
+          } catch (e) {
+            try { console.warn('[warn] dry-run countPostedCandidates failed', { ownerUserId, accountId, err: String(e) }); } catch(_) {}
+            // fallthrough to non-dry-run behavior as a fallback
+          }
+        }
         const res = await deleteUpTo100PostsForAccount(ownerUserId, accountId, batchSize);
         try { console.info('[info] deleteUpTo100PostsForAccount result', { ownerUserId, accountId, res }); } catch(_) {}
         totalDeleted += Number(res?.deletedCount || 0);
