@@ -182,13 +182,18 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
             createdAt: itm.createdAt?.N ? Number(itm.createdAt.N) : 0,
           })).filter(x => (x.type || 'general') === poolType);
           if (pcands.length) {
+            try { console.info('[x-auto] pool query result', { userId, accountId, candidateCount: pcands.length }); } catch(_) {}
+            try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_POOL_QUERY', payload: { accountId: acct.accountId, candidateCount: pcands.length, poolType } }); } catch(_) {}
             // shuffle candidates to pick random pool item among same-user & same-type
             for (let i = pcands.length - 1; i > 0; i--) {
               const j = Math.floor(Math.random() * (i + 1));
               const tmp = pcands[i]; pcands[i] = pcands[j]; pcands[j] = tmp;
             }
+            try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_POOL_CANDS', payload: { accountId: acct.accountId, poolIds: pcands.map(p => p.poolId).slice(0,10) } }); } catch(_) {}
             for (const cand of pcands) {
               try {
+                try { console.info('[x-auto] attempting pool claim', { userId, accountId: acct.accountId, poolId: cand.poolId }); } catch(_) {}
+                try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_POOL_ATTEMPT_CLAIM', payload: { accountId: acct.accountId, poolId: cand.poolId } }); } catch(_) {}
                 const delRes: any = await ddb.send(new DeleteItemCommand({
                   TableName: TBL_POOL,
                   Key: { PK: { S: String(cand.pk.S) }, SK: { S: String(cand.sk.S) } },
@@ -197,8 +202,11 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
                 }));
                 const attrs = delRes && delRes.Attributes ? delRes.Attributes : null;
                 if (attrs) {
-                  postText = getS(attrs.content) || cand.content || '';
-                  const claimedImages = attrs.images ? (getS(attrs.images) ? JSON.parse(getS(attrs.images)) : []) : (cand.images || []);
+                  postText = (typeof getS === 'function' ? getS(attrs.content) : (attrs.content && attrs.content.S) ) || cand.content || '';
+                  let claimedImages: any[] = [];
+                  try { claimedImages = attrs.images ? (typeof getS === 'function' ? JSON.parse(getS(attrs.images)) : (attrs.images && JSON.parse(attrs.images.S))) : (cand.images || []); } catch(_) { claimedImages = (cand.images || []); }
+                  try { console.info('[x-auto] pool claim success', { userId, accountId: acct.accountId, poolId: cand.poolId, contentSnippet: String(postText || '').slice(0,120) }); } catch(_) {}
+                  try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_POOL_CLAIMED', payload: { accountId: acct.accountId, poolId: cand.poolId, contentSnippet: String(postText || '').slice(0,120), imagesCount: (claimedImages || []).length } }); } catch(_) {}
                   // attach claimed content to the scheduled record
                   try {
                     const nowTs = Math.floor(Date.now() / 1000);
@@ -208,13 +216,18 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
                       UpdateExpression: 'SET content = :c, images = :imgs, updatedAt = :now',
                       ExpressionAttributeValues: { ':c': { S: String(postText) }, ':imgs': { S: JSON.stringify(claimedImages || []) }, ':now': { N: String(nowTs) } },
                     }));
+                    try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_POOL_ATTACH_OK', payload: { accountId: acct.accountId, scheduledId: sk, poolId: cand.poolId } }); } catch(_) {}
                   } catch (e:any) {
-                    try { console.warn('[warn] attach claimed pool content to XScheduled failed', { userId, accountId, sk, err: String(e) }); } catch(_) {}
+                    try { console.warn('[warn] attach claimed pool content to XScheduled failed', { userId, accountId: sk, err: String(e) }); } catch(_) {}
+                    try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_POOL_ATTACH_ERR', payload: { accountId: acct.accountId, scheduledId: sk, poolId: cand.poolId, err: String(e) } }); } catch(_) {}
                   }
+                  // record that we claimed one and break
                   break;
                 }
               } catch (e:any) {
                 // failed to claim this candidate (race), try next
+                try { console.info('[x-auto] pool claim failed for candidate, trying next', { accountId: acct.accountId, poolId: cand.poolId, err: String(e) }); } catch(_) {}
+                try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_POOL_CLAIM_FAILED', payload: { accountId: acct.accountId, poolId: cand.poolId, err: String(e) } }); } catch(_) {}
                 continue;
               }
             }
