@@ -2705,28 +2705,73 @@ async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settin
     try {
       if ((cand.type === 'pool' || String(cand.type || '').toLowerCase() === 'pool') && (!text || String(text).trim() === "")) {
         const poolType = cand.poolType || 'general';
-        const claimed = await claimPoolItem(userId, poolType);
-        if (!claimed) {
-          await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "pool_claim_failed", detail: { poolType } });
-          // increment account failure count for visibility
-          await incrementAccountFailure(userId, acct.accountId);
-          // mark scheduled-post with attempt/failure
-          try { await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } }, UpdateExpression: "SET postAttempts = if_not_exists(postAttempts, :zero) + :inc, lastPostError = :err, lastPostAttemptAt = :ts", ExpressionAttributeValues: { ":zero": { N: "0" }, ":inc": { N: "1" }, ":err": { S: "pool_claim_failed" }, ":ts": { N: String(nowSec()) } } })); } catch(_) {}
-          return { ok: false };
-        }
-        // Persist claimed content into scheduled-post so retries reuse it
+        // Try to reuse latest failed reservation's content for this account (no new record creation)
+        let reused = null;
         try {
-          const updVals: any = { ":c": { S: String(claimed.content || "") }, ":ts": { N: String(nowSec()) } };
-          const updExprParts = ["content = :c", "lastClaimedAt = :ts"];
-          if (claimed.poolId) { updExprParts.push("claimedFromPoolId = :pid"); updVals[":pid"] = { S: String(claimed.poolId) }; }
-          if (claimed.images && Array.isArray(claimed.images)) { updExprParts.push("images = :imgs"); updVals[":imgs"] = { S: JSON.stringify(claimed.images) }; }
-          await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } }, UpdateExpression: `SET ${updExprParts.join(', ')}`, ExpressionAttributeValues: updVals }));
-          text = String(claimed.content || "");
-          await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "info", message: "pool_claim_ok", detail: { poolId: claimed.poolId } });
+          const prevQ = await ddb.send(new QueryCommand({
+            TableName: TBL_SCHEDULED,
+            IndexName: GSI_POS_BY_ACC_TIME,
+            KeyConditionExpression: "accountId = :acc",
+            ExpressionAttributeValues: { ":acc": { S: String(acct.accountId) } },
+            ProjectionExpression: "PK,SK,content,images,scheduledAt,#st,permanentFailure",
+            ExpressionAttributeNames: { "#st": "status" },
+            ScanIndexForward: false,
+            Limit: 50,
+          }));
+          const prevItems: any[] = (prevQ as any).Items || [];
+          for (const it of prevItems) {
+            const st = getS(it.status) || "";
+            const pf = it.permanentFailure?.BOOL === true;
+            const c = getS(it.content) || "";
+            if (st === "failed" && !pf && c) { reused = it; break; }
+          }
         } catch (e) {
-          await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "pool_claim_persist_failed", detail: { error: String(e) } });
-          await incrementAccountFailure(userId, acct.accountId);
-          return { ok: false };
+          try { await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "warn", message: "reuse_lookup_failed", detail: { error: String(e) } }); } catch(_) {}
+        }
+
+        if (reused) {
+          // Write reused content into current reservation (no new record creation)
+          try {
+            if (!(opts && opts.dryRun) && !(global as any).__TEST_CAPTURE__) {
+              const updVals: any = { ":c": { S: String(getS(reused.content) || "") }, ":ts": { N: String(nowSec()) }, ":src": { S: String(getS(reused.SK) || "") } };
+              const updExprParts = ["content = :c", "lastClaimedFromFailed = :src", "lastClaimedAt = :ts"];
+              if (getS(reused.images)) { updExprParts.push("images = :imgs"); updVals[":imgs"] = { S: String(getS(reused.images) || "") }; }
+              await ddb.send(new UpdateItemCommand({
+                TableName: TBL_SCHEDULED,
+                Key: { PK: { S: pk }, SK: { S: sk } },
+                UpdateExpression: `SET ${updExprParts.join(', ')}`,
+                ExpressionAttributeValues: updVals,
+              }));
+            } else {
+              try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'DRYRUN_REUSE_FAILED_CONTENT', payload: { userId, accountId: acct.accountId, fromSK: String(getS(reused.SK) || '') } }); } catch(_) {}
+            }
+            text = String(getS(reused.content) || "");
+          } catch (e) {
+            try { await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "warn", message: "reuse_persist_failed", detail: { error: String(e) } }); } catch(_) {}
+          }
+        } else {
+          // No reusable failed content found -> claim from pool
+          const claimed = await claimPoolItem(userId, poolType);
+          if (!claimed) {
+            await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "pool_claim_failed", detail: { poolType } });
+            await incrementAccountFailure(userId, acct.accountId);
+            try { await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } }, UpdateExpression: "SET postAttempts = if_not_exists(postAttempts, :zero) + :inc, lastPostError = :err, lastPostAttemptAt = :ts", ExpressionAttributeValues: { ":zero": { N: "0" }, ":inc": { N: "1" }, ":err": { S: "pool_claim_failed" }, ":ts": { N: String(nowSec()) } } })); } catch(_) {}
+            return { ok: false };
+          }
+          // Persist claimed content into scheduled-post so retries reuse it; pool is consumed (atomic delete in claimPoolItem)
+          try {
+            const updVals: any = { ":c": { S: String(claimed.content || "") }, ":ts": { N: String(nowSec()) } };
+            const updExprParts = ["content = :c", "lastClaimedAt = :ts"];
+            if (claimed.poolId) { updExprParts.push("claimedFromPoolId = :pid"); updVals[":pid"] = { S: String(claimed.poolId) }; }
+            if (claimed.images && Array.isArray(claimed.images)) { updExprParts.push("images = :imgs"); updVals[":imgs"] = { S: JSON.stringify(claimed.images) }; }
+            await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } }, UpdateExpression: `SET ${updExprParts.join(', ')}`, ExpressionAttributeValues: updVals }));
+            text = String(claimed.content || "");
+            await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "info", message: "pool_claim_ok", detail: { poolId: claimed.poolId } });
+          } catch (e) {
+            await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "pool_claim_persist_failed", detail: { error: String(e) } });
+            await incrementAccountFailure(userId, acct.accountId);
+            return { ok: false };
+          }
         }
       }
     } catch (e) {
