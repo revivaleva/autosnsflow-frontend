@@ -221,6 +221,12 @@ export async function postFromPoolForAccount(userId: string, acct: any, opts: { 
     const cand = candidates[0];
     debug.tried = 1;
 
+    // If dryRun requested, do not acquire locks or modify DB — just report the candidate.
+    if (opts.dryRun || (global as any).__TEST_CAPTURE__) {
+      try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'DRYRUN_POST_FROM_POOL', payload: { userId, accountId, poolId: cand.poolId } }); } catch(_) {}
+      return { posted: 0, debug: { dryRun: true, poolId: cand.poolId } };
+    }
+
     // 2) Try to acquire lock on the pool item (conditional update)
     const owner = `worker_${process.pid}_${now}`;
     const expiresAt = now + lockTtl;
@@ -236,20 +242,6 @@ export async function postFromPoolForAccount(userId: string, acct: any, opts: { 
       // failed to acquire lock
       debug.errors.push({ err: 'lock_failed', detail: String(e) });
       return { posted: 0, debug };
-    }
-
-    // 3) If dryRun, record and return
-    if (opts.dryRun || (global as any).__TEST_CAPTURE__) {
-      try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'DRYRUN_POST_FROM_POOL', payload: { userId, accountId, poolId: cand.poolId } }); } catch(_) {}
-      // release lock by removing postingLockOwner/ExpiresAt
-      try {
-        await ddb.send(new UpdateItemCommand({
-          TableName: TBL_POOL,
-          Key: { PK: { S: String(cand.pk.S) }, SK: { S: String(cand.sk.S) } },
-          UpdateExpression: 'REMOVE postingLockOwner, postingLockExpiresAt',
-        }));
-      } catch (_) {}
-      return { posted: 0, debug: { dryRun: true, poolId: cand.poolId } };
     }
 
     // 4) perform post using acct tokens (try refresh on failure)

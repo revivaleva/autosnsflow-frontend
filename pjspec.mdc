@@ -65,7 +65,7 @@
 
 - 具体的な DB 副作用の扱い
   - 予約レコード作成（`createScheduledPost` / `createQuoteReservationForAccount` 等）: `opts.dryRun === true` の場合は PutItem を実行せず、作成予定のデータ（accountId, whenJst, group 等）を `TEST_OUTPUT` に `DRYRUN_CREATE_SCHEDULED_POST` / `DRYRUN_CREATE_QUOTE_RESERVATION` タグで出力し、呼び出し元へは作成カウントを返す。
-  - プール消費 / 即時投稿（`postFromPoolForAccount`）: 既に `opts.dryRun` を受け付けており、dry-run 時はプールロックの獲得 → 解放まで行い DB 削除や API 呼び出しを行わない（`DRYRUN_POST_FROM_POOL` を出力）。
+  - プール消費 / 即時投稿（`postFromPoolForAccount`）: 既に `opts.dryRun` を受け付けており、dry-run 時はプールロックの獲得や DB 更新（DeleteItem/UpdateItem）を行わず、候補の情報を `TEST_OUTPUT` に `DRYRUN_POST_FROM_POOL` タグで出力すること。ロック取得は行わない。
   - 削除処理（`processDeletionQueueForUser` / `deleteUpTo100PostsForAccount` / `deletePostedForUser` 等）: dry-run 時は実際の DeleteItem を行わず、`countPostedCandidates` 等を用いて削除候補数を算出し、その件数を集計に加える。Queue の取り消しや account 状態の更新は行わない。
 
 - 通知
