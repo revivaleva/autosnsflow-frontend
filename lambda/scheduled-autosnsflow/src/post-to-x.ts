@@ -155,6 +155,7 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
               }));
             } catch (_) {}
             try { await putLog({ userId, type: "auto-post", accountId, targetId: sk, status: "skip", message: "timeRange passed, expired" }); } catch(_) {}
+            try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_EXPIRED_SKIPPED', payload: { accountId, pk, sk, scheduledAt: scheduledAtSec, endEpoch, now } }); } catch(_) {}
             continue;
           }
         }
