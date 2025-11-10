@@ -418,7 +418,7 @@ async function getUserSettings(userId = DEFAULT_USER_ID) {
       TableName: TBL_SETTINGS,
       Key: { PK: { S: `USER#${userId}` }, SK: { S: "SETTINGS" } },
       ProjectionExpression:
-        "doublePostDelay, autoPost, dailyOpenAiLimit, defaultOpenAiCost, openaiApiKey, selectedModel, masterPrompt, quotePrompt, openAiTemperature, openAiMaxTokens, autoPostAdminStop, doublePostDelete, doublePostDeleteDelay, parentDelete",
+        "doublePostDelay, autoPost, dailyOpenAiLimit, defaultOpenAiCost, openaiApiKey, selectedModel, masterPrompt, quotePrompt, openAiTemperature, openAiMaxTokens, autoPostAdminStop, doublePostDelete, doublePostDeleteDelay, parentDelete, enableX",
     })
   );
   const delay = Number(out.Item?.doublePostDelay?.N || "0");
@@ -454,6 +454,7 @@ async function getUserSettings(userId = DEFAULT_USER_ID) {
     quotePrompt,
     openAiTemperature,
     openAiMaxTokens,
+    enableX: (out.Item?.enableX?.BOOL === true) || (String(out.Item?.enableX?.S || '').toLowerCase() === 'true'),
     doublePostDelete: out.Item?.doublePostDelete?.BOOL === true,
     doublePostDeleteDelayMinutes: Number(out.Item?.doublePostDeleteDelay?.N || "60"),
     parentDelete: out.Item?.parentDelete?.BOOL === true,
