@@ -302,8 +302,9 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
                       </td>
                       <td className="px-2 py-1">{p.postedAt ? (typeof p.postedAt === 'number' ? new Date(p.postedAt * 1000).toLocaleString() : String(p.postedAt)) : ''}</td>
                       <td className="px-2 py-1">
-                        {p.status === 'posted' && p.postId ? (
-                          <a href={`https://www.threads.net/post/${p.postId}`} target="_blank" rel="noreferrer" className="text-blue-600 dark:text-blue-400 underline">{String(p.postId).slice(0,30)}</a>
+                      {p.status === 'posted' && p.postId ? (
+                          // Xの投稿一覧なので X のパーマリンクを生成する
+                          <a href={`https://x.com/${encodeURIComponent(p.accountId)}/status/${encodeURIComponent(p.postId)}`} target="_blank" rel="noreferrer" className="text-blue-600 dark:text-blue-400 underline">{String(p.postId).slice(0,30)}</a>
                         ) : ''}
                       </td>
                     </tr>
