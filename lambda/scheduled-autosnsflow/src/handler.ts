@@ -3393,6 +3393,7 @@ async function runFiveMinJobForUser(userId: any, opts: any = {}) {
   // track X accounts that already had a successful auto-post in this run
   const processedXAccounts = new Set<string>();
   let totalAuto = 0, totalReply = 0, totalTwo = 0, rateSkipped = 0, totalX = 0;
+  let xAutoDisabledSkipped = 0;
   const perAccount: any[] = [];
 
   for (const acct of accounts) {
@@ -3438,6 +3439,12 @@ async function runFiveMinJobForUser(userId: any, opts: any = {}) {
               // X posting logic: prefer pool-based posting (postFromPoolForAccount) implemented in post-to-x
               const xmod = await import('./post-to-x');
               try {
+                // Skip accounts where auto-posting is disabled
+                if (!xacct.autoPostEnabled) {
+                  xAutoDisabledSkipped++;
+                  try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_ACCOUNT_AUTOPOST_DISABLED', payload: { accountId: xacct.accountId } }); } catch(_) {}
+                  continue;
+                }
                 const dryRun = !!(opts && opts.dryRun) || Boolean((global as any).__TEST_CAPTURE__);
                 // Use pool-based posting only; no fallback to old logic
                 const xr = await xmod.postFromPoolForAccount(userId, xacct, { dryRun, lockTtlSec: 600 });
@@ -3517,8 +3524,13 @@ async function runFiveMinJobForUser(userId: any, opts: any = {}) {
     { label: "失効(rate-limit)", value: rateSkipped },
   ], "every-5min");
   // include X posted count in the metrics if present
-  if (totalX) {
-    try { metrics += ` / X投稿: ${totalX}`; } catch(_) {}
+  if (totalX || xAutoDisabledSkipped) {
+    try {
+      const parts: string[] = [];
+      if (totalX) parts.push(`X投稿: ${totalX}`);
+      if (xAutoDisabledSkipped) parts.push(`X自動投稿OFF: ${xAutoDisabledSkipped}`);
+      metrics += ` / ${parts.join(' / ')}`;
+    } catch(_) {}
   }
   const content = metrics === "every-5min：実行なし" ? metrics : `**[定期実行レポート] ${now} (every-5min)**\n${metrics}`;
   await postDiscordLog({ userId, content });
