@@ -115,8 +115,11 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
       // Verbose candidate inspection for diagnostics
       try { console.info('[x-auto] candidate inspect', { userId, accountId, pk, sk, status: it.status?.S || null, contentPresent: !!(it.content && it.content.S), scheduledAt: it.scheduledAt?.N || null, timeRange: it.timeRange?.S || null, poolType: it.poolType?.S || null }); } catch(_) {}
       try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_CAND_ITEM', payload: { accountId: accountId, pk, sk, status: it.status?.S || null, content: (it.content && it.content.S) || null, scheduledAt: Number(it.scheduledAt?.N || 0), timeRange: it.timeRange?.S || null, poolType: it.poolType?.S || null } }); } catch(_) {}
-      // Prevent double-posting: ensure status is pending
-      if ((it.status && it.status.S) && it.status.S !== 'pending') continue;
+      // Prevent double-posting: ensure status is pending or scheduled (hourly creates 'scheduled')
+      if ((it.status && it.status.S) && it.status.S !== 'pending' && it.status.S !== 'scheduled') {
+        try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_SKIP_STATUS', payload: { accountId, pk, sk, status: it.status.S } }); } catch(_) {}
+        continue;
+      }
       // Time-range expiry check: skip items whose scheduled time window has passed
       try {
         const scheduledAtSec = Number(it.scheduledAt?.N || 0);
