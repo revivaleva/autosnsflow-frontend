@@ -65,7 +65,13 @@
 
 - 具体的な DB 副作用の扱い
   - 予約レコード作成（`createScheduledPost` / `createQuoteReservationForAccount` 等）: `opts.dryRun === true` の場合は PutItem を実行せず、作成予定のデータ（accountId, whenJst, group 等）を `TEST_OUTPUT` に `DRYRUN_CREATE_SCHEDULED_POST` / `DRYRUN_CREATE_QUOTE_RESERVATION` タグで出力し、呼び出し元へは作成カウントを返す。
-  - プール消費 / 即時投稿（`postFromPoolForAccount`）: 既に `opts.dryRun` を受け付けており、dry-run 時はプールロックの獲得や DB 更新（DeleteItem/UpdateItem）を行わず、候補の情報を `TEST_OUTPUT` に `DRYRUN_POST_FROM_POOL` タグで出力すること。ロック取得は行わない。
+  - プール消費 / 即時投稿（`postFromPoolForAccount`）:
+    - dry-run 時は既に `opts.dryRun` を受け付け、プールロックの獲得や DB 更新（DeleteItem/UpdateItem）を行わず、候補の情報を `TEST_OUTPUT` に `DRYRUN_POST_FROM_POOL` タグで出力すること。ロック取得は行わない。
+    - プールからアイテムを取得した場合は、実行結果に関係なく `XScheduledPosts`（`TBL_X_SCHEDULED`）へ記録し、UI の予約一覧に反映すること。実装方針:
+      - プール項目のロック取得後（dry-run では除外）に `XScheduledPosts` に `status='attempting'` の項目を作成する。`scheduledPostId` は `xsp-pool-<poolId>-<unix>` 形式とする。  
+      - 投稿成功時は該当 `XScheduledPosts` を `status='posted'` に更新し `postedAt`/`postId` を設定する。プール項目は削除する。  
+      - 投稿失敗時は該当 `XScheduledPosts` を `status='failed'` に更新し `lastPostError` を保存、プール項目はロック解除して残す（再試行可能）。  
+      - dry-run 実行時は `XScheduledPosts` の作成・更新は行わない（`DRYRUN_POST_FROM_POOL` のみ出力）。
   - 削除処理（`processDeletionQueueForUser` / `deleteUpTo100PostsForAccount` / `deletePostedForUser` 等）: dry-run 時は実際の DeleteItem を行わず、`countPostedCandidates` 等を用いて削除候補数を算出し、その件数を集計に加える。Queue の取り消しや account 状態の更新は行わない。
 
 - 通知
