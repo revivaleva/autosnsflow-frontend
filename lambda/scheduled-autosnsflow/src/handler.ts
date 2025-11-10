@@ -3146,7 +3146,17 @@ async function runHourlyJobForUser(userId: any) {
   const urls = await getDiscordWebhooks(userId);
   const now = new Date().toISOString();
   // minor debug: totals logged at info level only
-  try { console.info('[info] hourly totals', { createdCount, fetchedReplies, replyDrafts, skippedAccounts }); } catch (e) { console.error('[error] hourly totals logging failed:', String(e)); }
+  try {
+    const totalsInfo = {
+      createdCount: (threadsCreated || 0) + (xCreated || 0),
+      fetchedReplies: threadsFetchedReplies || 0,
+      replyDrafts: threadsReplyDrafts || 0,
+      skippedAccounts: (threadsSkipped || 0) + (xSkipped || 0),
+    };
+    console.info('[info] hourly totals', totalsInfo);
+  } catch (e) {
+    console.error('[error] hourly totals logging failed:', String(e));
+  }
   // Hourly: also create empty reservations for X accounts (pool-driven)
   try {
     if (settings && settings.enableX) {
