@@ -181,6 +181,20 @@ export default function XAccountModal({ open, onClose, mode = "create", account,
             >
               {checkingAuth ? '確認中...' : (oauthAccessTokenLocal ? '認証済み' : '未認証')}
             </button>
+            {/* copy callback url button next to auth status */}
+            <button
+              type="button"
+              aria-label="認可URLコピー"
+              title="認可URLを取得してコピー"
+              className="ml-2 px-2 py-1 border rounded text-sm bg-gray-50 dark:bg-gray-800"
+              onClick={async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                await handleCopyAuthUrl();
+              }}
+            >
+              コピー
+            </button>
             <button type="button" className="ml-auto bg-indigo-500 dark:bg-indigo-600 text-white px-3 py-1 rounded" onClick={handleOpenApp}>アプリ</button>
           </div>
 

@@ -28,6 +28,12 @@ export default function XAccountsTable({ onlyType }: { onlyType?: string } = {})
       if (!res.ok) throw new Error('failed');
       const j = await res.json();
       let items = j.accounts || [];
+      // sort by registration/creation date descending (newest first)
+      items = items.sort((a: any, b: any) => {
+        const ta = a.createdAt ? Number(a.createdAt) : 0;
+        const tb = b.createdAt ? Number(b.createdAt) : 0;
+        return tb - ta;
+      });
       if (onlyType) {
         items = items.filter((a: any) => (a.type || 'general') === onlyType);
       }
