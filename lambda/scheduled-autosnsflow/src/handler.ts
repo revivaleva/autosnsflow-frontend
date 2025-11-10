@@ -3094,10 +3094,13 @@ async function runHourlyJobForUser(userId: any) {
   }
   const accounts = await getThreadsAccounts(normalizedUserId);
 
-  let createdCount = 0;
-  let fetchedReplies = 0;
-  let replyDrafts = 0;
-  let skippedAccounts = 0;
+  // Separate counters for Threads and X to allow split reporting
+  let threadsCreated = 0;
+  let threadsFetchedReplies = 0;
+  let threadsReplyDrafts = 0;
+  let threadsSkipped = 0;
+  let xCreated = 0;
+  let xSkipped = 0;
   const checkedShortcodes: Array<{ sourcePostId: string; queriedPK?: string; queriedAccountId?: string }> = [];
 
   for (const acct of accounts) {
@@ -3105,16 +3108,16 @@ async function runHourlyJobForUser(userId: any) {
     try {
       // Hourly: create quote reservations (reservation creation only)
       const qres = await createQuoteReservationForAccount(normalizedUserId, acct);
-      if (qres && qres.created) createdCount += qres.created;
-      if (qres && qres.skipped) skippedAccounts++;
+      if (qres && qres.created) threadsCreated += qres.created || 0;
+      if (qres && qres.skipped) threadsSkipped += 1;
       if (qres && qres.sourcePostId) checkedShortcodes.push({ sourcePostId: String(qres.sourcePostId), queriedPK: String(qres.queriedPK || ''), queriedAccountId: String(qres.queriedAccountId || '') });
     } catch (e) {
       console.warn('[warn] createQuoteReservationForAccount failed:', String(e));
     }
 
     const c = await ensureNextDayAutoPosts(normalizedUserId, acct);
-    createdCount += c.created || 0;
-    if (c.skipped) skippedAccounts++;
+    threadsCreated += c.created || 0;
+    if (c.skipped) threadsSkipped += 1;
 
       // Hourly: pool-driven fallback for Threads accounts removed.
       // Pool-driven reservations are managed elsewhere; do not create a single pool fallback here.
@@ -3124,8 +3127,8 @@ async function runHourlyJobForUser(userId: any) {
     try {
       if (!DISABLE_QUOTE_PROCESSING) {
         const fr = await fetchIncomingReplies(normalizedUserId, acct);
-        fetchedReplies += fr.fetched || 0;
-        replyDrafts += fr.fetched || 0; // 取得したリプライ分だけ返信ドラフトが生成される
+        threadsFetchedReplies += fr.fetched || 0;
+        threadsReplyDrafts += fr.fetched || 0; // 取得したリプライ分だけ返信ドラフトが生成される
       } else {
         try { console.info('[info] fetchIncomingReplies skipped by DISABLE_QUOTE_PROCESSING', { userId, account: acct.accountId }); } catch(_) {}
       }
@@ -3149,8 +3152,8 @@ async function runHourlyJobForUser(userId: any) {
     for (const xacct of xAccounts) {
       try {
         const xc = await ensureNextDayAutoPostsForX(normalizedUserId, xacct);
-        createdCount += xc.created || 0;
-        if (xc.skipped) skippedAccounts++;
+        xCreated += xc.created || 0;
+        if (xc.skipped) xSkipped += 1;
         try { console.info('[x-hourly] ensureNextDayAutoPostsForX', { userId: normalizedUserId, accountId: xacct.accountId, result: xc }); } catch(_) {}
         (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
         (global as any).__TEST_OUTPUT__.push({ tag: 'HOURLY_X_POOL_RESERVATION', payload: { accountId: xacct.accountId, result: xc } });
@@ -3161,16 +3164,20 @@ async function runHourlyJobForUser(userId: any) {
   } catch (e) {
     console.warn('[warn] hourly X pool reservation failed', String(e));
   }
-  // `metrics` が空（= 実行なし）の場合は簡略化して 'hourly：実行なし' のみ送る
-  const metrics = formatNonZeroLine([
-    { label: "予約投稿作成", value: createdCount, suffix: " 件" },
-    { label: "返信取得", value: fetchedReplies, suffix: " 件" },
-    { label: "返信下書き", value: replyDrafts, suffix: " 件" },
-    { label: "スキップ", value: skippedAccounts },
-  ], "hourly");
-  const content = metrics === "hourly：実行なし" ? metrics : `**[定期実行レポート] ${now} (hourly)**\n${metrics}`;
-  await postDiscordLog({ userId, content });
-  return { userId, createdCount, fetchedReplies, replyDrafts, skippedAccounts, checkedShortcodes };
+  // Build Discord message with Threads/X separated; respect user setting enableX for user webhooks.
+  try {
+    const enableX = !!(settings && settings.enableX === true);
+    const header = `**[定期実行レポート] ${now} (hourly)**\n`;
+    const threadsLine = `Threads — 予約作成: ${threadsCreated} / 返信取得: ${threadsFetchedReplies} / 返信下書き: ${threadsReplyDrafts} / スキップ: ${threadsSkipped}`;
+    const xLine = `X — 予約作成: ${xCreated} / スキップ: ${xSkipped}`;
+    const totalSkips = threadsSkipped + (enableX ? xSkipped : 0);
+    const combinedLine = `合計スキップ: ${totalSkips}`;
+    const content = header + threadsLine + (enableX ? `\n${xLine}\n${combinedLine}` : `\n${combinedLine}`);
+    await postDiscordLog({ userId, content });
+  } catch (e) {
+    try { console.warn('[warn] postDiscordLog (hourly) failed', String(e)); } catch(_) {}
+  }
+  return { userId, createdCount: threadsCreated + xCreated, fetchedReplies: threadsFetchedReplies, replyDrafts: threadsReplyDrafts, skippedAccounts: threadsSkipped + xSkipped, checkedShortcodes };
 }
 
 // (removed top-level X hourly loop - now executed inside runHourlyJobForUser)
