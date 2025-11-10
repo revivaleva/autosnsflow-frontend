@@ -1,5 +1,5 @@
 import { createDynamoClient } from '@/lib/ddb';
-import { PutItemCommand, QueryCommand, UpdateItemCommand, GetItemCommand } from '@aws-sdk/client-dynamodb';
+import { PutItemCommand, QueryCommand, UpdateItemCommand, GetItemCommand, DeleteItemCommand } from '@aws-sdk/client-dynamodb';
 
 const ddb = createDynamoClient();
 const TBL_X_SCHEDULED = process.env.TBL_X_SCHEDULED || 'XScheduledPosts';
@@ -159,8 +159,72 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
       // Try posting, attempt refresh once on failure
       let accessToken = acct.oauthAccessToken || acct.accessToken || '';
       let r;
+      // If content is empty, try to claim from PostPool and attach to this scheduled record
+      let postText = String(content || '');
+      if (!postText) {
+        try {
+          const TBL_POOL = process.env.TBL_POST_POOL || 'PostPool';
+          const poolType = acct.type || 'general';
+          const pq = await ddb.send(new QueryCommand({
+            TableName: TBL_POOL,
+            KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
+            ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'POOL#' } },
+            Limit: 50,
+          }));
+          const pitems: any[] = (pq as any).Items || [];
+          const pcands = pitems.map(itm => ({
+            pk: itm.PK,
+            sk: itm.SK,
+            poolId: itm.poolId?.S || (itm.SK?.S || '').replace(/^POOL#/, ''),
+            type: itm.type?.S || 'general',
+            content: itm.content?.S || '',
+            images: itm.images?.S ? JSON.parse(itm.images.S) : [],
+            createdAt: itm.createdAt?.N ? Number(itm.createdAt.N) : 0,
+          })).filter(x => (x.type || 'general') === poolType);
+          if (pcands.length) {
+            // shuffle candidates to pick random pool item among same-user & same-type
+            for (let i = pcands.length - 1; i > 0; i--) {
+              const j = Math.floor(Math.random() * (i + 1));
+              const tmp = pcands[i]; pcands[i] = pcands[j]; pcands[j] = tmp;
+            }
+            for (const cand of pcands) {
+              try {
+                const delRes: any = await ddb.send(new DeleteItemCommand({
+                  TableName: TBL_POOL,
+                  Key: { PK: { S: String(cand.pk.S) }, SK: { S: String(cand.sk.S) } },
+                  ConditionExpression: "attribute_exists(PK) AND attribute_exists(SK)",
+                  ReturnValues: 'ALL_OLD',
+                }));
+                const attrs = delRes && delRes.Attributes ? delRes.Attributes : null;
+                if (attrs) {
+                  postText = getS(attrs.content) || cand.content || '';
+                  const claimedImages = attrs.images ? (getS(attrs.images) ? JSON.parse(getS(attrs.images)) : []) : (cand.images || []);
+                  // attach claimed content to the scheduled record
+                  try {
+                    const nowTs = Math.floor(Date.now() / 1000);
+                    await ddb.send(new UpdateItemCommand({
+                      TableName: TBL_X_SCHEDULED,
+                      Key: { PK: { S: pk }, SK: { S: sk } },
+                      UpdateExpression: 'SET content = :c, images = :imgs, updatedAt = :now',
+                      ExpressionAttributeValues: { ':c': { S: String(postText) }, ':imgs': { S: JSON.stringify(claimedImages || []) }, ':now': { N: String(nowTs) } },
+                    }));
+                  } catch (e:any) {
+                    try { console.warn('[warn] attach claimed pool content to XScheduled failed', { userId, accountId, sk, err: String(e) }); } catch(_) {}
+                  }
+                  break;
+                }
+              } catch (e:any) {
+                // failed to claim this candidate (race), try next
+                continue;
+              }
+            }
+          }
+        } catch (e:any) {
+          try { console.info('[info] claim pool for scheduled failed', { userId, accountId, err: String(e) }); } catch(_) {}
+        }
+      }
       try {
-        r = await postToX({ accessToken, text: content });
+        r = await postToX({ accessToken, text: postText });
       } catch (postErr) {
         // Try token refresh using stored refreshToken
         try {
@@ -300,8 +364,11 @@ export async function postFromPoolForAccount(userId: string, acct: any, opts: { 
       return { posted: 0, debug: { reason: 'no_pool_items' } };
     }
 
-    // choose oldest (FIFO)
-    candidates.sort((a,b) => (a.createdAt || 0) - (b.createdAt || 0));
+    // choose random candidate among same-user & same-type pool items
+    for (let i = candidates.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const tmp = candidates[i]; candidates[i] = candidates[j]; candidates[j] = tmp;
+    }
     const cand = candidates[0];
     debug.tried = 1;
 
