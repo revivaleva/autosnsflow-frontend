@@ -269,20 +269,35 @@ export async function postFromPoolForAccount(userId: string, acct: any, opts: { 
       return { posted: 0, debug: { dryRun: true, poolId: cand.poolId } };
     }
 
-    // 2) Try to acquire lock on the pool item (conditional update)
-    const owner = `worker_${process.pid}_${now}`;
-    const expiresAt = now + lockTtl;
-    try {
-      await ddb.send(new UpdateItemCommand({
-        TableName: TBL_POOL,
-        Key: { PK: { S: String(cand.pk.S) }, SK: { S: String(cand.sk.S) } },
-        UpdateExpression: 'SET postingLockOwner = :owner, postingLockExpiresAt = :exp',
-        ConditionExpression: 'attribute_not_exists(postingLockOwner) OR postingLockExpiresAt < :now',
-        ExpressionAttributeValues: { ':owner': { S: owner }, ':exp': { N: String(expiresAt) }, ':now': { N: String(now) } },
-      }));
-    } catch (e:any) {
-      // failed to acquire lock
-      debug.errors.push({ err: 'lock_failed', detail: String(e) });
+    // 2) Atomically claim (delete) a pool item for this candidate list.
+    let claimedFromPool: any = null;
+    for (const candidate of candidates) {
+      try {
+        const delRes: any = await ddb.send(new DeleteItemCommand({
+          TableName: TBL_POOL,
+          Key: { PK: { S: String(candidate.pk.S) }, SK: { S: String(candidate.sk.S) } },
+          ConditionExpression: "attribute_exists(PK) AND attribute_exists(SK)",
+          ReturnValues: 'ALL_OLD',
+        }));
+        const attrs = delRes && delRes.Attributes ? delRes.Attributes : null;
+        if (attrs) {
+          claimedFromPool = {
+            poolId: candidate.poolId,
+            content: getS(attrs.content) || candidate.content || "",
+            images: attrs.images ? (getS(attrs.images) ? JSON.parse(getS(attrs.images)) : []) : (candidate.images || []),
+          };
+          // set cand to the claimed one for downstream logging/usage
+          Object.assign(cand, candidate);
+          break;
+        }
+      } catch (e:any) {
+        // failed to claim this candidate (race) - try next
+        continue;
+      }
+    }
+    if (!claimedFromPool) {
+      // nobody claimable
+      debug.errors.push({ err: 'no_claimable_pool_item' });
       return { posted: 0, debug };
     }
 
@@ -290,20 +305,20 @@ export async function postFromPoolForAccount(userId: string, acct: any, opts: { 
     let scheduledRecordId: string | null = null;
     try {
       const nowSecVal = Math.floor(Date.now() / 1000);
-      scheduledRecordId = `xsp-pool-${String(cand.poolId || '').replace(/[^0-9a-zA-Z-_]/g,'')}-${nowSecVal}`;
+      scheduledRecordId = `xsp-pool-${String(claimedFromPool.poolId || '').replace(/[^0-9a-zA-Z-_]/g,'')}-${nowSecVal}`;
       const xItem: any = {
         PK: { S: `USER#${userId}` },
         SK: { S: `SCHEDULEDPOST#${scheduledRecordId}` },
         scheduledPostId: { S: scheduledRecordId },
         accountId: { S: accountId },
         accountName: { S: acct.username || accountId || '' },
-        content: { S: String(cand.content || '') },
+        content: { S: String(claimedFromPool.content || '') },
         scheduledAt: { N: String(nowSecVal) },
         postedAt: { N: '0' },
         status: { S: 'attempting' },
         scheduledSource: { S: 'pool' },
         poolType: { S: poolType },
-        poolId: { S: String(cand.poolId || '') },
+        poolId: { S: String(claimedFromPool.poolId || '') },
         createdAt: { N: String(nowSecVal) },
         updatedAt: { N: String(nowSecVal) },
         isDeleted: { BOOL: false },
@@ -334,12 +349,7 @@ export async function postFromPoolForAccount(userId: string, acct: any, opts: { 
       if (!postId) throw new Error('no_post_id');
 
       // 5) delete pool item
-      try {
-        await ddb.send(new DeleteItemCommand({ TableName: TBL_POOL, Key: { PK: { S: String(cand.pk.S) }, SK: { S: String(cand.sk.S) } } }));
-      } catch (e:any) {
-        // log but continue
-        try { console.warn('[post-from-pool] delete pool item failed', String(e)); } catch(_) {}
-      }
+      // pool already consumed by atomic DeleteItem above; nothing to do here
  
       // Update scheduled record as posted if exists
       try {
