@@ -3518,24 +3518,7 @@ async function runFiveMinJobForUser(userId: any, opts: any = {}) {
                     continue;
                   }
                 } catch (_) {}
-                // Fallback: attempt to post from pool only if scheduled didn't produce a post (or on dryRun we still probe pool)
-                try {
-                  const xr = await xmod.postFromPoolForAccount(userId, xacct, { dryRun, lockTtlSec: 600 });
-                  try { console.info('[x-run] postFromPoolForAccount result', { userId, accountId: xacct.accountId, result: xr }); } catch(_) {}
-                  (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
-                  (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_POOL_POST_RESULT', payload: { accountId: xacct.accountId, result: xr } });
-                  // If debug.errors present, log them verbosely for diagnosis
-                  try {
-                    if (xr && xr.debug && Array.isArray(xr.debug.errors) && xr.debug.errors.length > 0) {
-                      try { console.info('[x-run] postFromPoolForAccount debug.errors', { userId, accountId: xacct.accountId, errors: xr.debug.errors }); } catch(_) {}
-                      try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_POOL_POST_ERRORS', payload: { accountId: xacct.accountId, errors: xr.debug.errors } }); } catch(_) {}
-                    }
-                  } catch (_) {}
-                  if (xr && typeof xr.posted === 'number') {
-                    totalX += Number(xr.posted || 0);
-                    if (Number(xr.posted || 0) > 0) processedXAccounts.add(xacct.accountId);
-                  }
-                } catch (e) { console.warn('[warn] post-from-pool failed', e); }
+                // No pool fallback here — per spec, 5min must not create or consume pool items.
               } catch (e) { console.warn('[warn] post-from-pool failed', e); }
             } catch (e) { console.warn('[warn] post-to-x import or run failed', e); }
             }
