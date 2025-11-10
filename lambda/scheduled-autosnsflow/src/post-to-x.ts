@@ -72,8 +72,8 @@ export async function fetchDueXScheduledForAccountByAccount(accountId: string, n
     const filtered = items.filter((it: any) => {
       const st = it.status?.S || '';
       const isDeleted = it.isDeleted?.BOOL === true;
-      // treat missing status as pending
-      const isPending = (!st || st === 'pending');
+      // treat missing status as pending; also accept 'scheduled' created by Hourly
+      const isPending = (!st || st === 'pending' || st === 'scheduled');
       return isPending && !isDeleted && (Number(it.scheduledAt?.N || 0) <= Number(nowSec));
     }).slice(0, limit);
     try { console.info('[x-auto] fetchedByAccountFiltered', { accountId, nowSec, returned: filtered.length }); } catch(_) {}
