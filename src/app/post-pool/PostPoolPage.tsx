@@ -47,16 +47,16 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
       const xposts = xr.ok ? (await xr.json()).scheduledPosts || [] : [];
       const xaccResp = xa.ok ? (await xa.json()) : {};
       const xaccounts: any[] = xaccResp.accounts || xaccResp.items || [];
-      // filter x accounts by poolType
-      const filteredAccountIds = new Set(xaccounts.filter((a: any) => (a.type || 'general') === poolType).map(a => a.accountId));
+      // Only include X accounts that are enabled for auto-posting and match poolType
+      const filteredAccountIds = new Set(xaccounts.filter((a: any) => (a.type || 'general') === poolType && a.autoPostEnabled === true).map(a => a.accountId));
       const posts = (xposts as any[]).filter((p: any) => filteredAccountIds.has(p.accountId));
       // ensure accountName present
       const postsWithNames = posts.map((p: any) => {
         const acc = xaccounts.find(a => a.accountId === p.accountId);
         return { ...p, accountName: acc ? (acc.displayName || acc.username || acc.accountName || '') : (p.accountName || ''), accountObj: acc || null };
       });
-      // only include accounts matching current poolType in account filter
-      const filteredAccounts = xaccounts.filter((a: any) => (a.type || 'general') === poolType);
+      // only include accounts matching current poolType and enabled for auto-posting in account filter
+      const filteredAccounts = xaccounts.filter((a: any) => (a.type || 'general') === poolType && a.autoPostEnabled === true);
       setXAccountsList(filteredAccounts);
       setScheduledPostsX(postsWithNames);
     } catch (e) {
@@ -92,14 +92,17 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
       }
       const xj = await xr.json().catch(() => ({}));
       const xlist: any[] = xj.items || xj.accounts || [];
-      const general = xlist.filter((a: any) => (a.type || "general") === "general").length;
-      const ero = xlist.filter((a: any) => (a.type || "general") === "ero").length;
-      const saikyou = xlist.filter((a: any) => (a.type || "general") === "saikyou").length;
+      // Exclude accounts with autoPostEnabled === false from counts and posting-capable calculations
+      const enabledList = xlist.filter((a: any) => a.autoPostEnabled === true);
+      const general = enabledList.filter((a: any) => (a.type || "general") === "general").length;
+      const ero = enabledList.filter((a: any) => (a.type || "general") === "ero").length;
+      const saikyou = enabledList.filter((a: any) => (a.type || "general") === "saikyou").length;
       setGeneralCount(general);
       setEroCount(ero);
       setSaikyouCount(saikyou);
-      setXAccountsCount(Array.isArray(xlist) ? xlist.length : 0);
-      const filteredCount = xlist.filter((a: any) => (a.type || "general") === poolType).length;
+      // xAccountsCount: number of accounts eligible for posting (autoPostEnabled)
+      setXAccountsCount(enabledList.length);
+      const filteredCount = enabledList.filter((a: any) => (a.type || "general") === poolType).length;
       setAccountsCount(filteredCount);
     } catch (e) {
       setAccountsCount(0);
@@ -299,8 +302,9 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
                       </td>
                       <td className="px-2 py-1">{p.postedAt ? (typeof p.postedAt === 'number' ? new Date(p.postedAt * 1000).toLocaleString() : String(p.postedAt)) : ''}</td>
                       <td className="px-2 py-1">
-                        {p.status === 'posted' && p.postId ? (
-                          <a href={`https://www.threads.net/post/${p.postId}`} target="_blank" rel="noreferrer" className="text-blue-600 dark:text-blue-400 underline">{String(p.postId).slice(0,30)}</a>
+                      {p.status === 'posted' && p.postId ? (
+                          // Xの投稿一覧なので X のパーマリンクを生成する
+                          <a href={`https://x.com/${encodeURIComponent(p.accountId)}/status/${encodeURIComponent(p.postId)}`} target="_blank" rel="noreferrer" className="text-blue-600 dark:text-blue-400 underline">{String(p.postId).slice(0,30)}</a>
                         ) : ''}
                       </td>
                     </tr>

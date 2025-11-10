@@ -25,6 +25,21 @@ description:
   2. lambda に反映する際は、事前に「自動ビルドが無効になっている」ことを確認する。
   3. `git checkout lambda && git merge --no-ff origin/staging` を行い、`lambda` を `git push origin lambda` する。
 
+注記（CI / GitHub Actions の起動に関して）
+- GitHub Actions / Lambda ビルドを確実に起動させるための要件:
+  - ビルド開始トリガは **lambda ブランチへの push** です。必ず `git push origin lambda` で反映してください。
+  - Actions ワークフローのフィルタ条件として **コミットメッセージに `lambda:` プレフィックス** を期待する運用があるため、lambda 向けの変更を push する際はコミットメッセージを `lambda: ...` の形式にしてください（例: `lambda: update handler for X hourly reservations`）。これはリポジトリ内ワークフローや運用フックで使用される判定ルールに合致させるための運用ルールです。
+  - もし GitHub Actions が走らない場合は、以下を確認してください:
+    - `.github/workflows/` の該当ワークフローが `push` イベントで `branches: [lambda]` を監視していること。
+    - 該当ワークフロー内に `if` 条件でコミットメッセージをチェックしている場合、その条件とコミットメッセージが一致していること。
+    - リモートブランチ名が `lambda` であること（`lambda/xxx` 等ではトリガされない設定の可能性）。
+  - Amplify 等の外部デプロイ設定が自動ビルドを抑止している場合は、GitHub Actions のワークフローでビルドを行うか、Amplify の Auto-build を一時的に有効化してください（運用ポリシーに従って実施）。
+
+運用手順（確実にビルドさせるための実務）
+ 1. 変更をコミットする（メッセージは `lambda: your message`）。
+ 2. `git push origin lambda` を実行して Actions を起動する。  
+ 3. もし Actions が起動しない場合は管理者に `Actions` の実行権限やワークフロー条件の確認を依頼してください。
+
 - **注意**: 誰かから「lambda に push して」と指示があった場合は、必ず **自動ビルドが無効であること** を確認してから実行してください。確認が取れない場合は実行を保留し、確認事項（Auto-build の状態 or SKIP_AMPLIFY_BUILD の設定）を指示出し者へ問い合わせてください。
 
 <!-- 追記: このファイルに定期実行（prune）関連の運用追記を行いました（編集日: 2025-10-14）。

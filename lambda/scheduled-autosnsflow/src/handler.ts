@@ -418,7 +418,7 @@ async function getUserSettings(userId = DEFAULT_USER_ID) {
       TableName: TBL_SETTINGS,
       Key: { PK: { S: `USER#${userId}` }, SK: { S: "SETTINGS" } },
       ProjectionExpression:
-        "doublePostDelay, autoPost, dailyOpenAiLimit, defaultOpenAiCost, openaiApiKey, selectedModel, masterPrompt, quotePrompt, openAiTemperature, openAiMaxTokens, autoPostAdminStop, doublePostDelete, doublePostDeleteDelay, parentDelete",
+        "doublePostDelay, autoPost, dailyOpenAiLimit, defaultOpenAiCost, openaiApiKey, selectedModel, masterPrompt, quotePrompt, openAiTemperature, openAiMaxTokens, autoPostAdminStop, doublePostDelete, doublePostDeleteDelay, parentDelete, enableX",
     })
   );
   const delay = Number(out.Item?.doublePostDelay?.N || "0");
@@ -454,6 +454,7 @@ async function getUserSettings(userId = DEFAULT_USER_ID) {
     quotePrompt,
     openAiTemperature,
     openAiMaxTokens,
+    enableX: (out.Item?.enableX?.BOOL === true) || (String(out.Item?.enableX?.S || '').toLowerCase() === 'true'),
     doublePostDelete: out.Item?.doublePostDelete?.BOOL === true,
     doublePostDeleteDelayMinutes: Number(out.Item?.doublePostDeleteDelay?.N || "60"),
     parentDelete: out.Item?.parentDelete?.BOOL === true,
@@ -745,7 +746,7 @@ async function deleteUnpostedAutoPosts(userId: any, acct: any, groupTypeStr: any
   return deletedCount;
 }
 
-async function createScheduledPost(userId: any, { acct, group, type, whenJst, overrideTheme = "", overrideTimeRange = "", secondStageWanted = undefined, scheduledSource = undefined, poolType = undefined }: any) {
+async function createScheduledPost(userId: any, { acct, group, type, whenJst, overrideTheme = "", overrideTimeRange = "", secondStageWanted = undefined, scheduledSource = undefined, poolType = undefined }: any, opts: any = {}) {
   const themeStr = (overrideTheme || ((type === 1 ? group.theme1 : type === 2 ? group.theme2 : group.theme3) || ""));
   const groupTypeStr = `${group.groupName}-自動投稿${type}`;
   const timeRange = (overrideTimeRange || (type === 1 ? (group.time1 || "05:00-08:00") : type === 2 ? (group.time2 || "12:00-13:00") : (group.time3 || "20:00-23:00")) || "");
@@ -783,12 +784,18 @@ async function createScheduledPost(userId: any, { acct, group, type, whenJst, ov
     deleteScheduledAt: (typeof overrideTheme === 'object' && overrideTheme?.deleteScheduledAt) ? { N: String(Math.floor(new Date(String(overrideTheme.deleteScheduledAt)).getTime() / 1000)) } : undefined,
     deleteParentAfter: (typeof overrideTheme === 'object' && typeof overrideTheme?.deleteParentAfter !== 'undefined') ? { BOOL: !!overrideTheme.deleteParentAfter } : undefined,
   };
+  // If dry-run is requested via opts or global test-capture, do not perform the PutItem.
+  const dryRun = !!(opts && opts.dryRun) || !!(global as any).__TEST_CAPTURE__;
+  if (dryRun) {
+    try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'DRYRUN_CREATE_SCHEDULED_POST', payload: { userId, accountId: acct.accountId, whenJst: whenJst.toISOString(), group: group.groupName, type, poolType } }); } catch(_) {}
+    return { id, groupTypeStr, themeStr };
+  }
   await ddb.send(new PutItemCommand({ TableName: TBL_SCHEDULED, Item: sanitizeItem(item) }));
   return { id, groupTypeStr, themeStr };
 }
 
 // Create a quote reservation for an account if opted-in and monitored account has a new post
-async function createQuoteReservationForAccount(userId: any, acct: any) {
+async function createQuoteReservationForAccount(userId: any, acct: any, opts: any = {}) {
   try {
     if (!acct || !acct.autoQuote) return { created: 0, skipped: true };
     const monitored = acct.monitoredAccountId || "";
@@ -914,6 +921,11 @@ async function createQuoteReservationForAccount(userId: any, acct: any) {
     // persist scheduled reservation using canonical sourcePostId
     scheduledItem.sourcePostId = { S: canonicalSource };
     try {
+      const dryRun = !!(opts && opts.dryRun) || !!(global as any).__TEST_CAPTURE__;
+      if (dryRun) {
+        try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'DRYRUN_CREATE_QUOTE_RESERVATION', payload: { userId, accountId: acct.accountId, scheduledPostId: id, sourcePostId: canonicalSource } }); } catch(_) {}
+        return { created: 1, skipped: false, sourcePostId: canonicalSource, queriedPK: pkForQuery, queriedAccountId: acctForQuery, queriedSourcePostId: canonicalSource };
+      }
       await ddb.send(new PutItemCommand({ TableName: TBL_SCHEDULED, Item: scheduledItem }));
       await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'ok', message: '引用予約を作成', detail: { scheduledPostId: id, sourcePostId: canonicalSource, queriedPK: pkForQuery, queriedAccountId: acctForQuery, queriedSourcePostId: canonicalSource } });
       return { created: 1, skipped: false, sourcePostId: canonicalSource, queriedPK: pkForQuery, queriedAccountId: acctForQuery, queriedSourcePostId: canonicalSource };
@@ -1302,7 +1314,8 @@ export const handler = async (event: any = {}) => {
 
   // If invoked as a test invocation, enable in-memory capture of debug putLog entries
   try {
-    (global as any).__TEST_CAPTURE__ = !!(event && (event.testInvocation || event.detailedDebug));
+    // Treat event.dryRun as a test-capture flag so callers can request dry-run behavior.
+    (global as any).__TEST_CAPTURE__ = !!(event && (event.testInvocation || event.detailedDebug || event.dryRun));
     if ((global as any).__TEST_CAPTURE__) (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
   } catch (_) {}
 
@@ -1372,11 +1385,11 @@ export const handler = async (event: any = {}) => {
       const accountIds = (accounts || []).map((a: any) => a.accountId).filter(Boolean);
       if (job === 'hourly') {
         // hourly job will run reservation creation; quote posting is not gated by test flag
-        const res = await runHourlyJobForUser(userId);
+        const res = await runHourlyJobForUser(userId, { dryRun: !!event?.dryRun });
         // For test mode, also process deletion queue for this user so tests exercise deletion flow
         let dqRes: any = { deletedCount: 0 };
         try {
-          dqRes = await processDeletionQueueForUser(userId);
+          dqRes = await processDeletionQueueForUser(userId, { dryRun: !!event?.dryRun });
         } catch (e) {
           console.warn('[TEST] processDeletionQueueForUser failed:', String(e));
           try { await putLog({ userId, type: 'deletion', status: 'error', message: 'test_process_deletion_failed', detail: { error: String(e) } }); } catch(_){}
@@ -1387,7 +1400,7 @@ export const handler = async (event: any = {}) => {
         return { statusCode: 200, body: JSON.stringify({ testInvocation: true, job: 'hourly', userId, accountIds, result: merged, testOutput: testOut }) };
       } else {
         
-        const res = await runFiveMinJobForUser(userId);
+        const res = await runFiveMinJobForUser(userId, { dryRun: !!event?.dryRun });
         // attach any collected test-time output from threads lib so caller can inspect POST bodies
         const testOut = (global as any).__TEST_OUTPUT__ || [];
         try { (global as any).__TEST_OUTPUT__ = []; } catch(_) {}
@@ -1412,9 +1425,9 @@ export const handler = async (event: any = {}) => {
       const userIds = await getActiveUserIds();
       const totals = { createdCount: 0, fetchedReplies: 0, replyDrafts: 0, skippedAccounts: 0, deletedCount: 0 } as any;
       let succeeded = 0;
-      for (const uid of userIds) {
+    for (const uid of userIds) {
         try {
-          const res = await runHourlyJobForUser(uid);
+          const res = await runHourlyJobForUser(uid, { dryRun: !!event?.dryRun });
           succeeded += 1;
           totals.createdCount += Number(res.createdCount || 0);
           totals.fetchedReplies += Number(res.fetchedReplies || 0);
@@ -1422,7 +1435,7 @@ export const handler = async (event: any = {}) => {
           totals.skippedAccounts += Number(res.skippedAccounts || 0);
         // Also attempt to process deletion queue for this user (batch deletions)
         try {
-          const dqRes = await processDeletionQueueForUser(uid);
+          const dqRes = await processDeletionQueueForUser(uid, { dryRun: !!event?.dryRun });
           totals.deletedCount = (totals.deletedCount || 0) + Number(dqRes?.deletedCount || 0);
         } catch (e) {
           try { await putLog({ userId: uid, type: 'prune', status: 'warn', message: 'processDeletionQueueForUser failed', detail: { error: String(e) } }); } catch(_) {}
@@ -1798,7 +1811,7 @@ export const handler = async (event: any = {}) => {
     const totals: any = { totalAuto: 0, totalReply: 0, totalTwo: 0, totalX: 0, rateSkipped: 0 };
     for (const uid of userIds) {
       try {
-        const res = await runFiveMinJobForUser(uid);
+        const res = await runFiveMinJobForUser(uid, { dryRun: !!event?.dryRun });
         succeeded += 1;
         totals.totalAuto += Number(res.totalAuto || 0);
         totals.totalReply += Number(res.totalReply || 0);
@@ -2209,9 +2222,18 @@ async function fetchIncomingReplies(userId: any, acct: any) {
 }
 
 // === 予約投稿（毎時の"翌日分作成"） ===
-async function ensureNextDayAutoPosts(userId: any, acct: any) {
+async function ensureNextDayAutoPosts(userId: any, acct: any, opts: any = {}) {
   // アカウント側の大枠ガード
-  if (!acct.autoGenerate) return { created: 0, skipped: true };
+  // 注意: 自動投稿が無効なアカウントには「空の予約作成」を行わない
+  if (!acct.autoGenerate || !acct.autoPost) {
+    try {
+      await putLog({
+        userId, type: "auto-post", accountId: acct.accountId,
+        status: "skip", message: `autoGenerate=${!!acct.autoGenerate}, autoPost=${!!acct.autoPost} のためスキップ`
+      });
+    } catch (_) {}
+    return { created: 0, skipped: true };
+  }
   if (acct.status && acct.status !== "active") {
     await putLog({
       userId, type: "auto-post", accountId: acct.accountId,
@@ -2352,7 +2374,7 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
       // Mark this reservation as pool-driven so posting time will claim from pool
       scheduledSource: "pool",
       poolType: (acct && acct.type) ? String(acct.type) : "general",
-    });
+    }, opts);
     // 短期対応: 本文生成は同期で行わず、時間ごとの処理で段階的に生成する
     // generateAndAttachContent はここでは呼ばない
 
@@ -2378,6 +2400,151 @@ async function ensureNextDayAutoPosts(userId: any, acct: any) {
 
   // テスト時にレスポンスからも追えるよう debug を返す
   return { created, deleted, skipped: false, debug };
+}
+
+// === X 用: 翌日分の空予約作成（pool-driven） ===
+async function ensureNextDayAutoPostsForX(userId: any, xacct: any, opts: any = {}) {
+  // Guard: X アカウントの自動投稿が有効かつアクティブであること
+  try {
+    if (!xacct || xacct.autoPostEnabled !== true) {
+      try { await putLog({ userId, type: "auto-post-x", accountId: xacct && xacct.accountId, status: "skip", message: `autoPostEnabled=${!!(xacct && xacct.autoPostEnabled)} のためスキップ` }); } catch(_) {}
+      return { created: 0, skipped: true };
+    }
+    if (xacct.status && xacct.status !== "active") {
+      try { await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "skip", message: `status=${xacct.status} のためスキップ` }); } catch(_) {}
+      return { created: 0, skipped: true };
+    }
+  } catch (e) {
+    console.warn('[warn] ensureNextDayAutoPostsForX guard failed:', String(e));
+    return { created: 0, skipped: true };
+  }
+  // Debug: log entry and target table name to help diagnose missing PutItem
+  try { console.info('[x-hourly] ensureNextDayAutoPostsForX start', { userId, accountId: xacct && xacct.accountId, TBL_X_SCHEDULED: process.env.TBL_X_SCHEDULED || 'XScheduledPosts' }); } catch(_) {}
+
+  const fixedWindows = ["07:00-09:00", "12:00-14:00", "17:00-21:00"];
+  const today = jstNow();
+  let created = 0;
+
+  for (const w of fixedWindows) {
+    try {
+      const when = randomTimeInRangeJst(w, today, true); // next day
+      if (!when) {
+        await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "skip", message: `invalid window ${w}` });
+        continue;
+      }
+        try { console.info('[x-hourly] when computed', { userId, accountId: xacct.accountId, window: w, whenJst: when.toISOString() }); } catch(_) {}
+        // compute tomorrow's YMD in JST (move out of inner try so it's in scope for dedupe)
+        const tomorrowDate = new Date(today);
+        tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+        const tomorrowYmd = yyyymmddJst(tomorrowDate);
+      // Check existing XScheduledPosts for same account and identical timeRange on the same next-day date
+      try {
+        const q = await ddb.send(new QueryCommand({
+          TableName: process.env.TBL_X_SCHEDULED || 'XScheduledPosts',
+          KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
+          ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'SCHEDULEDPOST#' } },
+          ProjectionExpression: 'scheduledAt, accountId, timeRange',
+        }));
+        const items = (q as any).Items || [];
+        try { console.info('[x-hourly] existing XScheduledPosts fetched', { userId, accountId: xacct.accountId, count: (items || []).length }); } catch(_) {}
+        let exists = false;
+        for (const it of items) {
+          try {
+            const aid = it.accountId?.S || '';
+            const tr = it.timeRange?.S || '';
+            if (aid !== xacct.accountId) continue;
+            if (tr !== String(w)) continue;
+            const sat = Number(it.scheduledAt?.N || 0);
+            if (!sat) continue;
+            const satYmd = yyyymmddJst(jstFromEpoch(sat));
+            if (satYmd === tomorrowYmd) { exists = true; break; }
+          } catch (_) {}
+        }
+        if (exists) {
+          await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "skip", message: `既存予約あり ${w}` });
+          continue;
+        }
+      } catch (e) {
+        await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "error", message: "既存予約チェック失敗", detail: { error: String(e) } });
+      }
+
+      // Debug: about to evaluate creating reservation (check dry-run flag)
+      try { console.info('[x-hourly] pre-create check', { userId, accountId: xacct.accountId, window: w, TEST_CAPTURE: Boolean((global as any).__TEST_CAPTURE__) }); } catch(_) {}
+      // Test capture/dry-run
+      if ((opts && opts.dryRun) || (global as any).__TEST_CAPTURE__) {
+        try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'HOURLY_X_POOL_RESERVATION', payload: { userId, accountId: xacct.accountId, whenJst: when.toISOString(), poolType: xacct.type || 'general' } }); } catch(_) {}
+        continue;
+      }
+
+      // Create XScheduledPosts item
+      try {
+        const id = `xsp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
+        try { console.info('[x-hourly] generated scheduledPostId', { userId, accountId: xacct.accountId, scheduledPostId: id }); } catch(_) {}
+        const now = `${Math.floor(Date.now() / 1000)}`;
+        const scheduledAt = Math.floor(when.getTime() / 1000);
+        const item: any = {
+          PK: { S: `USER#${userId}` },
+          SK: { S: `SCHEDULEDPOST#${id}` },
+          scheduledPostId: { S: id },
+          accountId: { S: xacct.accountId },
+          accountName: { S: xacct.username || xacct.accountId || '' },
+          content: { S: '' },
+          scheduledAt: { N: String(scheduledAt) },
+          postedAt: { N: '0' },
+          status: { S: 'scheduled' },
+          timeRange: { S: w },
+          scheduledSource: { S: 'pool' },
+          poolType: { S: xacct.type || 'general' },
+          createdAt: { N: now },
+          updatedAt: { N: now },
+        };
+
+      // Build deterministic SK for dedup: include accountId + yyyymmdd + normalized timeRange
+      const timeRangeNorm = String(w).replace(/[^0-9A-Za-z]/g, '_');
+      const skId = `SCHEDULEDPOST#${xacct.accountId}#${tomorrowYmd}#${timeRangeNorm}`;
+      item.SK = { S: skId };
+      // record scheduled date as YMD for visibility
+      (item as any).scheduledDateYmd = { S: tomorrowYmd };
+
+      // Debug: announce PutItem attempt
+      try { console.info('[x-hourly] attempting PutItem', { table: process.env.TBL_X_SCHEDULED || 'XScheduledPosts', sk: skId, scheduledDateYmd: tomorrowYmd, accountId: xacct.accountId }); } catch(_) {}
+
+      // Debug: show sanitized item to be put
+      try {
+        const san = sanitizeItem(item);
+        // limit size for logs
+        try { console.info('[x-hourly] sanitized item preview', { sk: skId, preview: { PK: san.PK, SK: san.SK, accountId: san.accountId, scheduledAt: san.scheduledAt, timeRange: san.timeRange } }); } catch(_) {}
+      } catch(_) {}
+
+      try {
+        // Conditional Put: only succeed if item does not already exist at this PK+SK
+        await ddb.send(new PutItemCommand({
+          TableName: process.env.TBL_X_SCHEDULED || 'XScheduledPosts',
+          Item: sanitizeItem(item),
+          ConditionExpression: 'attribute_not_exists(PK)'
+        }));
+        created++;
+        await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "ok", message: "x reservation created", detail: { scheduledPostId: id, whenJst: when.toISOString(), poolType: xacct.type || 'general', sk: skId } });
+      } catch (e:any) {
+        // Debug: surface full error for diagnosis
+        try { console.error('[x-hourly] PutItem failed', { sk: skId, err: String(e), name: e?.name, msg: e?.message, stack: e?.stack }); } catch(_) {}
+        const msg = String((e as any)?.name || (e as any)?.message || e);
+        if (msg.includes('ConditionalCheckFailed') || msg.includes('TransactionCanceled')) {
+          // Item already exists -> skip
+          await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "skip", message: "duplicate reservation prevented by conditional put", detail: { sk: skId } });
+        } else {
+          await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "error", message: "x reservation create failed", detail: { error: String(e) } });
+        }
+      }
+      } catch (e) {
+        await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "error", message: "x reservation create failed", detail: { error: String(e) } });
+      }
+    } catch (e) {
+      console.warn('[warn] ensureNextDayAutoPostsForX inner failed:', String(e));
+    }
+  }
+
+  return { created, skipped: false };
 }
 
 /// ========== プラットフォーム直接API（Threads） ======
@@ -2496,11 +2663,16 @@ async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settin
     })();
 
     if (stOK && postedZero && notExpired) {
-      // deprioritize items with permanentFailure or high postAttempts
-      const attempts = Number(x.postAttempts || 0);
+      // Exclude permanentFailure items completely from candidate set
       const permFail = !!x.permanentFailure;
-      candidates.push({ pk, sk, attempts, permFail, scheduledAt: Number(x.scheduledAt || 0), ...x });
-      await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "probe", message: "candidate queued", detail: { scheduledAt: x.scheduledAt, timeRange: x.timeRange } });
+      if (permFail) {
+        try { await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "skip", message: "permanentFailure - excluded from candidates", detail: { scheduledAt: x.scheduledAt, timeRange: x.timeRange } }); } catch(_) {}
+      } else {
+        // include only non-permanent-failure candidates (deprioritization by attempts still applies)
+        const attempts = Number(x.postAttempts || 0);
+        candidates.push({ pk, sk, attempts, scheduledAt: Number(x.scheduledAt || 0), ...x });
+        await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "probe", message: "candidate queued", detail: { scheduledAt: x.scheduledAt, timeRange: x.timeRange } });
+      }
     if (debugMode && (debugInfo.items as any[]).length < 6) {
         (debugInfo.items as any[]).push({ idx: iterIndex, pk, sk, status: x.status, postedAt: x.postedAt, scheduledAt: x.scheduledAt, timeRange: x.timeRange, stOK, postedZero, notExpired });
       }
@@ -2538,28 +2710,73 @@ async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settin
     try {
       if ((cand.type === 'pool' || String(cand.type || '').toLowerCase() === 'pool') && (!text || String(text).trim() === "")) {
         const poolType = cand.poolType || 'general';
-        const claimed = await claimPoolItem(userId, poolType);
-        if (!claimed) {
-          await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "pool_claim_failed", detail: { poolType } });
-          // increment account failure count for visibility
-          await incrementAccountFailure(userId, acct.accountId);
-          // mark scheduled-post with attempt/failure
-          try { await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } }, UpdateExpression: "SET postAttempts = if_not_exists(postAttempts, :zero) + :inc, lastPostError = :err, lastPostAttemptAt = :ts", ExpressionAttributeValues: { ":zero": { N: "0" }, ":inc": { N: "1" }, ":err": { S: "pool_claim_failed" }, ":ts": { N: String(nowSec()) } } })); } catch(_) {}
-          return { ok: false };
-        }
-        // Persist claimed content into scheduled-post so retries reuse it
+        // Try to reuse latest failed reservation's content for this account (no new record creation)
+        let reused = null;
         try {
-          const updVals: any = { ":c": { S: String(claimed.content || "") }, ":ts": { N: String(nowSec()) } };
-          const updExprParts = ["content = :c", "lastClaimedAt = :ts"];
-          if (claimed.poolId) { updExprParts.push("claimedFromPoolId = :pid"); updVals[":pid"] = { S: String(claimed.poolId) }; }
-          if (claimed.images && Array.isArray(claimed.images)) { updExprParts.push("images = :imgs"); updVals[":imgs"] = { S: JSON.stringify(claimed.images) }; }
-          await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } }, UpdateExpression: `SET ${updExprParts.join(', ')}`, ExpressionAttributeValues: updVals }));
-          text = String(claimed.content || "");
-          await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "info", message: "pool_claim_ok", detail: { poolId: claimed.poolId } });
+          const prevQ = await ddb.send(new QueryCommand({
+            TableName: TBL_SCHEDULED,
+            IndexName: GSI_POS_BY_ACC_TIME,
+            KeyConditionExpression: "accountId = :acc",
+            ExpressionAttributeValues: { ":acc": { S: String(acct.accountId) } },
+            ProjectionExpression: "PK,SK,content,images,scheduledAt,#st,permanentFailure",
+            ExpressionAttributeNames: { "#st": "status" },
+            ScanIndexForward: false,
+            Limit: 50,
+          }));
+          const prevItems: any[] = (prevQ as any).Items || [];
+          for (const it of prevItems) {
+            const st = getS(it.status) || "";
+            const pf = it.permanentFailure?.BOOL === true;
+            const c = getS(it.content) || "";
+            if (st === "failed" && !pf && c) { reused = it; break; }
+          }
         } catch (e) {
-          await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "pool_claim_persist_failed", detail: { error: String(e) } });
-          await incrementAccountFailure(userId, acct.accountId);
-          return { ok: false };
+          try { await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "warn", message: "reuse_lookup_failed", detail: { error: String(e) } }); } catch(_) {}
+        }
+
+        if (reused) {
+          // Write reused content into current reservation (no new record creation)
+          try {
+            if (!(opts && opts.dryRun) && !(global as any).__TEST_CAPTURE__) {
+              const updVals: any = { ":c": { S: String(getS(reused.content) || "") }, ":ts": { N: String(nowSec()) }, ":src": { S: String(getS(reused.SK) || "") } };
+              const updExprParts = ["content = :c", "lastClaimedFromFailed = :src", "lastClaimedAt = :ts"];
+              if (getS(reused.images)) { updExprParts.push("images = :imgs"); updVals[":imgs"] = { S: String(getS(reused.images) || "") }; }
+              await ddb.send(new UpdateItemCommand({
+                TableName: TBL_SCHEDULED,
+                Key: { PK: { S: pk }, SK: { S: sk } },
+                UpdateExpression: `SET ${updExprParts.join(', ')}`,
+                ExpressionAttributeValues: updVals,
+              }));
+            } else {
+              try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'DRYRUN_REUSE_FAILED_CONTENT', payload: { userId, accountId: acct.accountId, fromSK: String(getS(reused.SK) || '') } }); } catch(_) {}
+            }
+            text = String(getS(reused.content) || "");
+          } catch (e) {
+            try { await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "warn", message: "reuse_persist_failed", detail: { error: String(e) } }); } catch(_) {}
+          }
+        } else {
+          // No reusable failed content found -> claim from pool
+          const claimed = await claimPoolItem(userId, poolType);
+          if (!claimed) {
+            await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "pool_claim_failed", detail: { poolType } });
+            await incrementAccountFailure(userId, acct.accountId);
+            try { await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } }, UpdateExpression: "SET postAttempts = if_not_exists(postAttempts, :zero) + :inc, lastPostError = :err, lastPostAttemptAt = :ts", ExpressionAttributeValues: { ":zero": { N: "0" }, ":inc": { N: "1" }, ":err": { S: "pool_claim_failed" }, ":ts": { N: String(nowSec()) } } })); } catch(_) {}
+            return { ok: false };
+          }
+          // Persist claimed content into scheduled-post so retries reuse it; pool is consumed (atomic delete in claimPoolItem)
+          try {
+            const updVals: any = { ":c": { S: String(claimed.content || "") }, ":ts": { N: String(nowSec()) } };
+            const updExprParts = ["content = :c", "lastClaimedAt = :ts"];
+            if (claimed.poolId) { updExprParts.push("claimedFromPoolId = :pid"); updVals[":pid"] = { S: String(claimed.poolId) }; }
+            if (claimed.images && Array.isArray(claimed.images)) { updExprParts.push("images = :imgs"); updVals[":imgs"] = { S: JSON.stringify(claimed.images) }; }
+            await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } }, UpdateExpression: `SET ${updExprParts.join(', ')}`, ExpressionAttributeValues: updVals }));
+            text = String(claimed.content || "");
+            await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "info", message: "pool_claim_ok", detail: { poolId: claimed.poolId } });
+          } catch (e) {
+            await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "pool_claim_persist_failed", detail: { error: String(e) } });
+            await incrementAccountFailure(userId, acct.accountId);
+            return { ok: false };
+          }
         }
       }
     } catch (e) {
@@ -2927,7 +3144,7 @@ async function runSecondStageForAccount(acct: any, userId = DEFAULT_USER_ID, set
 }
 
 /// ========== ユーザー単位の実行ラッパー ==========
-async function runHourlyJobForUser(userId: any) {
+async function runHourlyJobForUser(userId: any, opts: any = {}) {
   // normalize incoming userId (strip USER# prefix if present)
   const normalizedUserId = String(userId || '').replace(/^USER#/, '');
   const settings = await getUserSettings(normalizedUserId);
@@ -2940,33 +3157,41 @@ async function runHourlyJobForUser(userId: any) {
   }
   const accounts = await getThreadsAccounts(normalizedUserId);
 
-  let createdCount = 0;
-  let fetchedReplies = 0;
-  let replyDrafts = 0;
-  let skippedAccounts = 0;
+  // Separate counters for Threads and X to allow split reporting
+  let threadsCreated = 0;
+  let threadsFetchedReplies = 0;
+  let threadsReplyDrafts = 0;
+  let threadsSkipped = 0;
+  let xCreated = 0;
+  let xSkipped = 0;
   const checkedShortcodes: Array<{ sourcePostId: string; queriedPK?: string; queriedAccountId?: string }> = [];
 
   for (const acct of accounts) {
     // First: try creating quote reservations for accounts that opted-in
     try {
       // Hourly: create quote reservations (reservation creation only)
-      const qres = await createQuoteReservationForAccount(normalizedUserId, acct);
-      if (qres && qres.created) createdCount += qres.created;
-      if (qres && qres.skipped) skippedAccounts++;
+      const qres = await createQuoteReservationForAccount(normalizedUserId, acct, opts);
+      if (qres && qres.created) threadsCreated += qres.created || 0;
+      if (qres && qres.skipped) threadsSkipped += 1;
       if (qres && qres.sourcePostId) checkedShortcodes.push({ sourcePostId: String(qres.sourcePostId), queriedPK: String(qres.queriedPK || ''), queriedAccountId: String(qres.queriedAccountId || '') });
     } catch (e) {
       console.warn('[warn] createQuoteReservationForAccount failed:', String(e));
     }
 
-    const c = await ensureNextDayAutoPosts(normalizedUserId, acct);
-    createdCount += c.created || 0;
-    if (c.skipped) skippedAccounts++;
+    const c = await ensureNextDayAutoPosts(normalizedUserId, acct, opts);
+    threadsCreated += c.created || 0;
+    if (c.skipped) threadsSkipped += 1;
+
+      // Hourly: pool-driven fallback for Threads accounts removed.
+      // Pool-driven reservations are managed elsewhere; do not create a single pool fallback here.
+
+  // NOTE: X account hourly reservations are created in a single pass after processing Threads accounts.
 
     try {
       if (!DISABLE_QUOTE_PROCESSING) {
         const fr = await fetchIncomingReplies(normalizedUserId, acct);
-        fetchedReplies += fr.fetched || 0;
-        replyDrafts += fr.fetched || 0; // 取得したリプライ分だけ返信ドラフトが生成される
+        threadsFetchedReplies += fr.fetched || 0;
+        threadsReplyDrafts += fr.fetched || 0; // 取得したリプライ分だけ返信ドラフトが生成される
       } else {
         try { console.info('[info] fetchIncomingReplies skipped by DISABLE_QUOTE_PROCESSING', { userId, account: acct.accountId }); } catch(_) {}
       }
@@ -2983,18 +3208,58 @@ async function runHourlyJobForUser(userId: any) {
   const urls = await getDiscordWebhooks(userId);
   const now = new Date().toISOString();
   // minor debug: totals logged at info level only
-  try { console.info('[info] hourly totals', { createdCount, fetchedReplies, replyDrafts, skippedAccounts }); } catch (e) { console.error('[error] hourly totals logging failed:', String(e)); }
-  // `metrics` が空（= 実行なし）の場合は簡略化して 'hourly：実行なし' のみ送る
-  const metrics = formatNonZeroLine([
-    { label: "予約投稿作成", value: createdCount, suffix: " 件" },
-    { label: "返信取得", value: fetchedReplies, suffix: " 件" },
-    { label: "返信下書き", value: replyDrafts, suffix: " 件" },
-    { label: "スキップ", value: skippedAccounts },
-  ], "hourly");
-  const content = metrics === "hourly：実行なし" ? metrics : `**[定期実行レポート] ${now} (hourly)**\n${metrics}`;
-  await postDiscordLog({ userId, content });
-  return { userId, createdCount, fetchedReplies, replyDrafts, skippedAccounts, checkedShortcodes };
+  try {
+    const totalsInfo = {
+      createdCount: (threadsCreated || 0) + (xCreated || 0),
+      fetchedReplies: threadsFetchedReplies || 0,
+      replyDrafts: threadsReplyDrafts || 0,
+      skippedAccounts: (threadsSkipped || 0) + (xSkipped || 0),
+    };
+    console.info('[info] hourly totals', totalsInfo);
+  } catch (e) {
+    console.error('[error] hourly totals logging failed:', String(e));
+  }
+  // Hourly: also create empty reservations for X accounts (pool-driven)
+  try {
+    if (settings && settings.enableX) {
+      const xAccounts = await getXAccounts(normalizedUserId);
+      for (const xacct of xAccounts) {
+        try {
+          const xc = await ensureNextDayAutoPostsForX(normalizedUserId, xacct, opts);
+          xCreated += xc.created || 0;
+          if (xc.skipped) xSkipped += 1;
+          try { console.info('[x-hourly] ensureNextDayAutoPostsForX', { userId: normalizedUserId, accountId: xacct.accountId, result: xc }); } catch(_) {}
+          (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+          (global as any).__TEST_OUTPUT__.push({ tag: 'HOURLY_X_POOL_RESERVATION', payload: { accountId: xacct.accountId, result: xc } });
+        } catch (e) {
+          console.warn('[warn] hourly X pool reservation failed for acct', String(xacct && xacct.accountId), String(e));
+        }
+      }
+    } else {
+      try { console.info('[info] hourly X pool reservations skipped by user setting enableX=false', { userId: normalizedUserId }); } catch(_) {}
+      (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+      (global as any).__TEST_OUTPUT__.push({ tag: 'HOURLY_X_POOL_SKIPPED_BY_SETTING', payload: { userId: normalizedUserId } });
+    }
+  } catch (e) {
+    console.warn('[warn] hourly X pool reservation failed', String(e));
+  }
+  // Build Discord message with Threads/X separated; respect user setting enableX for user webhooks.
+  try {
+    const enableX = !!(settings && settings.enableX === true);
+    const header = `**[定期実行レポート] ${now} (hourly)**\n`;
+    const threadsLine = `Threads — 予約作成: ${threadsCreated} / 返信取得: ${threadsFetchedReplies} / 返信下書き: ${threadsReplyDrafts} / スキップ: ${threadsSkipped}`;
+    const xLine = `X — 予約作成: ${xCreated} / スキップ: ${xSkipped}`;
+    const totalSkips = threadsSkipped + (enableX ? xSkipped : 0);
+    const combinedLine = `合計スキップ: ${totalSkips}`;
+    const content = header + threadsLine + (enableX ? `\n${xLine}\n${combinedLine}` : `\n${combinedLine}`);
+    await postDiscordLog({ userId, content });
+  } catch (e) {
+    try { console.warn('[warn] postDiscordLog (hourly) failed', String(e)); } catch(_) {}
+  }
+  return { userId, createdCount: threadsCreated + xCreated, fetchedReplies: threadsFetchedReplies, replyDrafts: threadsReplyDrafts, skippedAccounts: threadsSkipped + xSkipped, checkedShortcodes };
 }
+
+// (removed top-level X hourly loop - now executed inside runHourlyJobForUser)
 
 // === 予約レコードの本文生成をアカウント単位で段階的に処理する（短期対応） ===
 async function processPendingGenerationsForAccount(userId: any, acct: any, limit = 1) {
@@ -3168,7 +3433,7 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
   return { generated, processed };
 }
 
-async function runFiveMinJobForUser(userId: any) {
+async function runFiveMinJobForUser(userId: any, opts: any = {}) {
   const settings = await getUserSettings(userId);
   if (settings.autoPost === "inactive") {
     return { userId, totalAuto: 0, totalReply: 0, totalTwo: 0, rateSkipped: 0, skipped: "master_off" };
@@ -3178,6 +3443,7 @@ async function runFiveMinJobForUser(userId: any) {
   // track X accounts that already had a successful auto-post in this run
   const processedXAccounts = new Set<string>();
   let totalAuto = 0, totalReply = 0, totalTwo = 0, rateSkipped = 0, totalX = 0;
+  let xAutoDisabledSkipped = 0;
   const perAccount: any[] = [];
 
   for (const acct of accounts) {
@@ -3199,9 +3465,10 @@ async function runFiveMinJobForUser(userId: any) {
 
     const a = await runAutoPostForAccount(acct, userId, settings);
     // X のアカウントがあれば同一ユーザ内の X アカウントについても投稿を試みる
-      try {
-          const xAccounts = await getXAccounts(userId);
-          for (const xacct of xAccounts) {
+    try {
+          if (settings && settings.enableX) {
+            const xAccounts = await getXAccounts(userId);
+            for (const xacct of xAccounts) {
             // skip if we've already posted for this X account during this run
             if (processedXAccounts.has(xacct.accountId)) {
               try { console.info('[x-run] skipping already-processed xacct', { accountId: xacct.accountId }); } catch(_) {}
@@ -3222,29 +3489,43 @@ async function runFiveMinJobForUser(userId: any) {
               // X posting logic: prefer pool-based posting (postFromPoolForAccount) implemented in post-to-x
               const xmod = await import('./post-to-x');
               try {
-                const dryRun = Boolean((global as any).__TEST_CAPTURE__);
-                if (typeof xmod.postFromPoolForAccount === 'function') {
-                  const xr = await xmod.postFromPoolForAccount(userId, xacct, { dryRun, lockTtlSec: 600 });
-                  try { console.info('[x-run] postFromPoolForAccount result', { userId, accountId: xacct.accountId, result: xr }); } catch(_) {}
-                  (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
-                  (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_POOL_POST_RESULT', payload: { accountId: xacct.accountId, result: xr } });
-                  if (xr && typeof xr.posted === 'number') {
-                    totalX += Number(xr.posted || 0);
-                    if (Number(xr.posted || 0) > 0) processedXAccounts.add(xacct.accountId);
-                  }
-                } else if (typeof xmod.runAutoPostForXAccount === 'function') {
-                  // fallback to existing function
-                  const xr = await xmod.runAutoPostForXAccount(xacct, userId);
-                  try { console.info('[x-run] runAutoPostForXAccount result', { userId, accountId: xacct.accountId, result: xr }); } catch(_) {}
-                  (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
-                  (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_AUTO_POST_RESULT', payload: { accountId: xacct.accountId, result: xr } });
-                  if (xr && typeof xr.posted === 'number') {
-                    totalX += Number(xr.posted || 0);
-                    if (Number(xr.posted || 0) > 0) processedXAccounts.add(xacct.accountId);
-                  }
+                // Skip accounts where auto-posting is disabled
+                if (!xacct.autoPostEnabled) {
+                  xAutoDisabledSkipped++;
+                  try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_ACCOUNT_AUTOPOST_DISABLED', payload: { accountId: xacct.accountId } }); } catch(_) {}
+                  continue;
                 }
-              } catch (e) { console.warn('[warn] post-to-x import or run failed', e); }
+                const dryRun = !!(opts && opts.dryRun) || Boolean((global as any).__TEST_CAPTURE__);
+                // First: try to post from existing X scheduled reservations (reservation-priority)
+                try {
+                  let scheduledResult: any = { posted: 0, debug: {} };
+                  if (!dryRun) {
+                    try {
+                      const rs = await xmod.runAutoPostForXAccount(xacct, userId);
+                      scheduledResult = rs || scheduledResult;
+                    } catch (e) {
+                      try { console.warn('[warn] runAutoPostForXAccount failed', { userId, accountId: xacct.accountId, err: String(e) }); } catch(_) {}
+                    }
+                  } else {
+                    // In dryRun we do not execute real scheduled posting (avoid API calls); emit observation
+                    try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_SCHEDULED_DRYRUN_SKIP', payload: { accountId: xacct.accountId } }); } catch(_) {}
+                  }
+                  // If scheduled posting happened, count and continue
+                  if (scheduledResult && Number(scheduledResult.posted || 0) > 0) {
+                    totalX += Number(scheduledResult.posted || 0);
+                    processedXAccounts.add(xacct.accountId);
+                    try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_SCHEDULED_POST_RESULT', payload: { accountId: xacct.accountId, result: scheduledResult } }); } catch(_) {}
+                    continue;
+                  }
+                } catch (_) {}
+                // No pool fallback here — per spec, 5min must not create or consume pool items.
+              } catch (e) { console.warn('[warn] post-from-pool failed', e); }
             } catch (e) { console.warn('[warn] post-to-x import or run failed', e); }
+            }
+          } else {
+            try { console.info('[info] every-5min X posting skipped by user setting enableX=false', { userId }); } catch(_) {}
+            (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+            (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_SKIPPED_BY_SETTING', payload: { userId } });
           }
         } catch (e) { console.warn('[warn] getXAccounts failed', e); }
     try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_AUTO_POST_RESULT', payload: { accountId: acct.accountId, result: a } }); } catch(_) {}
@@ -3300,8 +3581,14 @@ async function runFiveMinJobForUser(userId: any) {
     { label: "失効(rate-limit)", value: rateSkipped },
   ], "every-5min");
   // include X posted count in the metrics if present
-  if (totalX) {
-    try { metrics += ` / X投稿: ${totalX}`; } catch(_) {}
+  // If the main metrics indicate "実行なし" then do not append X-only info; "実行なし" should be sole message.
+  if ((totalX || xAutoDisabledSkipped) && metrics !== "every-5min：実行なし") {
+    try {
+      const parts: string[] = [];
+      if (totalX) parts.push(`X投稿: ${totalX}`);
+      if (xAutoDisabledSkipped) parts.push(`X自動投稿OFF: ${xAutoDisabledSkipped}`);
+      metrics += ` / ${parts.join(' / ')}`;
+    } catch(_) {}
   }
   const content = metrics === "every-5min：実行なし" ? metrics : `**[定期実行レポート] ${now} (every-5min)**\n${metrics}`;
   await postDiscordLog({ userId, content });
@@ -4112,7 +4399,7 @@ async function deleteUpTo100PostsForAccount(userId: any, accountId: any, limit =
 }
 
 // Process DeletionQueue: claim due items and run deletion batches
-async function processDeletionQueueForUser(userId: any) {
+async function processDeletionQueueForUser(userId: any, opts: any = {}) {
   let totalDeleted = 0;
   try {
     // scan for due queue items
@@ -4163,7 +4450,22 @@ async function processDeletionQueueForUser(userId: any) {
         await config.loadConfig();
         const batchSizeVal = config.getConfigValue('DELETION_BATCH_SIZE');
         const batchSize = Number(batchSizeVal || '100') || 100;
-        try { console.info('[info] invoking deleteUpTo100PostsForAccount', { ownerUserId, accountId, batchSize }); } catch(_) {}
+        try { console.info('[info] invoking deleteUpTo100PostsForAccount', { ownerUserId, accountId, batchSize, dryRun: !!(opts && opts.dryRun) }); } catch(_) {}
+        if (opts && opts.dryRun) {
+          // Count candidates without performing deletes
+          try {
+            const cnt = await countPostedCandidates(ownerUserId);
+            const deletedWouldBe = Number(cnt?.candidates || 0);
+            totalDeleted += deletedWouldBe;
+            try { await putLog({ userId: ownerUserId, type: 'deletion', status: 'info', message: `dry-run deletion: ${deletedWouldBe} candidates for account ${accountId}` }); } catch(_) {}
+            // release processing flag and continue
+            try { await ddb.send(new UpdateItemCommand({ TableName: dqTable, Key: { PK: { S: `ACCOUNT#${accountId}` }, SK: { S: sk } }, UpdateExpression: 'SET processing = :f, last_processed_at = :ts', ExpressionAttributeValues: { ':f': { BOOL: false }, ':ts': { N: String(now) } } })); } catch(_) {}
+            continue;
+          } catch (e) {
+            try { console.warn('[warn] dry-run countPostedCandidates failed', { ownerUserId, accountId, err: String(e) }); } catch(_) {}
+            // fallthrough to non-dry-run behavior as a fallback
+          }
+        }
         const res = await deleteUpTo100PostsForAccount(ownerUserId, accountId, batchSize);
         try { console.info('[info] deleteUpTo100PostsForAccount result', { ownerUserId, accountId, res }); } catch(_) {}
         totalDeleted += Number(res?.deletedCount || 0);

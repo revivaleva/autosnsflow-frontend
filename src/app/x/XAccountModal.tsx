@@ -22,6 +22,8 @@ export default function XAccountModal({ open, onClose, mode = "create", account,
   const [checkingAuth, setCheckingAuth] = useState(false);
   const [saving, setSaving] = useState(false);
   const [accountType, setAccountType] = useState<'general' | 'ero' | 'saikyou'>('general');
+  const [copyCbSuccess, setCopyCbSuccess] = useState(false);
+  const [copyAuthSuccess, setCopyAuthSuccess] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -82,7 +84,9 @@ export default function XAccountModal({ open, onClose, mode = "create", account,
 
   const handleCopyAuthUrl = async () => {
     try {
-      const r = await fetch(`/api/x/authorize?accountId=${encodeURIComponent(accountId)}&raw=1`, { credentials: 'include' });
+      // include clientId if present (allow using unsaved clientId)
+      const qClient = clientId ? `&clientId=${encodeURIComponent(clientId)}` : '';
+      const r = await fetch(`/api/x/authorize?accountId=${encodeURIComponent(accountId)}&raw=1${qClient}`, { credentials: 'include' });
       // If response is JSON with auth_url, use it. Otherwise fail loudly so caller doesn't get a relative fallback URL.
       if (!r.ok) {
         const txt = await r.text().catch(() => '');
@@ -91,7 +95,13 @@ export default function XAccountModal({ open, onClose, mode = "create", account,
       const j = await r.json().catch(() => ({}));
       const url = j.auth_url || '';
       if (!url) throw new Error('認可URLが返却されませんでした');
-      try { await navigator.clipboard.writeText(url); alert('認可URLをコピーしました'); } catch { alert('クリップボードへコピーできませんでした: ' + url); }
+      try {
+        await navigator.clipboard.writeText(url);
+        setCopyAuthSuccess(true);
+        setTimeout(() => setCopyAuthSuccess(false), 2000);
+      } catch {
+        alert('クリップボードへコピーできませんでした: ' + url);
+      }
     } catch (e) { alert('認可URL取得に失敗しました: ' + String(e)); }
   };
 
@@ -142,7 +152,13 @@ export default function XAccountModal({ open, onClose, mode = "create", account,
           )}
 
           <div className="flex items-center gap-2 mb-4">
-            <button type="button" className="bg-yellow-500 dark:bg-yellow-500 text-white px-3 py-1 rounded" onClick={handleCopyAuthUrl}>認可URLコピー</button>
+            <button
+              type="button"
+              className={`${copyAuthSuccess ? 'bg-green-200 text-black' : 'bg-yellow-500 text-white'} dark:bg-yellow-500 px-3 py-1 rounded`}
+              onClick={handleCopyAuthUrl}
+            >
+              認可URLコピー
+            </button>
             <button
               type="button"
               aria-label={oauthAccessTokenLocal ? '認証解除' : '未認証'}
@@ -180,6 +196,28 @@ export default function XAccountModal({ open, onClose, mode = "create", account,
               }}
             >
               {checkingAuth ? '確認中...' : (oauthAccessTokenLocal ? '認証済み' : '未認証')}
+            </button>
+            {/* copy callback url button next to auth status */}
+            <button
+              type="button"
+              aria-label="コールバックURLコピー"
+              title="コールバックURLをコピー"
+              className={`ml-2 px-2 py-1 border rounded text-sm ${copyCbSuccess ? 'bg-green-200' : 'bg-gray-50'} dark:bg-gray-800`}
+              onClick={async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const cb = 'https://threadsbooster.jp/api/x/callback';
+                try {
+                  await navigator.clipboard.writeText(cb);
+                  setCopyCbSuccess(true);
+                  // reset after 2 seconds
+                  setTimeout(() => setCopyCbSuccess(false), 2000);
+                } catch {
+                  try { await navigator.clipboard.writeText(cb); setCopyCbSuccess(true); setTimeout(() => setCopyCbSuccess(false), 2000); } catch { /* ignore */ }
+                }
+              }}
+            >
+              コールバックコピー
             </button>
             <button type="button" className="ml-auto bg-indigo-500 dark:bg-indigo-600 text-white px-3 py-1 rounded" onClick={handleOpenApp}>アプリ</button>
           </div>

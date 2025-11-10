@@ -52,6 +52,37 @@
 - `lambda/scheduled-autosnsflow/src/handler.ts`
 - `src/app/scheduled-posts/ScheduledPostsTable.tsx`
 
+## dry-run / テスト実行の伝搬仕様（追加）
+この節は、Lambda ハンドラに渡された `event.dryRun` を各処理に明示的に伝搬し、ドライラン時にデータベースへの副作用（予約レコード作成 / プール消費 / 物理削除）を抑止して件数のみを集計・通知するための仕様を定義する。
+
+- Handler レベル
+  - `handler(event)` は `event.dryRun === true` を受け取った場合、`runHourlyJobForUser` / `runFiveMinJobForUser` / `processDeletionQueueForUser` に `opts = { dryRun: true }` を渡すこと。
+  - 既存の `testInvocation` / `detailedDebug` フラグとは独立して動作すること。
+
+- ユーザー単位ラッパー
+  - `runHourlyJobForUser(userId, opts)` / `runFiveMinJobForUser(userId, opts)` を導入し、内部呼び出し（`ensureNextDayAutoPosts`、`ensureNextDayAutoPostsForX`、`createQuoteReservationForAccount` など）へ `opts` をそのまま伝搬すること。
+  - 各内部処理は `opts.dryRun === true` を受け取ったら「DB 書き込みを行わず、件数や候補情報を `TEST_OUTPUT` / Discord 用の集計値として記録する」こと。
+
+- 具体的な DB 副作用の扱い
+  - 予約レコード作成（`createScheduledPost` / `createQuoteReservationForAccount` 等）: `opts.dryRun === true` の場合は PutItem を実行せず、作成予定のデータ（accountId, whenJst, group 等）を `TEST_OUTPUT` に `DRYRUN_CREATE_SCHEDULED_POST` / `DRYRUN_CREATE_QUOTE_RESERVATION` タグで出力し、呼び出し元へは作成カウントを返す。
+  - プール消費 / 即時投稿（`postFromPoolForAccount`）:
+    - dry-run 時は既に `opts.dryRun` を受け付け、プールロックの獲得や DB 更新（DeleteItem/UpdateItem）を行わず、候補の情報を `TEST_OUTPUT` に `DRYRUN_POST_FROM_POOL` タグで出力すること。ロック取得は行わない。
+    - プールからアイテムを取得した場合は、実行結果に関係なく `XScheduledPosts`（`TBL_X_SCHEDULED`）へ記録し、UI の予約一覧に反映すること。実装方針:
+      - プール項目のロック取得後（dry-run では除外）に `XScheduledPosts` に `status='attempting'` の項目を作成する。`scheduledPostId` は `xsp-pool-<poolId>-<unix>` 形式とする。  
+      - 投稿成功時は該当 `XScheduledPosts` を `status='posted'` に更新し `postedAt`/`postId` を設定する。プール項目は削除する。  
+      - 投稿失敗時は該当 `XScheduledPosts` を `status='failed'` に更新し `lastPostError` を保存、プール項目はロック解除して残す（再試行可能）。  
+      - dry-run 実行時は `XScheduledPosts` の作成・更新は行わない（`DRYRUN_POST_FROM_POOL` のみ出力）。
+  - 削除処理（`processDeletionQueueForUser` / `deleteUpTo100PostsForAccount` / `deletePostedForUser` 等）: dry-run 時は実際の DeleteItem を行わず、`countPostedCandidates` 等を用いて削除候補数を算出し、その件数を集計に加える。Queue の取り消しや account 状態の更新は行わない。
+
+- 通知
+  - dry-run 実行時でも Discord へのサマリ送信は行うが、送信内容は「実行予定件数」や「削除予定件数」などの推定値に限定し、実際の作成 IDs / postId は含めない。
+
+- 互換性と安全性
+  - `opts` の未指定時は既存の挙動（実行）を維持する。`global.__TEST_CAPTURE__` との互換性を保ちつつ、明示的な `opts.dryRun` を優先して扱う。
+  - dry-run の判定は明示的で単純に保ち、誤って本番データを書き換えないために Put/Delete の直前でガードを行う。
+
+（追記済み: 実装は `lambda/scheduled-autosnsflow/src/handler.ts` に反映済み）
+
 
 (作成日: development)
 
