@@ -127,12 +127,40 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
             accessToken = newToken;
             r = await postToX({ accessToken, text: content });
           } else {
+            // mark permanent failure on 403-like errors
+            try {
+              const errStr = String(postErr || '');
+              if (/\\b403\\b|Forbidden|duplicate/i.test(errStr)) {
+                try {
+                  await ddb.send(new UpdateItemCommand({
+                    TableName: TBL_X_SCHEDULED,
+                    Key: { PK: { S: pk }, SK: { S: sk } },
+                    UpdateExpression: 'SET permanentFailure = :t, lastPostError = :err',
+                    ExpressionAttributeValues: { ':t': { BOOL: true }, ':err': { S: errStr } },
+                  }));
+                } catch (_) {}
+              }
+            } catch (_) {}
             throw postErr;
           }
         } catch (refreshErr) {
           // capture error and continue to next candidate
           try { console.warn('[x-auto] post failed and refresh failed', { userId, accountId, sk, err: String(postErr) }); } catch(_) {}
           debug.errors.push({ sk, err: String(postErr) });
+          // also mark permanent failure when response indicates duplicate/403
+          try {
+            const errStr = String(postErr || '');
+            if (/\\b403\\b|Forbidden|duplicate/i.test(errStr)) {
+              try {
+                await ddb.send(new UpdateItemCommand({
+                  TableName: TBL_X_SCHEDULED,
+                  Key: { PK: { S: pk }, SK: { S: sk } },
+                  UpdateExpression: 'SET permanentFailure = :t, lastPostError = :err',
+                  ExpressionAttributeValues: { ':t': { BOOL: true }, ':err': { S: errStr } },
+                }));
+              } catch (_) {}
+            }
+          } catch (_) {}
           continue;
         }
       }
@@ -171,6 +199,20 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
     } catch (e) {
       try { console.warn('[x-auto] runAutoPostForXAccount item failed', { userId, accountId, err: String(e) }); } catch(_) {}
       debug.errors.push({ err: String(e) });
+      // mark permanent failure on 403/duplicate
+      try {
+        const errStr = String(e || '');
+        if (/\\b403\\b|Forbidden|duplicate/i.test(errStr)) {
+          try {
+            await ddb.send(new UpdateItemCommand({
+              TableName: TBL_X_SCHEDULED,
+              Key: { PK: { S: pk }, SK: { S: sk } },
+              UpdateExpression: 'SET permanentFailure = :t, lastPostError = :err',
+              ExpressionAttributeValues: { ':t': { BOOL: true }, ':err': { S: errStr } },
+            }));
+          } catch (_) {}
+        }
+      } catch (_) {}
       // continue with next candidate
       continue;
     }
