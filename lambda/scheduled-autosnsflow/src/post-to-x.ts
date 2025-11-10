@@ -301,33 +301,7 @@ export async function postFromPoolForAccount(userId: string, acct: any, opts: { 
       return { posted: 0, debug };
     }
 
-    // Record pool claim in XScheduledPosts so UI shows attempt even if post fails.
-    let scheduledRecordId: string | null = null;
-    try {
-      const nowSecVal = Math.floor(Date.now() / 1000);
-      scheduledRecordId = `xsp-pool-${String(claimedFromPool.poolId || '').replace(/[^0-9a-zA-Z-_]/g,'')}-${nowSecVal}`;
-      const xItem: any = {
-        PK: { S: `USER#${userId}` },
-        SK: { S: `SCHEDULEDPOST#${scheduledRecordId}` },
-        scheduledPostId: { S: scheduledRecordId },
-        accountId: { S: accountId },
-        accountName: { S: acct.username || accountId || '' },
-        content: { S: String(claimedFromPool.content || '') },
-        scheduledAt: { N: String(nowSecVal) },
-        postedAt: { N: '0' },
-        status: { S: 'attempting' },
-        scheduledSource: { S: 'pool' },
-        poolType: { S: poolType },
-        poolId: { S: String(claimedFromPool.poolId || '') },
-        createdAt: { N: String(nowSecVal) },
-        updatedAt: { N: String(nowSecVal) },
-        isDeleted: { BOOL: false },
-      };
-      await ddb.send(new PutItemCommand({ TableName: TBL_X_SCHEDULED, Item: xItem }));
-    } catch (err:any) {
-      try { console.warn('[warn] create XScheduledPosts record for pool claim failed', String(err)); } catch(_) {}
-      scheduledRecordId = null;
-    }
+    // Note: Do not create new XScheduledPosts records here. 5min flow should update existing scheduled posts only.
 
     // 4) perform post using acct tokens (try refresh on failure)
     try {
@@ -351,21 +325,7 @@ export async function postFromPoolForAccount(userId: string, acct: any, opts: { 
       // 5) delete pool item
       // pool already consumed by atomic DeleteItem above; nothing to do here
  
-      // Update scheduled record as posted if exists
-      try {
-        if (scheduledRecordId) {
-          const nowPosted = Math.floor(Date.now() / 1000);
-          await ddb.send(new UpdateItemCommand({
-            TableName: TBL_X_SCHEDULED,
-            Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${scheduledRecordId}` } },
-            UpdateExpression: 'SET #st = :posted, postedAt = :ts, postId = :pid, updatedAt = :now',
-            ExpressionAttributeNames: { '#st': 'status' },
-            ExpressionAttributeValues: { ':posted': { S: 'posted' }, ':ts': { N: String(nowPosted) }, ':pid': { S: String(postId) }, ':now': { N: String(nowPosted) } },
-          }));
-        }
-      } catch (e:any) {
-        try { console.warn('[warn] update XScheduledPosts posted failed', String(e)); } catch(_) {}
-      }
+      // 5min flow updates the existing scheduled record (TBL_SCHEDULED) elsewhere; do not create/update separate XScheduledPosts here.
 
       // 6) write ExecutionLogs / Discord notification (reuse postDiscordMaster if available globally)
       try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'POST_FROM_POOL_RESULT', payload: { userId, accountId, poolId: cand.poolId, postId } }); } catch(_) {}
@@ -375,19 +335,7 @@ export async function postFromPoolForAccount(userId: string, acct: any, opts: { 
       return { posted: 1, debug, postId };
     } catch (e:any) {
       debug.errors.push({ err: String(e) });
-      // Update scheduled record as failed if exists
-      try {
-        if (scheduledRecordId) {
-          const nowTs = Math.floor(Date.now() / 1000);
-          await ddb.send(new UpdateItemCommand({
-            TableName: TBL_X_SCHEDULED,
-            Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${scheduledRecordId}` } },
-            UpdateExpression: 'SET #st = :failed, updatedAt = :now, lastPostError = :err',
-            ExpressionAttributeNames: { '#st': 'status' },
-            ExpressionAttributeValues: { ':failed': { S: 'failed' }, ':now': { N: String(nowTs) }, ':err': { S: String((e && e.message) || String(e)) } },
-          }));
-        }
-      } catch (_) {}
+      // Do not create/update XScheduledPosts here on failure; 5min reservation updates are handled by the calling flow.
       // release lock
       try {
         await ddb.send(new UpdateItemCommand({
