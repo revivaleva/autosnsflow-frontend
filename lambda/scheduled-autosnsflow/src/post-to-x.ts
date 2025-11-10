@@ -84,15 +84,25 @@ export async function fetchDueXScheduledForAccountByAccount(accountId: string, n
 }
 
 // Mark scheduled item as posted (update postedAt/status/postId)
-export async function markXScheduledPosted(pk: string, sk: string, postId: string) {
+export async function markXScheduledPosted(pk: string, sk: string, postId: string, accountId?: string) {
   const now = Math.floor(Date.now() / 1000);
-  // Update status and postedAt/postId; also remove pendingForAutoPostAccount so it no longer appears in GSI
+  // Build update expression dynamically to include postUrl when accountId is provided
+  const exprParts: string[] = ['#st = :posted', 'postedAt = :ts', 'postId = :pid'];
+  const names: any = { '#st': 'status' };
+  const values: any = { ':posted': { S: 'posted' }, ':ts': { N: String(now) }, ':pid': { S: postId } };
+  if (accountId && String(accountId).trim().length > 0) {
+    // prefer modern x.com permalink
+    const purl = `https://x.com/${encodeURIComponent(String(accountId))}/status/${encodeURIComponent(String(postId))}`;
+    exprParts.push('postUrl = :purl');
+    values[':purl'] = { S: purl };
+  }
+  const updateExpr = `SET ${exprParts.join(', ')} REMOVE pendingForAutoPostAccount`;
   await ddb.send(new UpdateItemCommand({
     TableName: TBL_X_SCHEDULED,
     Key: { PK: { S: pk }, SK: { S: sk } },
-    UpdateExpression: 'SET #st = :posted, postedAt = :ts, postId = :pid REMOVE pendingForAutoPostAccount',
-    ExpressionAttributeNames: { '#st': 'status' },
-    ExpressionAttributeValues: { ':posted': { S: 'posted' }, ':ts': { N: String(now) }, ':pid': { S: postId } },
+    UpdateExpression: updateExpr,
+    ExpressionAttributeNames: names,
+    ExpressionAttributeValues: values,
   }));
 }
 
@@ -305,7 +315,7 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
       }
 
       try {
-        await markXScheduledPosted(pk, sk, String(postId));
+        await markXScheduledPosted(pk, sk, String(postId), accountId);
       } catch (e) {
         try { console.warn('[x-auto] markXScheduledPosted failed', { userId, accountId, sk, err: String(e) }); } catch(_) {}
         debug.errors.push({ sk, err: String(e) });

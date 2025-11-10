@@ -692,7 +692,13 @@ export default function ScheduledPostsTable() {
               const profileUrl = post.accountId ? `https://www.threads.com/@${post.accountId}` : undefined;
               // postIdからpostURLを生成
               const postId = (post as any).postId as string | undefined;
-              const generatedUrl = postId ? `https://www.threads.net/post/${postId}` : undefined;
+              // If postUrl (canonical) exists use it. Otherwise, create a sensible fallback:
+              // - If postId is numeric only, assume it's an X/twitter numeric id and generate x.com URL
+              // - Otherwise assume Threads shortcode and generate threads URL
+              const isNumericPostId = postId ? (/^\d+$/).test(String(postId)) : false;
+              const generatedUrl = postId
+                ? (isNumericPostId && post.accountId ? `https://x.com/${encodeURIComponent(post.accountId)}/status/${encodeURIComponent(postId)}` : `https://www.threads.net/post/${postId}`)
+                : undefined;
 
               const deleted = !!post.isDeleted;
               const accountIsDeleting = accountsDeletingMap[post.accountId] === true;
@@ -760,7 +766,9 @@ export default function ScheduledPostsTable() {
                         // Only create URL if src looks like a non-empty string (shortcode). Otherwise show '-'
                         const isStringId = typeof src === 'string' && src.trim().length > 0;
                         if (!isStringId) return <span className="text-sm">-</span>;
-                        const srcUrl = `https://www.threads.net/post/${src}`;
+                        // Build source URL: if src looks numeric, prefer X status URL; otherwise Threads permalink
+                        const isSrcNumeric = (/^\d+$/).test(String(src));
+                        const srcUrl = isSrcNumeric && src && (post as any).accountId ? `https://x.com/${encodeURIComponent((post as any).accountId)}/status/${encodeURIComponent(src)}` : `https://www.threads.net/post/${src}`;
                         return (
                           <a href={srcUrl} target="_blank" rel="noreferrer" className="text-blue-600 underline">{String(src)}</a>
                         );
