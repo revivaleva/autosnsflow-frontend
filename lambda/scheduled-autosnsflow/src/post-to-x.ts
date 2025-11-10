@@ -114,6 +114,48 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
       const content = it.content.S || '';
       // Prevent double-posting: ensure status is pending
       if ((it.status && it.status.S) && it.status.S !== 'pending') continue;
+      // Time-range expiry check: skip items whose scheduled time window has passed
+      try {
+        const scheduledAtSec = Number(it.scheduledAt?.N || 0);
+        const timeRangeStr = it.timeRange?.S || '';
+        if (timeRangeStr && scheduledAtSec > 0) {
+          const endEpoch = (() => {
+            try {
+              const parts = String(timeRangeStr).split(/-|～|~/).map((x: any) => String(x).trim());
+              const endPart = parts[1] || '';
+              if (!endPart) return null;
+              const hhmm = endPart.split(':').map((x: any) => Number(x));
+              if (!Array.isArray(hhmm) || hhmm.length < 2 || !Number.isFinite(hhmm[0]) || !Number.isFinite(hhmm[1])) return null;
+              const endHour = Number(hhmm[0]) || 0;
+              const endMin = Number(hhmm[1]) || 0;
+              // Convert scheduledAtSec to JST midnight ms
+              const baseMs = scheduledAtSec * 1000;
+              const jstBaseMs = baseMs + (9 * 3600 * 1000);
+              const jstDate = new Date(jstBaseMs);
+              // start of JST day (midnight) in epoch ms
+              const jstStartOfDayMs = Date.UTC(jstDate.getUTCFullYear(), jstDate.getUTCMonth(), jstDate.getUTCDate(), 0, 0, 0);
+              const endMsJst = jstStartOfDayMs + (endHour * 3600 + endMin * 60) * 1000 + 59 * 1000;
+              const endMsEpoch = endMsJst - (9 * 3600 * 1000);
+              return Math.floor(endMsEpoch / 1000);
+            } catch (_) { return null; }
+          })();
+          if (endEpoch && now > endEpoch) {
+            // mark expired (only if still pending) and skip
+            try {
+              await ddb.send(new UpdateItemCommand({
+                TableName: TBL_X_SCHEDULED,
+                Key: { PK: { S: pk }, SK: { S: sk } },
+                UpdateExpression: 'SET #st = :expired, expiredAt = :ts, expireReason = :rsn',
+                ConditionExpression: 'attribute_not_exists(#st) OR #st = :pending',
+                ExpressionAttributeNames: { '#st': 'status' },
+                ExpressionAttributeValues: { ':expired': { S: 'expired' }, ':pending': { S: 'pending' }, ':ts': { N: String(now) }, ':rsn': { S: 'time-window-passed' } },
+              }));
+            } catch (_) {}
+            try { await putLog({ userId, type: "auto-post", accountId, targetId: sk, status: "skip", message: "timeRange passed, expired" }); } catch(_) {}
+            continue;
+          }
+        }
+      } catch (_) {}
       // Try posting, attempt refresh once on failure
       let accessToken = acct.oauthAccessToken || acct.accessToken || '';
       let r;

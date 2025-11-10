@@ -3496,22 +3496,46 @@ async function runFiveMinJobForUser(userId: any, opts: any = {}) {
                   continue;
                 }
                 const dryRun = !!(opts && opts.dryRun) || Boolean((global as any).__TEST_CAPTURE__);
-                // Use pool-based posting only; no fallback to old logic
-                const xr = await xmod.postFromPoolForAccount(userId, xacct, { dryRun, lockTtlSec: 600 });
-                try { console.info('[x-run] postFromPoolForAccount result', { userId, accountId: xacct.accountId, result: xr }); } catch(_) {}
-                (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
-                (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_POOL_POST_RESULT', payload: { accountId: xacct.accountId, result: xr } });
-                // If debug.errors present, log them verbosely for diagnosis
+                // First: try to post from existing X scheduled reservations (reservation-priority)
                 try {
-                  if (xr && xr.debug && Array.isArray(xr.debug.errors) && xr.debug.errors.length > 0) {
-                    try { console.info('[x-run] postFromPoolForAccount debug.errors', { userId, accountId: xacct.accountId, errors: xr.debug.errors }); } catch(_) {}
-                    try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_POOL_POST_ERRORS', payload: { accountId: xacct.accountId, errors: xr.debug.errors } }); } catch(_) {}
+                  let scheduledResult: any = { posted: 0, debug: {} };
+                  if (!dryRun) {
+                    try {
+                      const rs = await xmod.runAutoPostForXAccount(xacct, userId);
+                      scheduledResult = rs || scheduledResult;
+                    } catch (e) {
+                      try { console.warn('[warn] runAutoPostForXAccount failed', { userId, accountId: xacct.accountId, err: String(e) }); } catch(_) {}
+                    }
+                  } else {
+                    // In dryRun we do not execute real scheduled posting (avoid API calls); emit observation
+                    try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_SCHEDULED_DRYRUN_SKIP', payload: { accountId: xacct.accountId } }); } catch(_) {}
+                  }
+                  // If scheduled posting happened, count and continue
+                  if (scheduledResult && Number(scheduledResult.posted || 0) > 0) {
+                    totalX += Number(scheduledResult.posted || 0);
+                    processedXAccounts.add(xacct.accountId);
+                    try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_SCHEDULED_POST_RESULT', payload: { accountId: xacct.accountId, result: scheduledResult } }); } catch(_) {}
+                    continue;
                   }
                 } catch (_) {}
-                if (xr && typeof xr.posted === 'number') {
-                  totalX += Number(xr.posted || 0);
-                  if (Number(xr.posted || 0) > 0) processedXAccounts.add(xacct.accountId);
-                }
+                // Fallback: attempt to post from pool only if scheduled didn't produce a post (or on dryRun we still probe pool)
+                try {
+                  const xr = await xmod.postFromPoolForAccount(userId, xacct, { dryRun, lockTtlSec: 600 });
+                  try { console.info('[x-run] postFromPoolForAccount result', { userId, accountId: xacct.accountId, result: xr }); } catch(_) {}
+                  (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
+                  (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_POOL_POST_RESULT', payload: { accountId: xacct.accountId, result: xr } });
+                  // If debug.errors present, log them verbosely for diagnosis
+                  try {
+                    if (xr && xr.debug && Array.isArray(xr.debug.errors) && xr.debug.errors.length > 0) {
+                      try { console.info('[x-run] postFromPoolForAccount debug.errors', { userId, accountId: xacct.accountId, errors: xr.debug.errors }); } catch(_) {}
+                      try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_POOL_POST_ERRORS', payload: { accountId: xacct.accountId, errors: xr.debug.errors } }); } catch(_) {}
+                    }
+                  } catch (_) {}
+                  if (xr && typeof xr.posted === 'number') {
+                    totalX += Number(xr.posted || 0);
+                    if (Number(xr.posted || 0) > 0) processedXAccounts.add(xacct.accountId);
+                  }
+                } catch (e) { console.warn('[warn] post-from-pool failed', e); }
               } catch (e) { console.warn('[warn] post-from-pool failed', e); }
             } catch (e) { console.warn('[warn] post-to-x import or run failed', e); }
             }
