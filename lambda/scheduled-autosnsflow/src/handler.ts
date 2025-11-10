@@ -3574,7 +3574,8 @@ async function runFiveMinJobForUser(userId: any, opts: any = {}) {
     { label: "失効(rate-limit)", value: rateSkipped },
   ], "every-5min");
   // include X posted count in the metrics if present
-  if (totalX || xAutoDisabledSkipped) {
+  // If the main metrics indicate "実行なし" then do not append X-only info; "実行なし" should be sole message.
+  if ((totalX || xAutoDisabledSkipped) && metrics !== "every-5min：実行なし") {
     try {
       const parts: string[] = [];
       if (totalX) parts.push(`X投稿: ${totalX}`);
