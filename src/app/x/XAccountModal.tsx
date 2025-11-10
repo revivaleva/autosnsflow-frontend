@@ -23,6 +23,7 @@ export default function XAccountModal({ open, onClose, mode = "create", account,
   const [saving, setSaving] = useState(false);
   const [accountType, setAccountType] = useState<'general' | 'ero' | 'saikyou'>('general');
   const [copyCbSuccess, setCopyCbSuccess] = useState(false);
+  const [copyAuthSuccess, setCopyAuthSuccess] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -94,7 +95,13 @@ export default function XAccountModal({ open, onClose, mode = "create", account,
       const j = await r.json().catch(() => ({}));
       const url = j.auth_url || '';
       if (!url) throw new Error('認可URLが返却されませんでした');
-      try { await navigator.clipboard.writeText(url); alert('認可URLをコピーしました'); } catch { alert('クリップボードへコピーできませんでした: ' + url); }
+      try {
+        await navigator.clipboard.writeText(url);
+        setCopyAuthSuccess(true);
+        setTimeout(() => setCopyAuthSuccess(false), 2000);
+      } catch {
+        alert('クリップボードへコピーできませんでした: ' + url);
+      }
     } catch (e) { alert('認可URL取得に失敗しました: ' + String(e)); }
   };
 
@@ -145,7 +152,13 @@ export default function XAccountModal({ open, onClose, mode = "create", account,
           )}
 
           <div className="flex items-center gap-2 mb-4">
-            <button type="button" className="bg-yellow-500 dark:bg-yellow-500 text-white px-3 py-1 rounded" onClick={handleCopyAuthUrl}>認可URLコピー</button>
+            <button
+              type="button"
+              className={`${copyAuthSuccess ? 'bg-green-200 text-black' : 'bg-yellow-500 text-white'} dark:bg-yellow-500 px-3 py-1 rounded`}
+              onClick={handleCopyAuthUrl}
+            >
+              認可URLコピー
+            </button>
             <button
               type="button"
               aria-label={oauthAccessTokenLocal ? '認証解除' : '未認証'}
