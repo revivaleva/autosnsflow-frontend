@@ -22,6 +22,7 @@ export default function XAccountModal({ open, onClose, mode = "create", account,
   const [checkingAuth, setCheckingAuth] = useState(false);
   const [saving, setSaving] = useState(false);
   const [accountType, setAccountType] = useState<'general' | 'ero' | 'saikyou'>('general');
+  const [copyCbSuccess, setCopyCbSuccess] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -82,7 +83,9 @@ export default function XAccountModal({ open, onClose, mode = "create", account,
 
   const handleCopyAuthUrl = async () => {
     try {
-      const r = await fetch(`/api/x/authorize?accountId=${encodeURIComponent(accountId)}&raw=1`, { credentials: 'include' });
+      // include clientId if present (allow using unsaved clientId)
+      const qClient = clientId ? `&clientId=${encodeURIComponent(clientId)}` : '';
+      const r = await fetch(`/api/x/authorize?accountId=${encodeURIComponent(accountId)}&raw=1${qClient}`, { credentials: 'include' });
       // If response is JSON with auth_url, use it. Otherwise fail loudly so caller doesn't get a relative fallback URL.
       if (!r.ok) {
         const txt = await r.text().catch(() => '');
@@ -186,12 +189,19 @@ export default function XAccountModal({ open, onClose, mode = "create", account,
               type="button"
               aria-label="コールバックURLコピー"
               title="コールバックURLをコピー"
-              className="ml-2 px-2 py-1 border rounded text-sm bg-gray-50 dark:bg-gray-800"
+              className={`ml-2 px-2 py-1 border rounded text-sm ${copyCbSuccess ? 'bg-green-200' : 'bg-gray-50'} dark:bg-gray-800`}
               onClick={async (e) => {
                 e.preventDefault();
                 e.stopPropagation();
                 const cb = 'https://threadsbooster.jp/api/x/callback';
-                try { await navigator.clipboard.writeText(cb); alert('コールバックURLをコピーしました'); } catch { alert('クリップボードへコピーできませんでした: ' + cb); }
+                try {
+                  await navigator.clipboard.writeText(cb);
+                  setCopyCbSuccess(true);
+                  // reset after 2 seconds
+                  setTimeout(() => setCopyCbSuccess(false), 2000);
+                } catch {
+                  try { await navigator.clipboard.writeText(cb); setCopyCbSuccess(true); setTimeout(() => setCopyCbSuccess(false), 2000); } catch { /* ignore */ }
+                }
               }}
             >
               コールバックコピー

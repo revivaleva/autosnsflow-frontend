@@ -50,8 +50,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const codeVerifierDerived = base64url(crypto.createHmac('sha256', sessionSecret).update(state).digest());
     const codeChallengeDerived = base64url(crypto.createHash('sha256').update(Buffer.from(codeVerifierDerived)).digest());
 
-    // determine clientId: prefer DB per-account if provided; AppConfig fallback
+    // determine clientId: prefer explicit query param, then DB per-account if provided; AppConfig fallback
     let clientId = '';
+    // allow clientId override from query to support unsaved clientId usage from UI
+    if (typeof req.query.clientId === 'string' && req.query.clientId.trim()) {
+      clientId = String(req.query.clientId).trim();
+    }
+    
     if (accountId) {
       try {
         // Ensure requester is authenticated and use their userId as PK lookup
