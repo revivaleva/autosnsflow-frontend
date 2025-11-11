@@ -6,8 +6,8 @@ export default function Page() {
   return (
     <AppLayout>
       <div className="p-6">
-        <h1 className="text-2xl font-bold mb-4">X: エロ投稿プール</h1>
-        <PostPoolPage poolType="ero" />
+        <h1 className="text-2xl font-bold mb-4">X: エロ2投稿プール</h1>
+        <PostPoolPage poolType="ero2" />
       </div>
     </AppLayout>
   );
