@@ -584,7 +584,7 @@ async function getXAccounts(userId = DEFAULT_USER_ID) {
       KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
       ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'ACCOUNT#' } },
       ProjectionExpression: 'SK, accountId, username, autoPostEnabled, oauthAccessToken, accessToken, #st, createdAt, updatedAt, #tp',
-      ExpressionAttributeNames: { '#st': 'authState' },
+      ExpressionAttributeNames: { '#st': 'authState', '#tp': 'type' },
       ExclusiveStartKey: lastKey,
     }));
     items = items.concat(res.Items || []);
