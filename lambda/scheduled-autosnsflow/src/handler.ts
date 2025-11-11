@@ -2437,6 +2437,30 @@ async function ensureNextDayAutoPostsForX(userId: any, xacct: any, opts: any = {
         const tomorrowDate = new Date(today);
         tomorrowDate.setDate(tomorrowDate.getDate() + 1);
         const tomorrowYmd = yyyymmddJst(tomorrowDate);
+      // Check user-level time-bucket setting (user_type_time_settings). If user has the bucket OFF, skip creating reservation.
+      try {
+        const settingsTable = process.env.TBL_USER_TYPE_TIME_SETTINGS || 'UserTypeTimeSettings';
+        const poolType = xacct.type || 'general';
+        // Attempt GetItem with keys (user_id, type)
+        const sres = await ddb.send(new GetItemCommand({ TableName: settingsTable, Key: { user_id: { S: String(userId) }, type: { S: String(poolType) } } }));
+        const sitem = (sres as any).Item || {};
+        const morningOn = Boolean(sitem.morning && (sitem.morning.BOOL === true || String(sitem.morning.S) === 'true'));
+        const noonOn = Boolean(sitem.noon && (sitem.noon.BOOL === true || String(sitem.noon.S) === 'true'));
+        const nightOn = Boolean(sitem.night && (sitem.night.BOOL === true || String(sitem.night.S) === 'true'));
+        let field = 'unknown';
+        if (String(w).startsWith('07')) field = 'morning';
+        else if (String(w).startsWith('12')) field = 'noon';
+        else if (String(w).startsWith('17')) field = 'night';
+        const allowed = field === 'morning' ? morningOn : (field === 'noon' ? noonOn : (field === 'night' ? nightOn : false));
+        if (!allowed) {
+          await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "skip", message: `user setting ${poolType}.${field} is OFF, skip window ${w}` });
+          continue;
+        }
+      } catch (e) {
+        try { await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "error", message: "failed to read user time settings", detail: { error: String(e) } }); } catch(_) {}
+        // On error reading settings, skip to avoid unintended posts
+        continue;
+      }
       // Check existing XScheduledPosts for same account and identical timeRange on the same next-day date
       try {
         const q = await ddb.send(new QueryCommand({
