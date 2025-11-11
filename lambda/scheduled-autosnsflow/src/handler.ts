@@ -583,7 +583,7 @@ async function getXAccounts(userId = DEFAULT_USER_ID) {
       TableName: TBL_X,
       KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
       ExpressionAttributeValues: { ':pk': { S: `USER#${userId}` }, ':pfx': { S: 'ACCOUNT#' } },
-      ProjectionExpression: 'SK, accountId, username, autoPostEnabled, oauthAccessToken, accessToken, #st, createdAt, updatedAt',
+      ProjectionExpression: 'SK, accountId, username, autoPostEnabled, oauthAccessToken, accessToken, #st, createdAt, updatedAt, #tp',
       ExpressionAttributeNames: { '#st': 'authState' },
       ExclusiveStartKey: lastKey,
     }));
