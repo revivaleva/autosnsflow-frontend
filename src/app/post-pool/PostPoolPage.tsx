@@ -10,7 +10,7 @@ type PoolItem = {
   createdAt?: number;
 };
 
-export default function PostPoolPage({ poolType }: { poolType: "general" | "ero" | "saikyou" }) {
+export default function PostPoolPage({ poolType }: { poolType: "general" | "ero" | "ero1" | "ero2" | "saikyou" }) {
   const [content, setContent] = useState("");
   const [images, setImages] = useState<File[]>([]);
   const [items, setItems] = useState<PoolItem[]>([]);
@@ -18,18 +18,45 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
   const [accountsCount, setAccountsCount] = useState<number>(0);
   const [generalCount, setGeneralCount] = useState<number>(0);
   const [eroCount, setEroCount] = useState<number>(0);
+  const [ero1Count, setEro1Count] = useState<number>(0);
+  const [ero2Count, setEro2Count] = useState<number>(0);
   const [saikyouCount, setSaikyouCount] = useState<number>(0);
   const [xAccountsCount, setXAccountsCount] = useState<number>(0);
   const [openPool, setOpenPool] = useState<boolean>(false);
   const [openScheduled, setOpenScheduled] = useState<boolean>(false);
   const [scheduledPostsX, setScheduledPostsX] = useState<any[]>([]);
   const [xAccountsList, setXAccountsList] = useState<any[]>([]);
+  const [morningOn, setMorningOn] = useState<boolean>(false);
+  const [noonOn, setNoonOn] = useState<boolean>(false);
+  const [nightOn, setNightOn] = useState<boolean>(false);
+  const [settingLoading, setSettingLoading] = useState<boolean>(false);
+  const [regenLoading, setRegenLoading] = useState<boolean>(false);
   const [filterStatus, setFilterStatus] = useState<string>(''); // '' | 'scheduled' | 'posted'
   const [filterAccount, setFilterAccount] = useState<string>('');
   const [sortKey, setSortKey] = useState<'scheduledAt' | 'postedAt'>('scheduledAt');
   const [sortAsc, setSortAsc] = useState<boolean>(false); // newest first by default
 
   useEffect(() => { loadPool(); loadAccountsCount(); }, [poolType]);
+  useEffect(() => {
+    // load user-type time settings for this poolType
+    const load = async () => {
+      try {
+        setSettingLoading(true);
+        const q = await fetch(`/api/user-type-time-settings?type=${encodeURIComponent(poolType)}`, { credentials: 'include' });
+        if (!q.ok) { setMorningOn(false); setNoonOn(false); setNightOn(false); return; }
+        const j = await q.json().catch(() => ({}));
+        const it = j.item || {};
+        setMorningOn(Boolean(it.morning === true || it.morning === 'true'));
+        setNoonOn(Boolean(it.noon === true || it.noon === 'true'));
+        setNightOn(Boolean(it.night === true || it.night === 'true'));
+      } catch (e) {
+        setMorningOn(false); setNoonOn(false); setNightOn(false);
+      } finally {
+        setSettingLoading(false);
+      }
+    };
+    load();
+  }, [poolType]);
   useEffect(() => {
     if (openScheduled && poolType) {
       loadScheduledX();
@@ -96,9 +123,13 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
       const enabledList = xlist.filter((a: any) => a.autoPostEnabled === true);
       const general = enabledList.filter((a: any) => (a.type || "general") === "general").length;
       const ero = enabledList.filter((a: any) => (a.type || "general") === "ero").length;
+      const ero1 = enabledList.filter((a: any) => (a.type || "general") === "ero1").length;
+      const ero2 = enabledList.filter((a: any) => (a.type || "general") === "ero2").length;
       const saikyou = enabledList.filter((a: any) => (a.type || "general") === "saikyou").length;
       setGeneralCount(general);
       setEroCount(ero);
+      setEro1Count(ero1);
+      setEro2Count(ero2);
       setSaikyouCount(saikyou);
       // xAccountsCount: number of accounts eligible for posting (autoPostEnabled)
       setXAccountsCount(enabledList.length);
@@ -153,20 +184,105 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
   };
 
   const poolCount = items.length;
-  const relevantAccountCount =
-    poolType === "general" ? generalCount : poolType === "ero" ? eroCount : saikyouCount;
-  const postsPerDayPerAcc = relevantAccountCount * 3;
+  const relevantAccountCount = (() => {
+    if (poolType === "general") return generalCount;
+    if (poolType === "ero") return eroCount;
+    if (poolType === "ero1") return ero1Count;
+    if (poolType === "ero2") return ero2Count;
+    return saikyouCount;
+  })();
+  const activeBuckets = (morningOn ? 1 : 0) + (noonOn ? 1 : 0) + (nightOn ? 1 : 0);
+  const postsPerDayPerAcc = relevantAccountCount * activeBuckets;
   const daysCover = postsPerDayPerAcc > 0 ? Math.floor(poolCount / postsPerDayPerAcc) : null;
   const possibleDate = daysCover === null ? "計算不可" : new Date(Date.now() + (daysCover * 24 * 3600 * 1000)).toLocaleDateString();
 
   return (
     <div className="max-w-6xl mx-auto mt-8 p-4">
-      <div className="mb-6">
-        <div className="text-sm text-gray-600 dark:text-gray-300">
-          プール件数: <strong>{poolCount}</strong> ・ アカウント数: <strong>{accountsCount}</strong>
+      <div className="mb-6 flex items-start justify-between">
+        <div>
+          <div className="text-sm text-gray-600 dark:text-gray-300">
+            プール件数: <strong>{poolCount}</strong> ・ アカウント数: <strong>{accountsCount}</strong>
+          </div>
+          {/* 表示は該当種別のみ（投稿可能期日計算用） */}
+          <div className="text-sm text-gray-600 dark:text-gray-300">投稿可能期日: <strong>{possibleDate}</strong>（保有日数: {daysCover === null ? "－" : `${daysCover}日`})</div>
         </div>
-        {/* 表示は該当種別のみ（投稿可能期日計算用） */}
-        <div className="text-sm text-gray-600 dark:text-gray-300">投稿可能期日: <strong>{possibleDate}</strong>（保有日数: {daysCover === null ? "－" : `${daysCover}日`})</div>
+        <div className="flex items-center gap-6">
+          {/* 朝 */}
+          <div className="flex flex-col items-center">
+            <div className="text-sm text-gray-600 dark:text-gray-300 mb-1">朝</div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                className="sr-only peer"
+                checked={morningOn}
+                disabled={settingLoading}
+                onChange={async () => {
+                  try {
+                    setSettingLoading(true);
+                    const newVal = !morningOn;
+                    const resp = await fetch('/api/user-type-time-settings', { method: 'PATCH', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: poolType, morning: newVal }) });
+                    if (!resp.ok) throw new Error('failed');
+                    setMorningOn(newVal);
+                  } catch (e) {
+                    alert('設定の保存に失敗しました');
+                  } finally { setSettingLoading(false); }
+                }}
+              />
+              <div className={`w-12 h-6 bg-gray-200 rounded-full peer-checked:bg-blue-500 transition-colors`}></div>
+              <span className="absolute left-1 top-1 w-4 h-4 bg-white rounded-full shadow transition-transform peer-checked:translate-x-6"></span>
+            </label>
+          </div>
+          {/* 昼 */}
+          <div className="flex flex-col items-center">
+            <div className="text-sm text-gray-600 dark:text-gray-300 mb-1">昼</div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                className="sr-only peer"
+                checked={noonOn}
+                disabled={settingLoading}
+                onChange={async () => {
+                  try {
+                    setSettingLoading(true);
+                    const newVal = !noonOn;
+                    const resp = await fetch('/api/user-type-time-settings', { method: 'PATCH', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: poolType, noon: newVal }) });
+                    if (!resp.ok) throw new Error('failed');
+                    setNoonOn(newVal);
+                  } catch (e) {
+                    alert('設定の保存に失敗しました');
+                  } finally { setSettingLoading(false); }
+                }}
+              />
+              <div className={`w-12 h-6 bg-gray-200 rounded-full peer-checked:bg-blue-500 transition-colors`}></div>
+              <span className="absolute left-1 top-1 w-4 h-4 bg-white rounded-full shadow transition-transform peer-checked:translate-x-6"></span>
+            </label>
+          </div>
+          {/* 晩 */}
+          <div className="flex flex-col items-center">
+            <div className="text-sm text-gray-600 dark:text-gray-300 mb-1">晩</div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                className="sr-only peer"
+                checked={nightOn}
+                disabled={settingLoading}
+                onChange={async () => {
+                  try {
+                    setSettingLoading(true);
+                    const newVal = !nightOn;
+                    const resp = await fetch('/api/user-type-time-settings', { method: 'PATCH', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: poolType, night: newVal }) });
+                    if (!resp.ok) throw new Error('failed');
+                    setNightOn(newVal);
+                  } catch (e) {
+                    alert('設定の保存に失敗しました');
+                  } finally { setSettingLoading(false); }
+                }}
+              />
+              <div className={`w-12 h-6 bg-gray-200 rounded-full peer-checked:bg-blue-500 transition-colors`}></div>
+              <span className="absolute left-1 top-1 w-4 h-4 bg-white rounded-full shadow transition-transform peer-checked:translate-x-6"></span>
+            </label>
+          </div>
+        </div>
       </div>
 
       <div className="mb-4">
@@ -259,6 +375,36 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
                 </select>
               </div>
               <div className="flex items-center gap-2">
+                <button
+                  className="bg-gray-200 text-gray-800 rounded px-3 py-1 text-sm"
+                  onClick={async () => {
+                    if (!confirm("現在の設定でOFFの時間帯の予約を削除し、当日の未来枠で欠損している予約を生成します。実行しますか？")) return;
+                    try {
+                      setRegenLoading(true);
+                      const resp = await fetch('/api/post-pool/regenerate-scheduled', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: poolType }) });
+                      const j = await resp.json().catch(() => ({}));
+                      if (!resp.ok || !j?.ok) {
+                        if (j?.error === 'rate_limited') {
+                          const sec = Number(j?.retry_after || 60);
+                          const msg = sec >= 60 ? `${Math.ceil(sec / 60)}分後に再度実行してください` : `${sec}秒後に再度実行してください`;
+                          alert(msg);
+                        } else {
+                          alert('再生成に失敗しました: ' + (j?.error || JSON.stringify(j)));
+                        }
+                      } else {
+                        alert(`再生成完了: 作成 ${j.created || 0} / 削除 ${j.deleted || 0}`);
+                        await loadScheduledX();
+                      }
+                    } catch (e) {
+                      alert('再生成に失敗しました: ' + String(e));
+                    } finally {
+                      setRegenLoading(false);
+                    }
+                  }}
+                  disabled={regenLoading}
+                >
+                  {regenLoading ? '再生成中...' : '空予約再生成'}
+                </button>
                 <label className="text-sm">ソート:</label>
                 <select value={sortKey} onChange={e => setSortKey(e.target.value as any)} className="border rounded px-2 py-1">
                   <option value="scheduledAt">予約日時</option>

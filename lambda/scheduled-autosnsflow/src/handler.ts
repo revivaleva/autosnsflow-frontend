@@ -794,6 +794,52 @@ async function createScheduledPost(userId: any, { acct, group, type, whenJst, ov
   return { id, groupTypeStr, themeStr };
 }
 
+// X-specific scheduled post creation wrapper: require acct.type or provided poolType
+async function createXScheduledPost(userId: any, xacct: any, whenJst: Date, opts: any = {}) {
+  try {
+    const effectivePoolType = (xacct && xacct.type) || (opts && opts.poolType) || '';
+    if (!effectivePoolType) {
+      await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "skip", message: "skip createXScheduledPost: poolType missing" });
+      return { created: 0, skipped: true };
+    }
+    const id = `xsp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
+    const now = `${Math.floor(Date.now() / 1000)}`;
+    const scheduledAt = Math.floor(whenJst.getTime() / 1000);
+    const timeRange = opts.overrideTimeRange || opts.timeRange || (opts.type === 1 ? (opts.group?.time1 || "05:00-08:00") : opts.type === 2 ? (opts.group?.time2 || "12:00-13:00") : (opts.group?.time3 || "20:00-23:00")) || "";
+    const timeRangeNorm = String(timeRange).replace(/[^0-9A-Za-z]/g, '_') || '';
+    const ymd = yyyymmddJst(new Date((scheduledAt * 1000) + (9 * 3600 * 1000)));
+    const skId = `SCHEDULEDPOST#${xacct.accountId}#${ymd}#${timeRangeNorm}`;
+    const item: any = {
+      PK: { S: `USER#${userId}` },
+      SK: { S: skId },
+      scheduledPostId: { S: id },
+      accountId: { S: xacct.accountId },
+      accountName: { S: xacct.username || xacct.accountId || '' },
+      content: { S: '' },
+      scheduledAt: { N: String(scheduledAt) },
+      postedAt: { N: '0' },
+      status: { S: 'scheduled' },
+      timeRange: { S: timeRange || '' },
+      scheduledSource: { S: 'pool' },
+      poolType: { S: String(effectivePoolType) },
+      createdAt: { N: now },
+      updatedAt: { N: now },
+      scheduledDateYmd: { S: ymd },
+    };
+    try {
+      await ddb.send(new PutItemCommand({ TableName: TBL_SCHEDULED, Item: sanitizeItem(item), ConditionExpression: 'attribute_not_exists(SK)' }));
+      await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "ok", message: "x reservation created", detail: { scheduledPostId: id, whenJst: whenJst.toISOString(), poolType: effectivePoolType, sk: skId } });
+      return { created: 1, scheduledPostId: id, sk: skId };
+    } catch (e:any) {
+      try { console.error('[x-hourly] createXScheduledPost failed', String(e)); } catch(_) {}
+      return { created: 0, error: String(e?.message || e) };
+    }
+  } catch (e:any) {
+    try { console.error('[x-hourly] createXScheduledPost unexpected', String(e)); } catch(_) {}
+    return { created: 0, error: String(e?.message || e) };
+  }
+}
+
 // Create a quote reservation for an account if opted-in and monitored account has a new post
 async function createQuoteReservationForAccount(userId: any, acct: any, opts: any = {}) {
   try {
@@ -2437,6 +2483,30 @@ async function ensureNextDayAutoPostsForX(userId: any, xacct: any, opts: any = {
         const tomorrowDate = new Date(today);
         tomorrowDate.setDate(tomorrowDate.getDate() + 1);
         const tomorrowYmd = yyyymmddJst(tomorrowDate);
+      // Check user-level time-bucket setting (user_type_time_settings). If user has the bucket OFF, skip creating reservation.
+      try {
+        const settingsTable = process.env.TBL_USER_TYPE_TIME_SETTINGS || 'UserTypeTimeSettings';
+        const poolType = xacct.type || 'general';
+        // Attempt GetItem with keys (user_id, type)
+        const sres = await ddb.send(new GetItemCommand({ TableName: settingsTable, Key: { user_id: { S: String(userId) }, type: { S: String(poolType) } } }));
+        const sitem = (sres as any).Item || {};
+        const morningOn = Boolean(sitem.morning && (sitem.morning.BOOL === true || String(sitem.morning.S) === 'true'));
+        const noonOn = Boolean(sitem.noon && (sitem.noon.BOOL === true || String(sitem.noon.S) === 'true'));
+        const nightOn = Boolean(sitem.night && (sitem.night.BOOL === true || String(sitem.night.S) === 'true'));
+        let field = 'unknown';
+        if (String(w).startsWith('07')) field = 'morning';
+        else if (String(w).startsWith('12')) field = 'noon';
+        else if (String(w).startsWith('17')) field = 'night';
+        const allowed = field === 'morning' ? morningOn : (field === 'noon' ? noonOn : (field === 'night' ? nightOn : false));
+        if (!allowed) {
+          await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "skip", message: `user setting ${poolType}.${field} is OFF, skip window ${w}` });
+          continue;
+        }
+      } catch (e) {
+        try { await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "error", message: "failed to read user time settings", detail: { error: String(e) } }); } catch(_) {}
+        // On error reading settings, skip to avoid unintended posts
+        continue;
+      }
       // Check existing XScheduledPosts for same account and identical timeRange on the same next-day date
       try {
         const q = await ddb.send(new QueryCommand({
@@ -2476,66 +2546,10 @@ async function ensureNextDayAutoPostsForX(userId: any, xacct: any, opts: any = {
         continue;
       }
 
-      // Create XScheduledPosts item
+      // Create XScheduledPosts item via dedicated X-specific function
       try {
-        const id = `xsp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
-        try { console.info('[x-hourly] generated scheduledPostId', { userId, accountId: xacct.accountId, scheduledPostId: id }); } catch(_) {}
-        const now = `${Math.floor(Date.now() / 1000)}`;
-        const scheduledAt = Math.floor(when.getTime() / 1000);
-        const item: any = {
-          PK: { S: `USER#${userId}` },
-          SK: { S: `SCHEDULEDPOST#${id}` },
-          scheduledPostId: { S: id },
-          accountId: { S: xacct.accountId },
-          accountName: { S: xacct.username || xacct.accountId || '' },
-          content: { S: '' },
-          scheduledAt: { N: String(scheduledAt) },
-          postedAt: { N: '0' },
-          status: { S: 'scheduled' },
-          timeRange: { S: w },
-          scheduledSource: { S: 'pool' },
-          poolType: { S: xacct.type || 'general' },
-          createdAt: { N: now },
-          updatedAt: { N: now },
-        };
-
-      // Build deterministic SK for dedup: include accountId + yyyymmdd + normalized timeRange
-      const timeRangeNorm = String(w).replace(/[^0-9A-Za-z]/g, '_');
-      const skId = `SCHEDULEDPOST#${xacct.accountId}#${tomorrowYmd}#${timeRangeNorm}`;
-      item.SK = { S: skId };
-      // record scheduled date as YMD for visibility
-      (item as any).scheduledDateYmd = { S: tomorrowYmd };
-
-      // Debug: announce PutItem attempt
-      try { console.info('[x-hourly] attempting PutItem', { table: process.env.TBL_X_SCHEDULED || 'XScheduledPosts', sk: skId, scheduledDateYmd: tomorrowYmd, accountId: xacct.accountId }); } catch(_) {}
-
-      // Debug: show sanitized item to be put
-      try {
-        const san = sanitizeItem(item);
-        // limit size for logs
-        try { console.info('[x-hourly] sanitized item preview', { sk: skId, preview: { PK: san.PK, SK: san.SK, accountId: san.accountId, scheduledAt: san.scheduledAt, timeRange: san.timeRange } }); } catch(_) {}
-      } catch(_) {}
-
-      try {
-        // Conditional Put: only succeed if item does not already exist at this PK+SK
-        await ddb.send(new PutItemCommand({
-          TableName: process.env.TBL_X_SCHEDULED || 'XScheduledPosts',
-          Item: sanitizeItem(item),
-          ConditionExpression: 'attribute_not_exists(PK)'
-        }));
-        created++;
-        await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "ok", message: "x reservation created", detail: { scheduledPostId: id, whenJst: when.toISOString(), poolType: xacct.type || 'general', sk: skId } });
-      } catch (e:any) {
-        // Debug: surface full error for diagnosis
-        try { console.error('[x-hourly] PutItem failed', { sk: skId, err: String(e), name: e?.name, msg: e?.message, stack: e?.stack }); } catch(_) {}
-        const msg = String((e as any)?.name || (e as any)?.message || e);
-        if (msg.includes('ConditionalCheckFailed') || msg.includes('TransactionCanceled')) {
-          // Item already exists -> skip
-          await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "skip", message: "duplicate reservation prevented by conditional put", detail: { sk: skId } });
-        } else {
-          await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "error", message: "x reservation create failed", detail: { error: String(e) } });
-        }
-      }
+        const res = await createXScheduledPost(userId, xacct, when, { dryRun: !!(opts && opts.dryRun) });
+        if (res && res.created) created += res.created;
       } catch (e) {
         await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "error", message: "x reservation create failed", detail: { error: String(e) } });
       }

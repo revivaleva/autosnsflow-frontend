@@ -137,9 +137,9 @@ export default function AppLayout({ children }) {
           <img src="/T-Booster_icon.ico" alt="T-Booster" className="w-7 h-7 object-contain" />
           <div className="text-2xl font-bold">T-Booster</div>
         </div>
-        <ul className="space-y-2">
+        <ul className="space-y-0.5">
           {menu.map((item) => (
-            <li key={item.href}>
+            <li key={item.href} className={item.href === "/settings" ? "mb-6" : ""}>
               <Link
                 href={item.href}
                 className={`block px-3 py-2 rounded hover:bg-gray-700 ${
@@ -198,26 +198,49 @@ export default function AppLayout({ children }) {
                   X：一般投稿プール
                 </Link>
               </li>
+
+              {/* Requested order for Ero menus */}
               <li>
                 <Link
-                  href="/x/ero"
+                  href="/x/ero1"
                   className={`block px-3 py-2 rounded hover:bg-gray-700 ${
-                    pathname === "/x/ero" ? "bg-gray-700 font-semibold" : ""
+                    pathname === "/x/ero1" ? "bg-gray-700 font-semibold" : ""
                   }`}
                 >
-                  X: エロアカウント一覧
+                  X: エロ1アカウント一覧
                 </Link>
               </li>
               <li>
                 <Link
-                  href="/x/post-pool/ero"
+                  href="/x/post-pool/ero1"
                   className={`block px-3 py-2 rounded hover:bg-gray-700 ${
-                    pathname === "/x/post-pool/ero" ? "bg-gray-700 font-semibold" : ""
+                    pathname === "/x/post-pool/ero1" ? "bg-gray-700 font-semibold" : ""
                   }`}
                 >
-                  X: エロ投稿プール
+                  X: エロ1投稿プール
                 </Link>
               </li>
+              <li>
+                <Link
+                  href="/x/ero2"
+                  className={`block px-3 py-2 rounded hover:bg-gray-700 ${
+                    pathname === "/x/ero2" ? "bg-gray-700 font-semibold" : ""
+                  }`}
+                >
+                  X: エロ2アカウント一覧
+                </Link>
+              </li>
+              <li>
+                <Link
+                  href="/x/post-pool/ero2"
+                  className={`block px-3 py-2 rounded hover:bg-gray-700 ${
+                    pathname === "/x/post-pool/ero2" ? "bg-gray-700 font-semibold" : ""
+                  }`}
+                >
+                  X: エロ2投稿プール
+                </Link>
+              </li>
+
               <li>
                 <Link
                   href="/x/saikyou"
