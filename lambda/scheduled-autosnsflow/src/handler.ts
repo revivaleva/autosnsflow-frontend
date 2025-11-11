@@ -600,6 +600,8 @@ async function getXAccounts(userId = DEFAULT_USER_ID) {
     authState: i.authState?.S || '',
     createdAt: i.createdAt?.N ? Number(i.createdAt.N) : 0,
     updatedAt: i.updatedAt?.N ? Number(i.updatedAt.N) : 0,
+    // X account type (must be present for X pool operations). Do NOT fallback to 'general' here.
+    type: i.type?.S,
   }));
 }
 
@@ -797,10 +799,11 @@ async function createScheduledPost(userId: any, { acct, group, type, whenJst, ov
 // X-specific scheduled post creation wrapper: require acct.type or provided poolType
 async function createXScheduledPost(userId: any, xacct: any, whenJst: Date, opts: any = {}) {
   try {
-    const effectivePoolType = (xacct && xacct.type) || (opts && opts.poolType) || '';
+    // Require explicit xacct.type; do not fallback to opts.poolType or 'general'.
+    const effectivePoolType = (xacct && xacct.type) ? String(xacct.type) : '';
     if (!effectivePoolType) {
-      await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "skip", message: "skip createXScheduledPost: poolType missing" });
-      return { created: 0, skipped: true };
+      await putLog({ userId, type: "auto-post-x", accountId: xacct && xacct.accountId, status: "error", message: "createXScheduledPost failed: poolType missing on account" });
+      return { created: 0, skipped: true, error: 'poolType_missing' };
     }
     const id = `xsp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
     const now = `${Math.floor(Date.now() / 1000)}`;
@@ -2483,10 +2486,15 @@ async function ensureNextDayAutoPostsForX(userId: any, xacct: any, opts: any = {
         const tomorrowDate = new Date(today);
         tomorrowDate.setDate(tomorrowDate.getDate() + 1);
         const tomorrowYmd = yyyymmddJst(tomorrowDate);
+      // Require that xacct.type exists; do not fallback to 'general'. If missing, error out to avoid cross-type creation.
+      if (!xacct.type) {
+        try { await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "error", message: "account type missing; cannot create X scheduled posts for this account" }); } catch(_) {}
+        return { created: 0, skipped: true, error: 'missing_account_type' };
+      }
       // Check user-level time-bucket setting (user_type_time_settings). If user has the bucket OFF, skip creating reservation.
       try {
         const settingsTable = process.env.TBL_USER_TYPE_TIME_SETTINGS || 'UserTypeTimeSettings';
-        const poolType = xacct.type || 'general';
+        const poolType = xacct.type;
         // Attempt GetItem with keys (user_id, type)
         const sres = await ddb.send(new GetItemCommand({ TableName: settingsTable, Key: { user_id: { S: String(userId) }, type: { S: String(poolType) } } }));
         const sitem = (sres as any).Item || {};
