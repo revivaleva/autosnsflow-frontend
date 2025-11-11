@@ -830,8 +830,9 @@ async function createXScheduledPost(userId: any, xacct: any, whenJst: Date, opts
       scheduledDateYmd: { S: ymd },
     };
     try {
-      await ddb.send(new PutItemCommand({ TableName: TBL_SCHEDULED, Item: sanitizeItem(item), ConditionExpression: 'attribute_not_exists(SK)' }));
-      await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "ok", message: "x reservation created", detail: { scheduledPostId: id, whenJst: whenJst.toISOString(), poolType: effectivePoolType, sk: skId } });
+      const tbl = process.env.TBL_X_SCHEDULED || 'XScheduledPosts';
+      await ddb.send(new PutItemCommand({ TableName: tbl, Item: sanitizeItem(item), ConditionExpression: 'attribute_not_exists(SK)' }));
+      await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "ok", message: "x reservation created", detail: { scheduledPostId: id, whenJst: whenJst.toISOString(), poolType: effectivePoolType, sk: skId, table: tbl } });
       return { created: 1, scheduledPostId: id, sk: skId };
     } catch (e:any) {
       try { console.error('[x-hourly] createXScheduledPost failed', String(e)); } catch(_) {}
