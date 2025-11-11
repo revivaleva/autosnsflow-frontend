@@ -38,8 +38,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (req.method === 'POST') {
       const body = safeBody(req.body);
       try { console.log('[api/x-scheduled-posts] POST payload:', JSON.stringify(body)); } catch(_) {}
-      const { scheduledPostId, accountId, content, scheduledAt } = body || {};
-      if (!accountId || !content || (typeof scheduledAt === 'undefined' || scheduledAt === null || scheduledAt === '')) return res.status(400).json({ error: 'accountId, content, scheduledAt required' });
+    const { scheduledPostId, accountId, content, scheduledAt, poolType } = body || {};
+    if (!accountId || !content || (typeof scheduledAt === 'undefined' || scheduledAt === null || scheduledAt === '')) return res.status(400).json({ error: 'accountId, content, scheduledAt required' });
+    // Require poolType to be explicitly provided; do not create scheduled posts without poolType
+    if (!poolType || String(poolType).trim().length === 0) return res.status(400).json({ error: 'poolType_required' });
       const id = scheduledPostId || `sp-${Date.now().toString(36)}`;
       const now = `${Math.floor(Date.now() / 1000)}`;
       // normalize scheduledAt: accept numeric epoch (seconds) or 'YYYY-MM-DDTHH:mm' treated as JST
@@ -51,6 +53,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         scheduledPostId: { S: id },
         accountId: { S: accountId },
         accountName: { S: body.accountName || '' },
+        poolType: { S: String(poolType) },
         content: { S: String(content) },
         scheduledAt: { N: String(Math.floor(Number(parsedScheduledAt) || 0)) },
         postedAt: { N: '0' },
