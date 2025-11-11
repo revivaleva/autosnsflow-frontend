@@ -30,6 +30,7 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
   const [noonOn, setNoonOn] = useState<boolean>(false);
   const [nightOn, setNightOn] = useState<boolean>(false);
   const [settingLoading, setSettingLoading] = useState<boolean>(false);
+  const [regenLoading, setRegenLoading] = useState<boolean>(false);
   const [filterStatus, setFilterStatus] = useState<string>(''); // '' | 'scheduled' | 'posted'
   const [filterAccount, setFilterAccount] = useState<string>('');
   const [sortKey, setSortKey] = useState<'scheduledAt' | 'postedAt'>('scheduledAt');
@@ -374,6 +375,36 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
                 </select>
               </div>
               <div className="flex items-center gap-2">
+                <button
+                  className="bg-gray-200 text-gray-800 rounded px-3 py-1 text-sm"
+                  onClick={async () => {
+                    if (!confirm("現在の設定でOFFの時間帯の予約を削除し、当日の未来枠で欠損している予約を生成します。実行しますか？")) return;
+                    try {
+                      setRegenLoading(true);
+                      const resp = await fetch('/api/post-pool/regenerate-scheduled', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: poolType }) });
+                      const j = await resp.json().catch(() => ({}));
+                      if (!resp.ok || !j?.ok) {
+                        if (j?.error === 'rate_limited') {
+                          const sec = Number(j?.retry_after || 60);
+                          const msg = sec >= 60 ? `${Math.ceil(sec / 60)}分後に再度実行してください` : `${sec}秒後に再度実行してください`;
+                          alert(msg);
+                        } else {
+                          alert('再生成に失敗しました: ' + (j?.error || JSON.stringify(j)));
+                        }
+                      } else {
+                        alert(`再生成完了: 作成 ${j.created || 0} / 削除 ${j.deleted || 0}`);
+                        await loadScheduledX();
+                      }
+                    } catch (e) {
+                      alert('再生成に失敗しました: ' + String(e));
+                    } finally {
+                      setRegenLoading(false);
+                    }
+                  }}
+                  disabled={regenLoading}
+                >
+                  {regenLoading ? '再生成中...' : '空予約再生成'}
+                </button>
                 <label className="text-sm">ソート:</label>
                 <select value={sortKey} onChange={e => setSortKey(e.target.value as any)} className="border rounded px-2 py-1">
                   <option value="scheduledAt">予約日時</option>
