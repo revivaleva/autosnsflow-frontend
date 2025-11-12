@@ -295,7 +295,7 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
             </label>
           </div>
             <div className="flex items-center gap-2">
-            <div className="text-sm text-gray-500 dark:text-gray-300">文字数: {String(content || "").length}</div>
+            <div className={`text-sm ${String(content || "").length > 140 ? 'text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-gray-300'}`}>文字数: {String(content || "").length}</div>
             <button className="bg-green-500 dark:bg-green-600 text-white px-4 py-2 rounded text-sm font-medium" onClick={handleSave} disabled={loading}>{loading ? "登録中..." : "登録"}</button>
           </div>
         </div>
