@@ -839,7 +839,8 @@ async function createXScheduledPost(userId: any, xacct: any, whenJst: Date, opts
     const scheduledAt = Math.floor(whenJst.getTime() / 1000);
     const timeRange = opts.overrideTimeRange || opts.timeRange || (opts.type === 1 ? (opts.group?.time1 || "05:00-08:00") : opts.type === 2 ? (opts.group?.time2 || "12:00-13:00") : (opts.group?.time3 || "20:00-23:00")) || "";
     const timeRangeNorm = String(timeRange).replace(/[^0-9A-Za-z]/g, '_') || '';
-    const ymd = yyyymmddJst(new Date((scheduledAt * 1000) + (9 * 3600 * 1000)));
+    // Compute YMD using unified JST helper to ensure consistency with dayInfos
+    const ymd = yyyymmddJstFromDate(new Date(scheduledAt * 1000));
     const skId = `SCHEDULEDPOST#${xacct.accountId}#${ymd}#${timeRangeNorm}`;
     const item: any = {
       PK: { S: `USER#${userId}` },
