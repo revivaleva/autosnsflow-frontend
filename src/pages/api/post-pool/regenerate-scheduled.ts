@@ -19,6 +19,40 @@ function yyyymmddJst(d: Date) {
   return `${y}${m}${dd}`;
 }
 
+// Helpers to unify JST-midnight based calculations
+function pad2(n: number) { return String(n).padStart(2, '0'); }
+
+// Return a Date (UTC instant) that represents JST midnight (00:00) of the given anyDate.
+function getJstMidnightUtcDate(anyDate: Date = new Date()): Date {
+  // Convert to JST ms, then read JST Y/M/D and construct UTC instant for that JST midnight,
+  // then convert back to UTC ms.
+  const jstMs = anyDate.getTime() + 9 * 3600 * 1000;
+  const jst = new Date(jstMs);
+  const y = jst.getUTCFullYear();
+  const m = jst.getUTCMonth();
+  const d = jst.getUTCDate();
+  const utcMsForJstMidnight = Date.UTC(y, m, d, 0, 0, 0) - (9 * 3600 * 1000);
+  return new Date(utcMsForJstMidnight);
+}
+
+function yyyymmddJstFromDate(anyDate: Date = new Date()) {
+  const jstMs = anyDate.getTime() + 9 * 3600 * 1000;
+  const jst = new Date(jstMs);
+  return `${jst.getUTCFullYear()}${pad2(jst.getUTCMonth() + 1)}${pad2(jst.getUTCDate())}`;
+}
+
+// Return day infos for today/tomorrow based on current time (JST midnight UTC instant + ymd)
+function getJstDayInfos(referenceMs: number = Date.now()) {
+  const ref = new Date(referenceMs);
+  const todayMid = getJstMidnightUtcDate(ref);
+  const tomorrowMid = getJstMidnightUtcDate(new Date(referenceMs + 24 * 3600 * 1000));
+  return [
+    { date: todayMid, ymd: yyyymmddJstFromDate(todayMid) },
+    { date: tomorrowMid, ymd: yyyymmddJstFromDate(tomorrowMid) },
+  ];
+}
+
+// Simplified randomTimeInRangeJst: baseDate is any Date; internally uses JST-midnight UTC instant
 function randomTimeInRangeJst(windowStr: string, baseDate: Date) {
   try {
     const parts = String(windowStr).split(/-|～|~/).map((x) => String(x).trim());
@@ -26,17 +60,13 @@ function randomTimeInRangeJst(windowStr: string, baseDate: Date) {
     if (!start || !end) return null;
     const [sh, sm] = start.split(":").map((x) => Number(x));
     const [eh, em] = end.split(":").map((x) => Number(x));
-    // baseDate is JS Date (local), we need JST midnight of baseDate
-    const jstMs = baseDate.getTime() + (9 * 3600 * 1000);
-    const jst = new Date(jstMs);
-    const jstStartOfDayMs = Date.UTC(jst.getUTCFullYear(), jst.getUTCMonth(), jst.getUTCDate(), 0, 0, 0);
-    const startMsJst = jstStartOfDayMs + (sh * 3600 + sm * 60) * 1000;
-    const endMsJst = jstStartOfDayMs + (eh * 3600 + em * 60) * 1000;
-    // convert back to epoch ms
-    const startEpochMs = startMsJst - (9 * 3600 * 1000);
-    const endEpochMs = endMsJst - (9 * 3600 * 1000);
-    if (!isFinite(startEpochMs) || !isFinite(endEpochMs) || endEpochMs <= startEpochMs) return null;
-    const chosen = Math.floor(Math.random() * (endEpochMs - startEpochMs)) + startEpochMs;
+    // get JST-midnight (UTC instant) for baseDate
+    const jstMid = getJstMidnightUtcDate(baseDate);
+    const baseUtcMs = jstMid.getTime();
+    const startMs = baseUtcMs + ((sh * 3600) + (sm * 60)) * 1000;
+    const endMs = baseUtcMs + ((eh * 3600) + (em * 60)) * 1000;
+    if (!isFinite(startMs) || !isFinite(endMs) || endMs <= startMs) return null;
+    const chosen = Math.floor(Math.random() * (endMs - startMs)) + startMs;
     return new Date(chosen);
   } catch (e) {
     return null;
@@ -101,14 +131,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const tryUseGsi = Boolean(process.env.GSI_BY_POOL_DATE || true);
     try {
       if (tryUseGsi) {
-        // Query for today and tomorrow separately
-        const dates = [];
-        const now = new Date();
-        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        const tomorrow = new Date(today);
-        tomorrow.setDate(tomorrow.getDate() + 1);
-        dates.push(yyyymmddJst(today));
-        dates.push(yyyymmddJst(tomorrow));
+        // Query for today and tomorrow separately (use unified JST-day infos)
+        const dayInfos = getJstDayInfos();
+        const dates = [dayInfos[0].ymd, dayInfos[1].ymd];
         for (const ymd of dates) {
           try { console.info('[regenerate] tryingGSIQuery', { gsiName, poolType, ymd }); } catch(_) {}
           let exclusiveStartKey: any = undefined;
@@ -153,14 +178,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         exclusiveStartKey = (out as any).LastEvaluatedKey;
       } while (exclusiveStartKey);
     }
-    // Compute JST-based today/tomorrow YMD and Date objects before inspecting items
-    const jstNowMsForInspect = Date.now() + (9 * 3600 * 1000);
-    const jstNow = new Date(jstNowMsForInspect);
-    const today = new Date(jstNow.getUTCFullYear(), jstNow.getUTCMonth(), jstNow.getUTCDate());
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const todayYmd = yyyymmddJst(today);
-    const tomorrowYmd = yyyymmddJst(tomorrow);
+    // Compute JST-based today/tomorrow YMD and Date objects using unified helper
+    const dayInfosForInspect = getJstDayInfos();
+    const today = dayInfosForInspect[0].date;
+    const tomorrow = dayInfosForInspect[1].date;
+    const todayYmd = dayInfosForInspect[0].ymd;
+    const tomorrowYmd = dayInfosForInspect[1].ymd;
     // (sample inspection removed)
     for (let i = 0; i < Math.min(50, scheduledItems.length); i++) {
       const it = scheduledItems[i];
