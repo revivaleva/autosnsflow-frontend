@@ -780,7 +780,11 @@ async function deleteUnpostedAutoPosts(userId: any, acct: any, groupTypeStr: any
 async function createScheduledPost(userId: any, { acct, group, type, whenJst, overrideTheme = "", overrideTimeRange = "", secondStageWanted = undefined, scheduledSource = undefined, poolType = undefined }: any, opts: any = {}) {
   const themeStr = (overrideTheme || ((type === 1 ? group.theme1 : type === 2 ? group.theme2 : group.theme3) || ""));
   const groupTypeStr = `${group.groupName}-自動投稿${type}`;
-  const timeRange = (overrideTimeRange || (type === 1 ? (group.time1 || "05:00-08:00") : type === 2 ? (group.time2 || "12:00-13:00") : (group.time3 || "20:00-23:00")) || "");
+  const timeRange = (overrideTimeRange || (type === 1 ? (group.time1 || "") : type === 2 ? (group.time2 || "") : (group.time3 || "")) || "");
+  if (!timeRange) {
+    try { await putLog({ userId, type: "auto-post", accountId: acct.accountId, status: "error", message: "timeRange missing for scheduled post creation", detail: { group: group.groupName, type } }); } catch(_) {}
+    return { id: '', groupTypeStr, themeStr, error: 'timeRange_required' } as any;
+  }
   const id = crypto.randomUUID();
   // determine secondStageWanted boolean: prefer explicit argument, fallback to overrideTheme.object or default false
   const secondStageFlag = typeof secondStageWanted !== 'undefined'
@@ -837,7 +841,11 @@ async function createXScheduledPost(userId: any, xacct: any, whenJst: Date, opts
     const id = `xsp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
     const now = `${Math.floor(Date.now() / 1000)}`;
     const scheduledAt = Math.floor(whenJst.getTime() / 1000);
-    const timeRange = opts.overrideTimeRange || opts.timeRange || (opts.type === 1 ? (opts.group?.time1 || "05:00-08:00") : opts.type === 2 ? (opts.group?.time2 || "12:00-13:00") : (opts.group?.time3 || "20:00-23:00")) || "";
+    const timeRange = opts.overrideTimeRange || opts.timeRange || (opts.type === 1 ? (opts.group?.time1 || "") : opts.type === 2 ? (opts.group?.time2 || "") : (opts.group?.time3 || "")) || "";
+    if (!timeRange) {
+      try { await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "error", message: "createXScheduledPost failed: timeRange required", detail: { poolType: effectivePoolType } }); } catch(_) {}
+      return { created: 0, skipped: true, error: 'timeRange_required' };
+    }
     const timeRangeNorm = String(timeRange).replace(/[^0-9A-Za-z]/g, '_') || '';
     // Compute YMD using unified JST helper to ensure consistency with dayInfos
     const ymd = yyyymmddJstFromDate(new Date(scheduledAt * 1000));
