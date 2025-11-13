@@ -102,7 +102,18 @@ export default function XScheduledPostsTable() {
               .map(p => (
               <tr key={p.scheduledPostId} className="border-t">
                 <td className="py-2 px-3 text-left"><button className={`text-blue-600 ${!p.postedAt ? 'underline' : ''}`} onClick={() => { if (!p.postedAt) { setSelected(p); setModalOpen(true); } }}>{p.accountId}</button></td>
-                <td className="py-2 px-3 text-left">{p.scheduledAt ? new Date(p.scheduledAt * 1000).toLocaleString() : ''}</td>
+                <td className="py-2 px-3 text-left">
+                  {p.scheduledAt ? (
+                    typeof p.scheduledAt === 'number' ? (
+                      (() => {
+                        const d = new Date(p.scheduledAt * 1000);
+                        const datePart = d.toLocaleDateString();
+                        const timePart = d.toLocaleTimeString();
+                        return <div style={{ whiteSpace: 'pre-line' }}>{datePart + '\n' + timePart}</div>;
+                      })()
+                    ) : String(p.scheduledAt)
+                  ) : ''}
+                </td>
                 <td className="py-2 px-3 text-left align-middle">
                   <div style={{display: '-webkit-box', WebkitLineClamp: 2 as any, WebkitBoxOrient: 'vertical' as any, overflow: 'hidden'}} title={p.content || ''}>
                     {p.content || ''}
