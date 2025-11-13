@@ -376,7 +376,7 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
               </div>
               <div className="flex items-center gap-2">
                 <button
-                  className="bg-gray-200 text-gray-800 rounded px-3 py-1 text-sm"
+                  className="bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-100 rounded px-3 py-1 text-sm hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors disabled:opacity-60"
                   onClick={async () => {
                     if (!confirm("現在の設定でOFFの時間帯の予約を削除し、当日の未来枠で欠損している予約を生成します。実行しますか？")) return;
                     try {
