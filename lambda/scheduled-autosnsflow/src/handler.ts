@@ -861,11 +861,22 @@ async function createXScheduledPost(userId: any, xacct: any, whenJst: Date, opts
     };
     try {
       const tbl = process.env.TBL_X_SCHEDULED || 'XScheduledPosts';
+      try { console.info('[x-hourly] attempting PutItem', { userId, sk: skId, table: tbl }); } catch(_) {}
       await ddb.send(new PutItemCommand({ TableName: tbl, Item: sanitizeItem(item), ConditionExpression: 'attribute_not_exists(SK)' }));
       await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "ok", message: "x reservation created", detail: { scheduledPostId: id, whenJst: whenJst.toISOString(), poolType: effectivePoolType, sk: skId, table: tbl } });
       return { created: 1, scheduledPostId: id, sk: skId };
     } catch (e:any) {
       try { console.error('[x-hourly] createXScheduledPost failed', String(e)); } catch(_) {}
+      // If conditional check failed, fetch existing item to help debugging
+      try {
+        if (String(e?.name || '').includes('ConditionalCheckFailed') || String(e?.message || '').toLowerCase().includes('conditional')) {
+          const tbl = process.env.TBL_X_SCHEDULED || 'XScheduledPosts';
+          try {
+            const existing = await ddb.send(new GetItemCommand({ TableName: tbl, Key: { PK: { S: `USER#${userId}` }, SK: { S: skId } } }));
+            try { console.info('[x-hourly] createXScheduledPost conditional failed - existing item', { userId, sk: skId, existing: existing?.Item ? true : false, item: existing?.Item || null }); } catch(_) {}
+          } catch (_) {}
+        }
+      } catch (_) {}
       return { created: 0, error: String(e?.message || e) };
     }
   } catch (e:any) {
