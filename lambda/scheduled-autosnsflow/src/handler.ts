@@ -780,11 +780,7 @@ async function deleteUnpostedAutoPosts(userId: any, acct: any, groupTypeStr: any
 async function createScheduledPost(userId: any, { acct, group, type, whenJst, overrideTheme = "", overrideTimeRange = "", secondStageWanted = undefined, scheduledSource = undefined, poolType = undefined }: any, opts: any = {}) {
   const themeStr = (overrideTheme || ((type === 1 ? group.theme1 : type === 2 ? group.theme2 : group.theme3) || ""));
   const groupTypeStr = `${group.groupName}-自動投稿${type}`;
-  const timeRange = (overrideTimeRange || (type === 1 ? (group.time1 || "") : type === 2 ? (group.time2 || "") : (group.time3 || "")) || "");
-  if (!timeRange) {
-    try { await putLog({ userId, type: "auto-post", accountId: acct.accountId, status: "error", message: "timeRange missing for scheduled post creation", detail: { group: group.groupName, type } }); } catch(_) {}
-    return { id: '', groupTypeStr, themeStr, error: 'timeRange_required' } as any;
-  }
+  const timeRange = (overrideTimeRange || (type === 1 ? (group.time1 || "05:00-08:00") : type === 2 ? (group.time2 || "12:00-13:00") : (group.time3 || "20:00-23:00")) || "");
   const id = crypto.randomUUID();
   // determine secondStageWanted boolean: prefer explicit argument, fallback to overrideTheme.object or default false
   const secondStageFlag = typeof secondStageWanted !== 'undefined'
