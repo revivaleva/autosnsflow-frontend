@@ -2598,7 +2598,7 @@ async function ensureNextDayAutoPostsForX(userId: any, xacct: any, opts: any = {
 
       // Create XScheduledPosts item via dedicated X-specific function
       try {
-        const res = await createXScheduledPost(userId, xacct, when, { dryRun: !!(opts && opts.dryRun) });
+        const res = await createXScheduledPost(userId, xacct, when, { dryRun: !!(opts && opts.dryRun), timeRange: w });
         if (res && res.created) created += res.created;
       } catch (e) {
         await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "error", message: "x reservation create failed", detail: { error: String(e) } });
