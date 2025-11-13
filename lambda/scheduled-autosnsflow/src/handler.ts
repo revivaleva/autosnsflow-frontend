@@ -199,6 +199,35 @@ const jstNow = () => new Date(Date.now());
 const startOfDayJst = (d: any) => new Date(epochStartOfJstDayMs(d.getTime()));
 const endOfDayJst   = (d: any) => new Date(epochEndOfJstDayMs(d.getTime()));
 
+// Helpers to unify JST midnight/date handling (UTC instant representing JST 00:00)
+function getJstMidnightUtcDate(anyDate: Date = new Date()): Date {
+  const jstMs = anyDate.getTime() + 9 * 3600 * 1000;
+  const jst = new Date(jstMs);
+  const y = jst.getUTCFullYear();
+  const m = jst.getUTCMonth();
+  const d = jst.getUTCDate();
+  const utcMsForJstMidnight = Date.UTC(y, m, d, 0, 0, 0) - (9 * 3600 * 1000);
+  return new Date(utcMsForJstMidnight);
+}
+
+function pad2(n: number) { return String(n).padStart(2, '0'); }
+
+function yyyymmddJstFromDate(anyDate: Date = new Date()) {
+  const jstMs = anyDate.getTime() + 9 * 3600 * 1000;
+  const jst = new Date(jstMs);
+  return `${jst.getUTCFullYear()}${pad2(jst.getUTCMonth() + 1)}${pad2(jst.getUTCDate())}`;
+}
+
+function getJstDayInfos(referenceMs: number = Date.now()) {
+  const ref = new Date(referenceMs);
+  const todayMid = getJstMidnightUtcDate(ref);
+  const tomorrowMid = getJstMidnightUtcDate(new Date(referenceMs + MS_PER_DAY));
+  return [
+    { date: todayMid, ymd: yyyymmddJstFromDate(todayMid) },
+    { date: tomorrowMid, ymd: yyyymmddJstFromDate(tomorrowMid) },
+  ];
+}
+
 const TABLE  = process.env.SCHEDULED_POSTS_TABLE || "ScheduledPosts";
 
 /// ========== GSI名 ==========
@@ -2472,7 +2501,9 @@ async function ensureNextDayAutoPostsForX(userId: any, xacct: any, opts: any = {
   try { console.info('[x-hourly] ensureNextDayAutoPostsForX start', { userId, accountId: xacct && xacct.accountId, TBL_X_SCHEDULED: process.env.TBL_X_SCHEDULED || 'XScheduledPosts' }); } catch(_) {}
 
   const fixedWindows = ["07:00-09:00", "12:00-14:00", "17:00-21:00"];
-  const today = jstNow();
+  // Use unified JST day infos (today/tomorrow) to ensure consistent YMD and baseDate for randomTimeInRangeJst
+  const dayInfos = getJstDayInfos();
+  const today = dayInfos[0].date;
   let created = 0;
 
   for (const w of fixedWindows) {
@@ -2483,10 +2514,8 @@ async function ensureNextDayAutoPostsForX(userId: any, xacct: any, opts: any = {
         continue;
       }
         try { console.info('[x-hourly] when computed', { userId, accountId: xacct.accountId, window: w, whenJst: when.toISOString() }); } catch(_) {}
-        // compute tomorrow's YMD in JST (move out of inner try so it's in scope for dedupe)
-        const tomorrowDate = new Date(today);
-        tomorrowDate.setDate(tomorrowDate.getDate() + 1);
-        const tomorrowYmd = yyyymmddJst(tomorrowDate);
+        // compute tomorrow's YMD in JST using unified helper
+        const tomorrowYmd = dayInfos[1].ymd;
       // Require that xacct.type exists; do not fallback to 'general'. If missing, error out to avoid cross-type creation.
       if (!xacct.type) {
         try { await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "error", message: "account type missing; cannot create X scheduled posts for this account" }); } catch(_) {}
