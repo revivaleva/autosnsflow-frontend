@@ -258,6 +258,12 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
         }
       }
       try {
+        // If postText is still empty after attempting to claim from pool, skip posting.
+        if (!postText || String(postText).trim() === "") {
+          try { console.info('[x-auto] skip post: empty content after pool claim', { userId, accountId, pk, sk }); } catch(_) {}
+          try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_SKIP_NO_CONTENT', payload: { accountId, pk, sk } }); } catch(_) {}
+          continue;
+        }
         r = await postToX({ accessToken, text: postText });
       } catch (postErr) {
         // Try token refresh using stored refreshToken
