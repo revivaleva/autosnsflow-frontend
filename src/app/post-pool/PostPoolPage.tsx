@@ -447,17 +447,56 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
                               const d = new Date(p.scheduledAt * 1000);
                               const datePart = d.toLocaleDateString();
                               const timePart = d.toLocaleTimeString();
-                              return <div style={{ whiteSpace: 'pre-line' }}>{datePart + '\n' + timePart}</div>;
+                              return (
+                                <div style={{ whiteSpace: 'pre-line' }}>
+                                  {datePart}
+                                  {'\n'}
+                                  {timePart}
+                                </div>
+                              );
                             })()
-                          ) : String(p.scheduledAt)
-                        ) : ''}
+                          ) : (
+                            (() => {
+                              const s = String(p.scheduledAt || "");
+                              const replaced = s.includes('\n') ? s : s.replace(/\s+/, '\n');
+                              return <div style={{ whiteSpace: 'pre-line' }}>{replaced}</div>;
+                            })()
+                          )
+                        ) : (
+                          ''
+                        )}
                       </td>
                       <td className="px-2 py-1">
                         <div className="text-sm" style={{ whiteSpace: 'pre-line', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', height: '3rem', minHeight: '3rem', lineHeight: '1rem' }} title={p.content || ''}>
                           {p.content}
                         </div>
                       </td>
-                      <td className="px-2 py-1">{p.postedAt ? (typeof p.postedAt === 'number' ? new Date(p.postedAt * 1000).toLocaleString() : String(p.postedAt)) : ''}</td>
+                      <td className="px-2 py-1">
+                        {p.postedAt ? (
+                          typeof p.postedAt === 'number' ? (
+                            (() => {
+                              const d = new Date(p.postedAt * 1000);
+                              const datePart = d.toLocaleDateString();
+                              const timePart = d.toLocaleTimeString();
+                              return (
+                                <div style={{ whiteSpace: 'pre-line' }}>
+                                  {datePart}
+                                  {'\n'}
+                                  {timePart}
+                                </div>
+                              );
+                            })()
+                          ) : (
+                            (() => {
+                              const s = String(p.postedAt || "");
+                              const replaced = s.includes('\n') ? s : s.replace(/\s+/, '\n');
+                              return <div style={{ whiteSpace: 'pre-line' }}>{replaced}</div>;
+                            })()
+                          )
+                        ) : (
+                          ''
+                        )}
+                      </td>
                       <td className="px-2 py-1">
                       {p.status === 'posted' && p.postId ? (
                           // Xの投稿一覧なので X のパーマリンクを生成する

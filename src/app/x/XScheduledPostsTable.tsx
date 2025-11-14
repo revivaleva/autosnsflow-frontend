@@ -104,15 +104,29 @@ export default function XScheduledPostsTable() {
                 <td className="py-2 px-3 text-left"><button className={`text-blue-600 ${!p.postedAt ? 'underline' : ''}`} onClick={() => { if (!p.postedAt) { setSelected(p); setModalOpen(true); } }}>{p.accountId}</button></td>
                 <td className="py-2 px-3 text-left">
                   {p.scheduledAt ? (
-                    typeof p.scheduledAt === 'number' ? (
+                    typeof p.scheduledAt === "number" ? (
                       (() => {
                         const d = new Date(p.scheduledAt * 1000);
                         const datePart = d.toLocaleDateString();
                         const timePart = d.toLocaleTimeString();
-                        return <div style={{ whiteSpace: 'pre-line' }}>{datePart + '\n' + timePart}</div>;
+                        return (
+                          <div style={{ whiteSpace: 'pre-line' }}>
+                            {datePart}
+                            {'\n'}
+                            {timePart}
+                          </div>
+                        );
                       })()
-                    ) : String(p.scheduledAt)
-                  ) : ''}
+                    ) : (
+                      (() => {
+                        const s = String(p.scheduledAt || "");
+                        const replaced = s.includes('\n') ? s : s.replace(/\s+/, '\n');
+                        return <div style={{ whiteSpace: 'pre-line' }}>{replaced}</div>;
+                      })()
+                    )
+                  ) : (
+                    <></>
+                  )}
                 </td>
                 <td className="py-2 px-3 text-left align-middle">
                   <div style={{display: '-webkit-box', WebkitLineClamp: 2 as any, WebkitBoxOrient: 'vertical' as any, overflow: 'hidden'}} title={p.content || ''}>
