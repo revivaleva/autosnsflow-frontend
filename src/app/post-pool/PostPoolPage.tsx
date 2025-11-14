@@ -440,13 +440,63 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
                         <div className="text-sm font-medium" style={{ lineHeight: '1rem', maxHeight: '3rem', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical' }} title={p.content || ''}>{p.accountName}</div>
                         <div className="text-xs text-gray-500 dark:text-gray-400">{p.accountId}</div>
                       </td>
-                      <td className="px-2 py-1">{p.scheduledAt ? (typeof p.scheduledAt === 'number' ? new Date(p.scheduledAt * 1000).toLocaleString() : String(p.scheduledAt)) : ''}</td>
+                      <td className="px-2 py-1">
+                        {p.scheduledAt ? (
+                          typeof p.scheduledAt === 'number' ? (
+                            (() => {
+                              const d = new Date(p.scheduledAt * 1000);
+                              const datePart = d.toLocaleDateString();
+                              const timePart = d.toLocaleTimeString();
+                              return (
+                                <div style={{ whiteSpace: 'pre-line' }}>
+                                  {datePart}
+                                  {'\n'}
+                                  {timePart}
+                                </div>
+                              );
+                            })()
+                          ) : (
+                            (() => {
+                              const s = String(p.scheduledAt || "");
+                              const replaced = s.includes('\n') ? s : s.replace(/\s+/, '\n');
+                              return <div style={{ whiteSpace: 'pre-line' }}>{replaced}</div>;
+                            })()
+                          )
+                        ) : (
+                          ''
+                        )}
+                      </td>
                       <td className="px-2 py-1">
                         <div className="text-sm" style={{ whiteSpace: 'pre-line', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', height: '3rem', minHeight: '3rem', lineHeight: '1rem' }} title={p.content || ''}>
                           {p.content}
                         </div>
                       </td>
-                      <td className="px-2 py-1">{p.postedAt ? (typeof p.postedAt === 'number' ? new Date(p.postedAt * 1000).toLocaleString() : String(p.postedAt)) : ''}</td>
+                      <td className="px-2 py-1">
+                        {p.postedAt ? (
+                          typeof p.postedAt === 'number' ? (
+                            (() => {
+                              const d = new Date(p.postedAt * 1000);
+                              const datePart = d.toLocaleDateString();
+                              const timePart = d.toLocaleTimeString();
+                              return (
+                                <div style={{ whiteSpace: 'pre-line' }}>
+                                  {datePart}
+                                  {'\n'}
+                                  {timePart}
+                                </div>
+                              );
+                            })()
+                          ) : (
+                            (() => {
+                              const s = String(p.postedAt || "");
+                              const replaced = s.includes('\n') ? s : s.replace(/\s+/, '\n');
+                              return <div style={{ whiteSpace: 'pre-line' }}>{replaced}</div>;
+                            })()
+                          )
+                        ) : (
+                          ''
+                        )}
+                      </td>
                       <td className="px-2 py-1">
                       {p.status === 'posted' && p.postId ? (
                           // Xの投稿一覧なので X のパーマリンクを生成する
