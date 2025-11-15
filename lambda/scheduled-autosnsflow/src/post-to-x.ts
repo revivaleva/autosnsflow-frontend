@@ -83,6 +83,33 @@ export async function fetchDueXScheduledForAccountByAccount(accountId: string, n
   }
 }
 
+// Fetch due X scheduled posts for an account restricted to a specific JST date (scheduledDateYmd).
+export async function fetchDueXScheduledForAccountByAccountForDate(accountId: string, nowSec: number, scheduledDateYmd: string, limit = 10) {
+  try {
+    const params: any = {
+      TableName: TBL_X_SCHEDULED,
+      IndexName: 'GSI_ByAccountDate', // new GSI: accountId + scheduledDateYmd
+      KeyConditionExpression: 'accountId = :acc AND scheduledDateYmd = :ymd',
+      ExpressionAttributeValues: { ':acc': { S: accountId }, ':ymd': { S: scheduledDateYmd } },
+      Limit: Math.max(100, limit * 5),
+    };
+    try { console.info('[x-auto] queryByAccountDateParams', { accountId, nowSec, scheduledDateYmd, params: { KeyConditionExpression: params.KeyConditionExpression, ExpressionAttributeValues: JSON.stringify(params.ExpressionAttributeValues), Limit: params.Limit } }); } catch (_) {}
+    const q = await ddb.send(new QueryCommand(params));
+    try { console.info('[x-auto] rawQueryByAccountDateResponse', { accountId, raw: JSON.stringify(q) }); } catch (_) {}
+    const items: any[] = (q as any).Items || [];
+    const filtered = items.filter((it: any) => {
+      const st = it.status?.S || '';
+      const isDeleted = it.isDeleted?.BOOL === true;
+      const isPending = (!st || st === 'pending' || st === 'scheduled');
+      return isPending && !isDeleted && (Number(it.scheduledAt?.N || 0) <= Number(nowSec));
+    }).slice(0, limit);
+    try { console.info('[x-auto] fetchedByAccountDateFiltered', { accountId, nowSec, scheduledDateYmd, returned: filtered.length }); } catch(_) {}
+    return filtered;
+  } catch (e) {
+    throw e;
+  }
+}
+
 // Mark scheduled item as posted (update postedAt/status/postId)
 export async function markXScheduledPosted(pk: string, sk: string, postId: string, accountId?: string) {
   const now = Math.floor(Date.now() / 1000);
@@ -97,13 +124,23 @@ export async function markXScheduledPosted(pk: string, sk: string, postId: strin
     values[':purl'] = { S: purl };
   }
   const updateExpr = `SET ${exprParts.join(', ')} REMOVE pendingForAutoPostAccount`;
-  await ddb.send(new UpdateItemCommand({
-    TableName: TBL_X_SCHEDULED,
-    Key: { PK: { S: pk }, SK: { S: sk } },
-    UpdateExpression: updateExpr,
-    ExpressionAttributeNames: names,
-    ExpressionAttributeValues: values,
-  }));
+  try {
+    await ddb.send(new UpdateItemCommand({
+      TableName: TBL_X_SCHEDULED,
+      Key: { PK: { S: pk }, SK: { S: sk } },
+      UpdateExpression: updateExpr,
+      ConditionExpression: 'attribute_not_exists(postId)',
+      ExpressionAttributeNames: names,
+      ExpressionAttributeValues: values,
+    }));
+  } catch (e: any) {
+    // If conditional check failed it means another worker already posted this item — treat as ok.
+    if (e && (e.name === 'ConditionalCheckFailedException' || (String(e).includes && String(e).includes('ConditionalCheckFailed')))) {
+      try { console.info('[x-auto] markXScheduledPosted skipped: already posted by another worker', { pk, sk, postId }); } catch(_) {}
+      return;
+    }
+    throw e;
+  }
 }
 
 // Skeleton runner to be invoked by the 5-min job per account
@@ -112,12 +149,22 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
   if (!acct || !acct.autoPostEnabled) return { posted: 0 };
   const now = Math.floor(Date.now() / 1000);
   const accountId = acct.accountId;
-  // Use account-based fetch (Threads-like) to reduce filter-induced empty-results
-  const candidates = await fetchDueXScheduledForAccountByAccount(accountId, now, 1);
+  // Use account-date-based fetch to restrict to today's scheduledDateYmd and reduce stale candidates
+  const toJstYmd = (sec: number) => {
+    const d = new Date(sec * 1000 + 9 * 3600 * 1000);
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(d.getUTCDate()).padStart(2, '0');
+    return `${y}${m}${dd}`;
+  };
+  const todayYmd = toJstYmd(now);
+  const fetchLimit = 3;
+  const candidates = await fetchDueXScheduledForAccountByAccountForDate(accountId, now, todayYmd, fetchLimit);
   try { console.info('[x-auto] nowSec', { userId, accountId, now }); } catch(_) {}
   let postedCount = 0;
   const debug: any = { candidates: (candidates || []).length, tokenPresent: !!(acct.oauthAccessToken || acct.accessToken), errors: [] };
   try { console.info('[x-auto] fetched candidates', { userId, accountId, candidateCount: debug.candidates }); } catch(_) {}
+  const maxPostsPerAccount = 1;
   for (const it of candidates) {
     try {
       const pk = it.PK.S; const sk = it.SK.S;
@@ -328,6 +375,11 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
         continue;
       }
       postedCount++;
+      // honor per-account posting limit for this run
+      if (postedCount >= maxPostsPerAccount) {
+        try { console.info('[x-auto] reached maxPostsPerAccount, stopping further posts for this account', { userId, accountId, maxPostsPerAccount }); } catch(_) {}
+        break;
+      }
       // notify user-level discord webhooks only if user has enableX=true in settings
       try {
         const settingsOut = await ddb.send(new GetItemCommand({ TableName: process.env.TBL_SETTINGS || 'UserSettings', Key: { PK: { S: `USER#${userId}` }, SK: { S: 'SETTINGS' } }, ProjectionExpression: 'enableX' }));

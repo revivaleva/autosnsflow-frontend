@@ -176,6 +176,9 @@
 #### インデックス/検索について
 - GSI (例): `GSI_PendingByAccount` (PK=`pendingForAutoPostAccount`, SK=`scheduledAt`) — 自動投稿ワーカー用。
 - GSI (例): `GSI_ByAccount` (PK=`accountId`, SK=`scheduledAt`) — フロントのアカウント単位一覧用。
+- GSI (推奨): `GSI_ByAccountDate` (PK=`accountId`, SK=`scheduledDateYmd`) — 当日分限定で高速に候補を取得するためのインデックス。  
+  - 使い方: 自動投稿ジョブではまず `scheduledDateYmd`（JSTの日付文字列: `YYYYMMDD`）で当日分のみを Query し、戻り値から `scheduledAt <= now` の候補を選択することで前日の予約をそもそも取得しないようにできます。  
+  - 注意: 新規に作成する予約では必ず `scheduledDateYmd` を保存すること（既存アイテムのバックフィルは行わない運用とする）。
 
 #### 運用ルール（既定）
 - リフレッシュ失敗: 3 回失敗で `authState = 'reauth_required'` とする。
