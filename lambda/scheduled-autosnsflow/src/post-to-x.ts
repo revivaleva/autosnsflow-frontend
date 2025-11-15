@@ -159,7 +159,15 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
   };
   const todayYmd = toJstYmd(now);
   const fetchLimit = 3;
-  const candidates = await fetchDueXScheduledForAccountByAccountForDate(accountId, now, todayYmd, fetchLimit);
+  let candidates: any[] = [];
+  try {
+    candidates = await fetchDueXScheduledForAccountByAccountForDate(accountId, now, todayYmd, fetchLimit);
+  } catch (e: any) {
+    try { console.warn('[warn] runAutoPostForXAccount date-index query failed, falling back to account-based fetch', { userId, accountId, err: String(e) }); } catch(_) {}
+    try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_GSI_BYACCOUNTDATE_MISSING', payload: { accountId, error: String(e).slice(0,300) } }); } catch(_) {}
+    // fallback to legacy account-based fetch to avoid skipping processing when GSI is not present
+    candidates = await fetchDueXScheduledForAccountByAccount(accountId, now, fetchLimit);
+  }
   try { console.info('[x-auto] nowSec', { userId, accountId, now }); } catch(_) {}
   let postedCount = 0;
   const debug: any = { candidates: (candidates || []).length, tokenPresent: !!(acct.oauthAccessToken || acct.accessToken), errors: [] };
