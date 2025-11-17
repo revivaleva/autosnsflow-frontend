@@ -31,6 +31,7 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
   const [morningOn, setMorningOn] = useState<boolean>(false);
   const [noonOn, setNoonOn] = useState<boolean>(false);
   const [nightOn, setNightOn] = useState<boolean>(false);
+  const [reuseOn, setReuseOn] = useState<boolean>(false);
   const [settingLoading, setSettingLoading] = useState<boolean>(false);
   const [regenLoading, setRegenLoading] = useState<boolean>(false);
   const [filterStatus, setFilterStatus] = useState<string>(''); // '' | 'scheduled' | 'posted'
@@ -51,6 +52,7 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
         setMorningOn(Boolean(it.morning === true || it.morning === 'true'));
         setNoonOn(Boolean(it.noon === true || it.noon === 'true'));
         setNightOn(Boolean(it.night === true || it.night === 'true'));
+        setReuseOn(Boolean(it.reuse === true || it.reuse === 'true'));
       } catch (e) {
         setMorningOn(false); setNoonOn(false); setNightOn(false);
       } finally {
@@ -290,6 +292,31 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
                     const resp = await fetch('/api/user-type-time-settings', { method: 'PATCH', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: poolType, noon: newVal }) });
                     if (!resp.ok) throw new Error('failed');
                     setNoonOn(newVal);
+                  } catch (e) {
+                    alert('設定の保存に失敗しました');
+                  } finally { setSettingLoading(false); }
+                }}
+              />
+              <div className={`w-12 h-6 bg-gray-200 rounded-full peer-checked:bg-blue-500 transition-colors`}></div>
+              <span className="absolute left-1 top-1 w-4 h-4 bg-white rounded-full shadow transition-transform peer-checked:translate-x-6"></span>
+            </label>
+          </div>
+          {/* プール再利用 */}
+          <div className="flex flex-col items-center">
+            <div className="text-sm text-gray-600 dark:text-gray-300 mb-1">プール再利用</div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                className="sr-only peer"
+                checked={reuseOn}
+                disabled={settingLoading}
+                onChange={async () => {
+                  try {
+                    setSettingLoading(true);
+                    const newVal = !reuseOn;
+                    const resp = await fetch('/api/user-type-time-settings', { method: 'PATCH', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: poolType, reuse: newVal }) });
+                    if (!resp.ok) throw new Error('failed');
+                    setReuseOn(newVal);
                   } catch (e) {
                     alert('設定の保存に失敗しました');
                   } finally { setSettingLoading(false); }

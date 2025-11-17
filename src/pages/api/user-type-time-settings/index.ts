@@ -25,7 +25,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const morning = Boolean(it.morning && (it.morning.BOOL === true || String(it.morning.S) === "true"));
         const noon = Boolean(it.noon && (it.noon.BOOL === true || String(it.noon.S) === "true"));
         const night = Boolean(it.night && (it.night.BOOL === true || String(it.night.S) === "true"));
-        return res.status(200).json({ ok: true, item: { morning, noon, night } });
+        const reuse = Boolean(it.reuse && (it.reuse.BOOL === true || String(it.reuse.S) === "true"));
+        return res.status(200).json({ ok: true, item: { morning, noon, night, reuse } });
       } catch (e: any) {
         // Handle missing table error explicitly to help debugging
         if (e && (e.name === 'ResourceNotFoundException' || String(e).includes('Requested resource not found'))) {
@@ -67,6 +68,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const val = `:nt`;
         exprNames[name] = 'night';
         exprVals[val] = { BOOL: Boolean(night === true) };
+        sets.push(`${name} = ${val}`);
+      }
+      if (typeof body.reuse !== 'undefined') {
+        const name = `#r`;
+        const val = `:r`;
+        exprNames[name] = 'reuse';
+        exprVals[val] = { BOOL: Boolean(body.reuse === true) };
         sets.push(`${name} = ${val}`);
       }
       // always set updated_at
