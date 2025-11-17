@@ -75,41 +75,41 @@ export default function ImportModal({ open, onClose, onImport, maxLen = 140 }: P
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-3xl bg-white dark:bg-gray-800 rounded shadow p-4">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-lg font-semibold">CSV / テキスト取り込み</h3>
-          <button className="text-sm text-gray-600" onClick={onClose}>閉じる</button>
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">CSV / テキスト取り込み</h3>
+          <button className="text-sm text-gray-600 dark:text-gray-300" onClick={onClose}>閉じる</button>
         </div>
 
         <div className="mb-3">
           <div className="flex gap-2">
-            <button className={`px-3 py-1 rounded ${mode === 'file' ? 'bg-gray-200' : 'bg-transparent'}`} onClick={() => setMode("file")}>ファイル</button>
-            <button className={`px-3 py-1 rounded ${mode === 'paste' ? 'bg-gray-200' : 'bg-transparent'}`} onClick={() => setMode("paste")}>貼り付け</button>
+            <button className={`px-3 py-1 rounded ${mode === 'file' ? 'bg-gray-200 dark:bg-gray-700' : 'bg-transparent dark:bg-transparent'}`} onClick={() => setMode("file")}>ファイル</button>
+            <button className={`px-3 py-1 rounded ${mode === 'paste' ? 'bg-gray-200 dark:bg-gray-700' : 'bg-transparent dark:bg-transparent'}`} onClick={() => setMode("paste")}>貼り付け</button>
           </div>
         </div>
 
         {mode === "file" ? (
           <div className="mb-3">
-            <input type="file" accept=".csv,.txt" onChange={handleFile} />
+            <input type="file" accept=".csv,.txt" onChange={handleFile} className="text-sm text-gray-800 dark:text-gray-200" />
           </div>
         ) : (
           <div className="mb-3">
             <textarea className="w-full border rounded p-2 min-h-[120px] bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100" value={text} onChange={(e) => setText(e.target.value)} placeholder="ここにCSVの内容を貼り付け（カンマ区切り）。改行は本文内に保持されます。"></textarea>
             <div className="mt-2">
-              <button className="bg-blue-500 text-white px-3 py-1 rounded" onClick={handlePasteParse}>解析してプレビュー</button>
+              <button className="bg-blue-500 dark:bg-blue-600 text-white px-3 py-1 rounded" onClick={handlePasteParse}>解析してプレビュー</button>
             </div>
           </div>
         )}
 
         <div className="mb-3">
           <div className="flex items-center justify-between mb-2">
-            <div className="text-sm">プレビュー（{items.length}件）</div>
+            <div className="text-sm text-gray-800 dark:text-gray-100">プレビュー（{items.length}件）</div>
             <div className="flex items-center gap-2">
-              <label className="text-sm">選択: </label>
-              <button className="px-2 py-1 border rounded text-sm" onClick={toggleSelectAll}>{selectAll ? '全解除' : '全選択'}</button>
+              <label className="text-sm text-gray-700 dark:text-gray-300">選択: </label>
+              <button className="px-2 py-1 border rounded text-sm text-gray-700 dark:text-gray-200 border-gray-300 dark:border-gray-700" onClick={toggleSelectAll}>{selectAll ? '全解除' : '全選択'}</button>
             </div>
           </div>
-          <div className="max-h-64 overflow-auto border rounded">
+          <div className="max-h-64 overflow-auto border rounded border-gray-200 dark:border-gray-700">
             <table className="min-w-full">
-              <thead className="bg-gray-100">
+              <thead className="bg-gray-100 dark:bg-gray-800">
                 <tr>
                   <th className="p-2 text-left w-12">#</th>
                   <th className="p-2 text-left">本文（プレビュー）</th>
@@ -123,10 +123,10 @@ export default function ImportModal({ open, onClose, onImport, maxLen = 140 }: P
                       <input type="checkbox" checked={it.selected} onChange={() => toggleItem(idx)} />
                     </td>
                     <td className="p-2">
-                      <div style={{ whiteSpace: 'pre-wrap' }} className="text-sm">{it.text}</div>
+                      <div style={{ whiteSpace: 'pre-wrap' }} className="text-sm text-gray-900 dark:text-gray-100">{it.text}</div>
                     </td>
                     <td className="p-2 text-right">
-                      <div className={it.len > (maxLen || 140) ? 'text-red-600 font-semibold' : 'text-gray-600'}>{it.len}</div>
+                      <div className={it.len > (maxLen || 140) ? 'text-red-600 font-semibold' : 'text-gray-600 dark:text-gray-300'}>{it.len}</div>
                     </td>
                   </tr>
                 ))}
@@ -137,8 +137,8 @@ export default function ImportModal({ open, onClose, onImport, maxLen = 140 }: P
         </div>
 
           <div className="flex justify-end gap-2">
-          <button className="px-3 py-1 border rounded" onClick={onClose} disabled={importing}>キャンセル</button>
-          <button className="bg-green-500 text-white px-3 py-1 rounded" onClick={doImport} disabled={importing}>{importing ? '取り込み中...' : '取り込み（プレビュー行を登録）'}</button>
+          <button className="px-3 py-1 border rounded text-gray-700 dark:text-gray-200 border-gray-300 dark:border-gray-700" onClick={onClose} disabled={importing}>キャンセル</button>
+          <button className="bg-green-500 dark:bg-green-600 text-white px-3 py-1 rounded" onClick={doImport} disabled={importing}>{importing ? '取り込み中...' : '取り込み（プレビュー行を登録）'}</button>
         </div>
       </div>
     </div>
