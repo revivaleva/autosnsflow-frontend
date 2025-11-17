@@ -249,54 +249,109 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
             images: itm.images?.S ? JSON.parse(itm.images.S) : [],
             createdAt: itm.createdAt?.N ? Number(itm.createdAt.N) : 0,
           })).filter(x => (x.type || 'general') === poolType);
+          // determine reuse setting for this user/type from UserTypeTimeSettings table
+          const TBL_USER_TYPE_TIME_SETTINGS = process.env.TBL_USER_TYPE_TIME_SETTINGS || 'UserTypeTimeSettings';
+          let reuse = false;
+          try {
+            const us = await ddb.send(new GetItemCommand({ TableName: TBL_USER_TYPE_TIME_SETTINGS, Key: { user_id: { S: String(userId) }, type: { S: String(poolType) } }, ProjectionExpression: 'reuse' }));
+            const uit: any = (us as any).Item || {};
+            reuse = Boolean(uit.reuse && (uit.reuse.BOOL === true || String(uit.reuse.S) === 'true'));
+          } catch (_) { reuse = false; }
+
           if (pcands.length) {
             try { console.info('[x-auto] pool query result', { userId, accountId, candidateCount: pcands.length }); } catch(_) {}
             try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_POOL_QUERY', payload: { accountId: acct.accountId, candidateCount: pcands.length, poolType } }); } catch(_) {}
-            // shuffle candidates to pick random pool item among same-user & same-type
+            // shuffle candidates to randomize order
             for (let i = pcands.length - 1; i > 0; i--) {
               const j = Math.floor(Math.random() * (i + 1));
               const tmp = pcands[i]; pcands[i] = pcands[j]; pcands[j] = tmp;
             }
             try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_POOL_CANDS', payload: { accountId: acct.accountId, poolIds: pcands.map(p => p.poolId).slice(0,10) } }); } catch(_) {}
-            for (const cand of pcands) {
-              try {
-                try { console.info('[x-auto] attempting pool claim', { userId, accountId: acct.accountId, poolId: cand.poolId }); } catch(_) {}
-                try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_POOL_ATTEMPT_CLAIM', payload: { accountId: acct.accountId, poolId: cand.poolId } }); } catch(_) {}
-                const delRes: any = await ddb.send(new DeleteItemCommand({
-                  TableName: TBL_POOL,
-                  Key: { PK: { S: String(cand.pk.S) }, SK: { S: String(cand.sk.S) } },
-                  ConditionExpression: "attribute_exists(PK) AND attribute_exists(SK)",
-                  ReturnValues: 'ALL_OLD',
-                }));
-                const attrs = delRes && delRes.Attributes ? delRes.Attributes : null;
-                if (attrs) {
-                  postText = (typeof getS === 'function' ? getS(attrs.content) : (attrs.content && attrs.content.S) ) || cand.content || '';
-                  let claimedImages: any[] = [];
-                  try { claimedImages = attrs.images ? (typeof getS === 'function' ? JSON.parse(getS(attrs.images)) : (attrs.images && JSON.parse(attrs.images.S))) : (cand.images || []); } catch(_) { claimedImages = (cand.images || []); }
-                  try { console.info('[x-auto] pool claim success', { userId, accountId: acct.accountId, poolId: cand.poolId, contentSnippet: String(postText || '').slice(0,120) }); } catch(_) {}
-                  try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_POOL_CLAIMED', payload: { accountId: acct.accountId, poolId: cand.poolId, contentSnippet: String(postText || '').slice(0,120), imagesCount: (claimedImages || []).length } }); } catch(_) {}
-                  // attach claimed content to the scheduled record
-                  try {
-                    const nowTs = Math.floor(Date.now() / 1000);
-                    await ddb.send(new UpdateItemCommand({
-                      TableName: TBL_X_SCHEDULED,
-                      Key: { PK: { S: pk }, SK: { S: sk } },
-                      UpdateExpression: 'SET content = :c, images = :imgs, updatedAt = :now',
-                      ExpressionAttributeValues: { ':c': { S: String(postText) }, ':imgs': { S: JSON.stringify(claimedImages || []) }, ':now': { N: String(nowTs) } },
-                    }));
-                    try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_POOL_ATTACH_OK', payload: { accountId: acct.accountId, scheduledId: sk, poolId: cand.poolId } }); } catch(_) {}
-                  } catch (e:any) {
-                    try { console.warn('[warn] attach claimed pool content to XScheduled failed', { userId, accountId: sk, err: String(e) }); } catch(_) {}
-                    try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_POOL_ATTACH_ERR', payload: { accountId: acct.accountId, scheduledId: sk, poolId: cand.poolId, err: String(e) } }); } catch(_) {}
+            if (reuse) {
+              // Reuse mode: pick up to two candidates and avoid matching account's last posted content
+              let chosen: any = null;
+              const first = pcands[0];
+              if (pcands.length >= 2) {
+                const second = pcands[1];
+                // fetch last posted content for accountId
+                let lastPostedContent = '';
+                try {
+                  const q = await ddb.send(new QueryCommand({ TableName: TBL_X_SCHEDULED, IndexName: 'GSI_ByAccount', KeyConditionExpression: 'accountId = :acc', ExpressionAttributeValues: { ':acc': { S: accountId } }, Limit: 50 }));
+                  const items: any[] = (q as any).Items || [];
+                  const postedItems = items.filter(itm => (itm.status && itm.status.S === 'posted') && (itm.postedAt || itm.postedAt?.N));
+                  if (postedItems.length) {
+                    // pick the one with max postedAt
+                    postedItems.sort((a,b) => Number(b.postedAt?.N || 0) - Number(a.postedAt?.N || 0));
+                    lastPostedContent = postedItems[0].content?.S || '';
                   }
-                  // record that we claimed one and break
-                  break;
+                } catch (_) { lastPostedContent = ''; }
+                if (first.content && String(first.content) === String(lastPostedContent) && second.content && String(second.content) !== String(lastPostedContent)) {
+                  chosen = second;
+                } else {
+                  chosen = first;
                 }
-              } catch (e:any) {
-                // failed to claim this candidate (race), try next
-                try { console.info('[x-auto] pool claim failed for candidate, trying next', { accountId: acct.accountId, poolId: cand.poolId, err: String(e) }); } catch(_) {}
-                try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_POOL_CLAIM_FAILED', payload: { accountId: acct.accountId, poolId: cand.poolId, err: String(e) } }); } catch(_) {}
-                continue;
+              } else {
+                chosen = first;
+              }
+              if (chosen) {
+                try {
+                  const claimedImages = chosen.images || [];
+                  postText = String(chosen.content || '');
+                  // attach claimed content to scheduled record WITHOUT deleting pool item
+                  const nowTs = Math.floor(Date.now() / 1000);
+                  await ddb.send(new UpdateItemCommand({
+                    TableName: TBL_X_SCHEDULED,
+                    Key: { PK: { S: pk }, SK: { S: sk } },
+                    UpdateExpression: 'SET content = :c, images = :imgs, updatedAt = :now',
+                    ExpressionAttributeValues: { ':c': { S: String(postText) }, ':imgs': { S: JSON.stringify(claimedImages || []) }, ':now': { N: String(nowTs) } },
+                  }));
+                  try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_POOL_REUSE_CHOSEN', payload: { accountId: acct.accountId, poolId: chosen.poolId, contentSnippet: String(postText || '').slice(0,120) } }); } catch(_) {}
+                } catch (e:any) {
+                  try { console.warn('[warn] attach reused pool content to XScheduled failed', { userId, accountId: sk, err: String(e) }); } catch(_) {}
+                }
+              }
+            } else {
+              // consume mode: attempt atomic delete for candidates
+              for (const cand of pcands) {
+                try {
+                  try { console.info('[x-auto] attempting pool claim', { userId, accountId: acct.accountId, poolId: cand.poolId }); } catch(_) {}
+                  try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_POOL_ATTEMPT_CLAIM', payload: { accountId: acct.accountId, poolId: cand.poolId } }); } catch(_) {}
+                  const delRes: any = await ddb.send(new DeleteItemCommand({
+                    TableName: TBL_POOL,
+                    Key: { PK: { S: String(cand.pk.S) }, SK: { S: String(cand.sk.S) } },
+                    ConditionExpression: "attribute_exists(PK) AND attribute_exists(SK)",
+                    ReturnValues: 'ALL_OLD',
+                  }));
+                  const attrs = delRes && delRes.Attributes ? delRes.Attributes : null;
+                  if (attrs) {
+                    postText = (typeof getS === 'function' ? getS(attrs.content) : (attrs.content && attrs.content.S) ) || cand.content || '';
+                    let claimedImages: any[] = [];
+                    try { claimedImages = attrs.images ? (typeof getS === 'function' ? JSON.parse(getS(attrs.images)) : (attrs.images && JSON.parse(attrs.images.S))) : (cand.images || []); } catch(_) { claimedImages = (cand.images || []); }
+                    try { console.info('[x-auto] pool claim success', { userId, accountId: acct.accountId, poolId: cand.poolId, contentSnippet: String(postText || '').slice(0,120) }); } catch(_) {}
+                    try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_POOL_CLAIMED', payload: { accountId: acct.accountId, poolId: cand.poolId, contentSnippet: String(postText || '').slice(0,120), imagesCount: (claimedImages || []).length } }); } catch(_) {}
+                    // attach claimed content to the scheduled record
+                    try {
+                      const nowTs = Math.floor(Date.now() / 1000);
+                      await ddb.send(new UpdateItemCommand({
+                        TableName: TBL_X_SCHEDULED,
+                        Key: { PK: { S: pk }, SK: { S: sk } },
+                        UpdateExpression: 'SET content = :c, images = :imgs, updatedAt = :now',
+                        ExpressionAttributeValues: { ':c': { S: String(postText) }, ':imgs': { S: JSON.stringify(claimedImages || []) }, ':now': { N: String(nowTs) } },
+                      }));
+                      try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_POOL_ATTACH_OK', payload: { accountId: acct.accountId, scheduledId: sk, poolId: cand.poolId } }); } catch(_) {}
+                    } catch (e:any) {
+                      try { console.warn('[warn] attach claimed pool content to XScheduled failed', { userId, accountId: sk, err: String(e) }); } catch(_) {}
+                      try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_POOL_ATTACH_ERR', payload: { accountId: acct.accountId, scheduledId: sk, poolId: cand.poolId, err: String(e) } }); } catch(_) {}
+                    }
+                    // record that we claimed one and break
+                    break;
+                  }
+                } catch (e:any) {
+                  // failed to claim this candidate (race), try next
+                  try { console.info('[x-auto] pool claim failed for candidate, trying next', { accountId: acct.accountId, poolId: cand.poolId, err: String(e) }); } catch(_) {}
+                  try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_POOL_CLAIM_FAILED', payload: { accountId: acct.accountId, poolId: cand.poolId, err: String(e) } }); } catch(_) {}
+                  continue;
+                }
               }
             }
           }

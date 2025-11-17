@@ -86,7 +86,7 @@ const sanitizeItem = (it: any) => {
 };
 
 // Claim a pool item for a user and poolType. Returns { poolId, content, images } or null.
-async function claimPoolItem(userId: string, poolType: string) {
+async function claimPoolItem(userId: string, poolType: string, opts: { removeFromPool?: boolean, accountId?: string } = {}) {
   try {
     const out = await ddb.send(new QueryCommand({
       TableName: TBL_POST_POOL,
@@ -100,27 +100,72 @@ async function claimPoolItem(userId: string, poolType: string) {
     const items = (out as any).Items || [];
     const candidates = items.filter((it: any) => (getS(it.type) || '') === String(poolType));
     if (!candidates || candidates.length === 0) return null;
-    // shuffle
-    for (const it of candidates.sort(() => 0.5 - Math.random())) {
-      const poolId = getS(it.poolId) || (getS(it.SK) || "").replace(/^POOL#/, "");
-      if (!poolId) continue;
-      try {
-        await ddb.send(new DeleteItemCommand({
-          TableName: TBL_POST_POOL,
-          Key: { PK: { S: `USER#${userId}` }, SK: { S: `POOL#${poolId}` } },
-          ConditionExpression: "attribute_exists(PK) AND attribute_exists(SK)",
-        }));
-        return {
-          poolId,
-          content: getS(it.content) || "",
-          images: (getS(it.images) ? JSON.parse(getS(it.images)) : []),
-        };
-      } catch (e) {
-        // concurrent claim or delete failed - try next
-        continue;
-      }
+    // determine remove behavior (default true = delete/consume)
+    const remove = typeof opts.removeFromPool === 'boolean' ? opts.removeFromPool : true;
+    // shuffle candidates
+    for (let i = candidates.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const tmp = candidates[i]; candidates[i] = candidates[j]; candidates[j] = tmp;
     }
-    return null;
+    if (!remove) {
+      // reuse mode: pick up to two candidates, avoid matching account's last posted content if possible
+      const accountId = opts.accountId || '';
+      // fetch last posted content for accountId
+      let lastPostedContent = '';
+      if (accountId) {
+        try {
+          const q = await ddb.send(new QueryCommand({ TableName: TBL_X_SCHEDULED, IndexName: 'GSI_ByAccount', KeyConditionExpression: 'accountId = :acc', ExpressionAttributeValues: { ':acc': { S: accountId } }, Limit: 50 }));
+          const itms: any[] = (q as any).Items || [];
+          const postedItems = itms.filter(it => (it.status && it.status.S === 'posted') && (it.postedAt || it.postedAt?.N));
+          if (postedItems.length) {
+            postedItems.sort((a,b) => Number(b.postedAt?.N || 0) - Number(a.postedAt?.N || 0));
+            lastPostedContent = postedItems[0].content?.S || '';
+          }
+        } catch (_) { lastPostedContent = ''; }
+      }
+      // pick candidate
+      let chosen: any = null;
+      if (candidates.length >= 2) {
+        const first = candidates[0];
+        const second = candidates[1];
+        if (first && first.content && String(first.content) === String(lastPostedContent) && second && second.content && String(second.content) !== String(lastPostedContent)) {
+          chosen = second;
+        } else {
+          chosen = first;
+        }
+      } else {
+        chosen = candidates[0];
+      }
+      if (!chosen) return null;
+      // return without deleting
+      return {
+        poolId: getS(chosen.poolId) || (getS(chosen.SK) || '').replace(/^POOL#/, ''),
+        content: getS(chosen.content) || '',
+        images: getS(chosen.images) ? JSON.parse(getS(chosen.images)) : [],
+      };
+    } else {
+      // consume mode: attempt to atomically delete a randomly chosen candidate. If conditional delete fails, retry with others.
+      for (const it of candidates) {
+        const poolId = getS(it.poolId) || (getS(it.SK) || "").replace(/^POOL#/, "");
+        if (!poolId) continue;
+        try {
+          await ddb.send(new DeleteItemCommand({
+            TableName: TBL_POST_POOL,
+            Key: { PK: { S: `USER#${userId}` }, SK: { S: `POOL#${poolId}` } },
+            ConditionExpression: "attribute_exists(PK) AND attribute_exists(SK)",
+          }));
+          return {
+            poolId,
+            content: getS(it.content) || "",
+            images: (getS(it.images) ? JSON.parse(getS(it.images)) : []),
+          };
+        } catch (e) {
+          // concurrent claim or delete failed - try next
+          continue;
+        }
+      }
+      return null;
+    }
   } catch (e) {
     try { await putLog({ userId, type: "post-pool", accountId: "", status: "error", message: "claim_failed", detail: { error: String(e) } }); } catch(_) {}
     return null;
@@ -2824,7 +2869,15 @@ async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settin
           }
         } else {
           // No reusable failed content found -> claim from pool
-          const claimed = await claimPoolItem(userId, poolType);
+          // Determine user-type reuse setting
+          let reuseSetting = false;
+          try {
+            const TBL_USER_TYPE_TIME_SETTINGS = process.env.TBL_USER_TYPE_TIME_SETTINGS || 'UserTypeTimeSettings';
+            const uts = await ddb.send(new GetItemCommand({ TableName: TBL_USER_TYPE_TIME_SETTINGS, Key: { user_id: { S: String(userId) }, type: { S: String(poolType) } }, ProjectionExpression: 'reuse' }));
+            const uit: any = (uts as any).Item || {};
+            reuseSetting = Boolean(uit.reuse && (uit.reuse.BOOL === true || String(uit.reuse.S) === 'true'));
+          } catch (_) { reuseSetting = false; }
+          const claimed = await claimPoolItem(userId, poolType, { removeFromPool: !reuseSetting, accountId: acct.accountId });
           if (!claimed) {
             await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "pool_claim_failed", detail: { poolType } });
             await incrementAccountFailure(userId, acct.accountId);
