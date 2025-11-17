@@ -1,6 +1,7 @@
  "use client";
 
 import React, { useEffect, useState } from "react";
+import ImportModal from "./ImportModal";
 
 type PoolItem = {
   poolId: string;
@@ -24,6 +25,7 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
   const [xAccountsCount, setXAccountsCount] = useState<number>(0);
   const [openPool, setOpenPool] = useState<boolean>(false);
   const [openScheduled, setOpenScheduled] = useState<boolean>(false);
+  const [openImport, setOpenImport] = useState<boolean>(false);
   const [scheduledPostsX, setScheduledPostsX] = useState<any[]>([]);
   const [xAccountsList, setXAccountsList] = useState<any[]>([]);
   const [morningOn, setMorningOn] = useState<boolean>(false);
@@ -62,6 +64,46 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
       loadScheduledX();
     }
   }, [openScheduled, poolType]);
+ 
+  const getVisibleScheduled = () => {
+    return scheduledPostsX
+      .filter((p: any) => (filterStatus ? (filterStatus === 'posted' ? !!p.postedAt : !p.postedAt) : true))
+      .filter((p: any) => (filterAccount ? p.accountId === filterAccount : true))
+      .sort((a: any, b: any) => {
+        const ka = sortKey === 'scheduledAt' ? (a.scheduledAt || 0) : (a.postedAt || 0);
+        const kb = sortKey === 'scheduledAt' ? (b.scheduledAt || 0) : (b.postedAt || 0);
+        return sortAsc ? ka - kb : kb - ka;
+      });
+  };
+
+  const exportScheduledCsv = () => {
+    try {
+      const visible = getVisibleScheduled();
+      const rows = visible.map((p: any) => (p.content || '')).filter((s: string) => s && String(s).trim() !== '');
+      if (rows.length === 0) {
+        alert('エクスポートする投稿がありません（本文が空のものはスキップされます）');
+        return;
+      }
+      // 本文中のカンマを全角カンマに置換してからカンマ区切りで出力（本文内の改行はそのまま残す）
+      const csvLines = rows.map((s: string) => String(s).replace(/,/g, '，'));
+      const csv = csvLines.join(',');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const d = new Date();
+      const ts = `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+      a.href = url;
+      a.download = `x_scheduled_posts_export_${ts}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error('CSV export failed', e);
+      alert('CSV出力に失敗しました: ' + String(e));
+    }
+  };
 
   // Load X scheduled posts for this pool view. Query X scheduled posts and X accounts,
   // filter accounts by poolType (general|ero) and display posts belonging to those accounts.
@@ -312,6 +354,60 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
         <div className="mb-6">
           <div className="mb-4 flex justify-end gap-2">
             <button className="bg-blue-500 dark:bg-blue-600 text-white rounded px-3 py-1 text-sm" onClick={loadPool}>再読み込み</button>
+            <button className="bg-green-500 dark:bg-green-600 text-white rounded px-3 py-1 text-sm" onClick={() => setOpenImport(true)}>CSV取込</button>
+            <ImportModal open={openImport} onClose={() => setOpenImport(false)} onImport={async (arr) => {
+              // 登録処理：既存の /api/post-pool に逐次（バッチ）でPOSTし、重複はスキップして結果を集計する
+              if (!Array.isArray(arr) || arr.length === 0) return;
+              setLoading(true);
+              try {
+                // 既存プールの本文をセット化（トリムして比較）
+                const existingSet = new Set<string>(items.map(it => String(it.content || '').trim()));
+                let success = 0;
+                let failed = 0;
+                let skipped = 0;
+                const batchSize = 5;
+                for (let i = 0; i < arr.length; i += batchSize) {
+                  const batch = arr.slice(i, i + batchSize);
+                  await Promise.all(batch.map(async (text) => {
+                    try {
+                      const trimmed = String(text || '').trim();
+                      if (trimmed === "") {
+                        // 空はスキップ
+                        skipped++;
+                        return;
+                      }
+                      // 既に存在する本文はスキップ
+                      if (existingSet.has(trimmed)) {
+                        skipped++;
+                        return;
+                      }
+                      // 登録実行
+                      const resp = await fetch('/api/post-pool', {
+                        method: 'POST',
+                        credentials: 'include',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ type: poolType, content: trimmed, images: [] }),
+                      });
+                      const j = await resp.json().catch(() => ({}));
+                      if (resp.ok && j.ok) {
+                        success++;
+                        // 登録成功した本文を既存セットに追加して同バッチ内の重複も防止
+                        existingSet.add(trimmed);
+                      } else {
+                        failed++;
+                      }
+                    } catch (e) {
+                      console.error('import item failed', e);
+                      failed++;
+                    }
+                  }));
+                }
+                await loadPool();
+                alert(`取り込み完了：成功 ${success} 件、失敗 ${failed} 件、スキップ ${skipped} 件`);
+              } finally {
+                setLoading(false);
+              }
+            }} maxLen={140} />
           </div>
           {loading ? <div>読み込み中...</div> : (
             <table className="w-full border border-gray-200 dark:border-gray-700">
@@ -374,7 +470,7 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
                   {xAccountsList.map((a:any) => <option key={a.accountId} value={a.accountId}>{a.displayName || a.username || a.accountId}</option>)}
                 </select>
               </div>
-              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2">
                 <button
                   className="bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-100 rounded px-3 py-1 text-sm hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors disabled:opacity-60"
                   onClick={async () => {
@@ -411,6 +507,7 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
                   <option value="postedAt">投稿日時</option>
                 </select>
                 <button className="px-2 py-1 border rounded" onClick={() => setSortAsc(s => !s)}>{sortAsc ? '昇順' : '降順'}</button>
+                <button className="px-2 py-1 border rounded" onClick={exportScheduledCsv}>CSV出力</button>
                 <button className="bg-blue-500 dark:bg-blue-600 text-white rounded px-3 py-1 text-sm" onClick={loadScheduledX}>再読み込み</button>
               </div>
             </div>

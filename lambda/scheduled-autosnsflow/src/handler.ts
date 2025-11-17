@@ -3642,23 +3642,29 @@ async function runFiveMinJobForUser(userId: any, opts: any = {}) {
 
   const urls = await getDiscordWebhooks(userId);
   const now = new Date().toISOString();
-  let metrics = formatNonZeroLine([
+  // Build main metric parts (only non-zero)
+  const mainParts = [
     { label: "自動投稿", value: totalAuto },
     { label: "リプ返信", value: totalReply },
     { label: "2段階投稿", value: totalTwo },
     { label: "失効(rate-limit)", value: rateSkipped },
-  ], "every-5min");
-  // include X posted count in the metrics if present
-  // If the main metrics indicate "実行なし" then do not append X-only info; "実行なし" should be sole message.
-  if ((totalX || xAutoDisabledSkipped) && metrics !== "every-5min：実行なし") {
-    try {
-      const parts: string[] = [];
-      if (totalX) parts.push(`X投稿: ${totalX}`);
-      if (xAutoDisabledSkipped) parts.push(`X自動投稿OFF: ${xAutoDisabledSkipped}`);
-      metrics += ` / ${parts.join(' / ')}`;
-    } catch(_) {}
+  ].filter(i => (Number(i.value) || 0) > 0).map(i => `${i.label}: ${i.value}`);
+
+  // Build X-related parts
+  const xParts: string[] = [];
+  if (Number(totalX) > 0) xParts.push(`X投稿: ${totalX}`);
+  if (Number(xAutoDisabledSkipped) > 0) xParts.push(`X自動投稿OFF: ${xAutoDisabledSkipped}`);
+
+  // If neither mainParts nor xParts have entries, report "実行なし"
+  let content: string;
+  if (mainParts.length === 0 && xParts.length === 0) {
+    content = "every-5min：実行なし";
+  } else {
+    const parts = [...mainParts];
+    if (xParts.length) parts.push(...xParts);
+    const metricsLine = parts.join(" / ");
+    content = `**[定期実行レポート] ${now} (every-5min)**\n${metricsLine}`;
   }
-  const content = metrics === "every-5min：実行なし" ? metrics : `**[定期実行レポート] ${now} (every-5min)**\n${metrics}`;
   await postDiscordLog({ userId, content });
   return { userId, totalAuto, totalReply, totalTwo, totalX, rateSkipped };
 }
