@@ -36,6 +36,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         bound_device_id: fromAttr("bound_device_id") || null,
         updated_at: Number(fromAttr("updated_at") || 0) || null,
         username: fromAttr("username") || null,
+        current_container_count: Number(fromAttr("current_container_count") || 0),
+        container_count_updated_at: Number(fromAttr("container_count_updated_at") || 0) || null,
       };
     });
 

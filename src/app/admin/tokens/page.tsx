@@ -13,6 +13,8 @@ type Token = {
   bound_device_id?: string | null;
   updated_at?: number | null;
   username?: string | null;
+  current_container_count?: number;
+  container_count_updated_at?: number | null;
 };
 
 export default function TokenManagementPage() {
@@ -161,20 +163,22 @@ export default function TokenManagementPage() {
           <div className="overflow-x-auto bg-white border rounded">
             <table className="min-w-full text-sm">
               <colgroup>
-                <col style={{ width: '12%' }} />
-                <col style={{ width: '12%' }} />
                 <col style={{ width: '10%' }} />
-                <col style={{ width: '12%' }} />
+                <col style={{ width: '10%' }} />
+                <col style={{ width: '8%' }} />
                 <col style={{ width: '8%' }} />
                 <col style={{ width: '12%' }} />
+                <col style={{ width: '8%' }} />
+                <col style={{ width: '10%' }} />
+                <col style={{ width: '12%' }} />
                 <col style={{ width: '14%' }} />
-                <col style={{ width: '20%' }} />
               </colgroup>
               <thead className="bg-gray-100">
                 <tr>
                   <th className="px-3 py-2 text-left">トークン</th>
                   <th className="px-3 py-2 text-left">Username</th>
                   <th className="px-3 py-2 text-left">使用可能数</th>
+                  <th className="px-3 py-2 text-left">使用中</th>
                   <th className="px-3 py-2 text-left">expires_at</th>
                   <th className="px-3 py-2 text-left">disabled</th>
                   <th className="px-3 py-2 text-left">デバイス</th>
@@ -185,11 +189,11 @@ export default function TokenManagementPage() {
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={7} className="px-3 py-6 text-center text-gray-500">読み込み中…</td>
+                    <td colSpan={9} className="px-3 py-6 text-center text-gray-500">読み込み中…</td>
                   </tr>
                 ) : tokens.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-3 py-6 text-center text-gray-500">該当するデータがありません</td>
+                    <td colSpan={9} className="px-3 py-6 text-center text-gray-500">該当するデータがありません</td>
                   </tr>
                 ) : (
                   tokens.map((t) => (
@@ -204,6 +208,7 @@ export default function TokenManagementPage() {
                       </td>
                       <td className="px-3 py-2">{t.username || "-"}</td>
                       <td className="px-3 py-2">{t.remaining_quota}</td>
+                      <td className="px-3 py-2">{t.current_container_count || 0}</td>
                       <td className="px-3 py-2">{formatDate(t.expires_at)}</td>
                       <td className="px-3 py-2">{t.disabled ? "無効" : "有効"}</td>
                       <td className="px-3 py-2">{(t.bound_device_id || "-").toString().slice(0,8)}</td>
