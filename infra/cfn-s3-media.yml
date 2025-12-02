@@ -30,17 +30,17 @@ Resources:
     Type: AWS::S3::BucketPolicy
     Properties:
       Bucket: !Ref MediaBucket
-      PolicyText:
+      PolicyDocument:
         Version: '2012-10-17'
         Statement:
           - Sid: DenyUnencryptedObjectUploads
             Effect: Deny
             Principal: '*'
-            Action: s3:PutObject
+            Action: 's3:PutObject'
             Resource: !Sub '${MediaBucket.Arn}/*'
             Condition:
               StringNotEquals:
-                s3:x-amz-server-side-encryption: AES256
+                's3:x-amz-server-side-encryption': 'AES256'
 
 Conditions:
   ShouldExpire: !Not [!Equals [!Ref MediaRetentionDays, 0]]

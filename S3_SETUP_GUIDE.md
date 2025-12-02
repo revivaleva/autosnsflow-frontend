@@ -34,10 +34,17 @@ X v1.1 で メディアアップロード → X v2 で投稿
 必要なツール・権限：
 
 - ✅ AWS CLI v2 がインストール済み（`aws --version` で確認）
-- ✅ IAM ユーザーが AdministratorAccess 権限を持つ（または下記のポリシーを持つ）
-  - CloudFormation：スタック作成・更新
-  - S3：バケット作成・ポリシー設定
+- ✅ IAM ユーザーが以下の権限を持つ
+  - CloudFormation：スタック作成・更新・削除
+  - S3：バケット作成・ポリシー設定・暗号化
   - IAM：ロール・ポリシー作成（Lambda 実行ロール用）
+
+⚠️ **セキュリティ注意**: 本ガイドでは一時的にフルアクセス権限を使用しています。セットアップ完了後は、以下の**最小限権限に変更することを強く推奨**します：
+- `cloudformation:CreateStack`, `UpdateStack`, `DescribeStacks`
+- `s3:GetObject`, `s3:DeleteObject`（Lambda が必要とするアクション）
+- `iam:PutRolePolicy`（ロール権限更新時のみ）
+
+詳細は本ガイドの最後の「🔐 セキュリティ：最小限権限への変更」を参照。
 
 AWS 認証情報を設定済み：
 
@@ -530,10 +537,74 @@ aws s3 rm s3://autosnsflow-media-*/media/user-123/1702000000000-abc12345.jpg
 
 ---
 
+## 🔐 セキュリティ：最小限権限への変更（セットアップ完了後に実施）
+
+本ガイドではセットアップ時に一時的にフルアクセス権限を使用しています。セットアップ完了後は、以下の最小限権限に変更することを**強く推奨**します。
+
+### 最小限権限ポリシー
+
+AWS Management Console で IAM ユーザーのポリシーを以下に変更：
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CloudFormationMinimal",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:DescribeStacks",
+        "cloudformation:DescribeStackEvents",
+        "cloudformation:ListStacks"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "S3MinimalForLambda",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::autosnsflow-media-*",
+        "arn:aws:s3:::autosnsflow-media-*/media/*"
+      ]
+    }
+  ]
+}
+```
+
+### 実行ステップ
+
+1. **AWS Management Console** にアクセス
+2. **IAM** → **ユーザー** → `autosnsflow-prod-app` を選択
+3. **ポリシーをアタッチ** のセクションで
+   - 既存の CloudFormation/S3 フルアクセスを **削除**
+   - 上記の最小限ポリシーを **新規作成・アタッチ**
+
+### 検証
+
+ポリシー変更後、以下が実行可能か確認：
+
+```bash
+# OK: S3 バケット一覧確認
+aws s3 ls
+
+# OK: CloudFormation スタック確認
+aws cloudformation describe-stacks --stack-name autosnsflow-media --region ap-northeast-1
+
+# 失敗するはず: 新規スタック作成（権限なし）
+aws cloudformation create-stack --stack-name test-stack --template-body '{}' --region ap-northeast-1
+```
+
+---
+
 ## 📚 参考リンク
 
 - [AWS CloudFormation ドキュメント](https://docs.aws.amazon.com/cloudformation/)
 - [AWS S3 ドキュメント](https://docs.aws.amazon.com/s3/)
+- [AWS IAM 最小限権限の原則](https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html#grant-least-privilege)
 - [AWS SDK for JavaScript - S3](https://docs.aws.amazon.com/sdk-for-javascript/latest/developer-guide/s3-examples.html)
 - [X API v1.1 Media Upload](https://developer.twitter.com/en/docs/twitter-api/v1-1/tweets/upload-media/overview)
 
