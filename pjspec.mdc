@@ -121,3 +121,147 @@
 
 ### リスクと対応
 - DynamoDB の既存レコードにフィールドがない場合は GET 時に初期化（デフォルト値挿入）して互換性を保つ。
+
+## License Token 管理・認証仕様
+
+### 概要
+コンテナブラウザに対して License Token ベースの認証と利用制限（コンテナ登録数上限）を提供する。トークンは 1 PC に対して 1 対 1 でバインドされ、PC 側で管理画面から検証・管理できる。
+
+### データモデル
+
+#### Token 1 つ = PC 1 台
+- 同時に複数 PC で使用不可
+- `bound_device_id` で現在バインド中の PC を管理
+
+#### Remaining Quota
+- PC 上のコンテナブラウザで作成可能なコンテナ（ブラウザプロファイル）の個数上限
+- 管理画面の「編集」でのみ管理者が変更可能
+- コンテナ作成・削除時に API が変更することはない
+
+#### 新フィールド: コンテナ数トラッキング
+- `current_container_count`: 現在使用中のコンテナ数（PC から報告）
+- `container_count_updated_at`: コンテナ数の最終更新時刻
+
+### API 仕様
+
+#### Validate エンドポイント
+```
+POST {AUTH_API_ENDPOINT}/auth/validate
+Authorization: Bearer {license_token}
+Content-Type: application/json
+
+Request:
+{
+  "device_id": "PC-device-identifier",
+  "device_info": { /* optional */ },
+  "current_container_count": 5  // ✅ 追加（オプション）
+}
+
+Response (200):
+{
+  "ok": true,
+  "code": "OK",
+  "data": {
+    "token": "...",
+    "remaining_quota": 100,              // コンテナ作成可能数（上限）
+    "current_container_count": 5,        // ✅ 追加: 現在のコンテナ数
+    "expires_at": 1735689600,
+    "bound": true,
+    "session_expires_at": 1735732800
+  }
+}
+```
+
+**エラーコード**:
+- `400 BAD_REQUEST`: token/device_id 未指定
+- `401 INVALID_TOKEN`: トークン未発見
+- `410 TOKEN_EXPIRED`: トークン有効期限切れ
+- `423 TOKEN_DISABLED`: トークン無効化済み
+- `403 BOUND_TO_OTHER`: 別 PC でバインド済み（「再統込」が必要）
+
+#### Heartbeat エンドポイント
+```
+POST {AUTH_API_ENDPOINT}/auth/heartbeat
+Authorization: Bearer {license_token}
+Content-Type: application/json
+
+Request:
+{
+  "device_id": "PC-device-identifier",
+  "current_container_count": 5  // ✅ 追加（オプション）
+}
+
+Response (200):
+{
+  "ok": true,
+  "code": "OK",
+  "data": {
+    "token": "...",
+    "remaining_quota": 100,
+    "current_container_count": 5,  // ✅ 追加: 現在のコンテナ数
+    "session_expires_at": 1735732800
+  }
+}
+```
+
+### クライアント実装フロー
+
+#### 初回起動
+1. license_token を取得
+2. device_id を取得（Windows: MachineGuid など）
+3. ローカルのコンテナ数をカウント
+4. `POST /auth/validate` を呼び出し → remaining_quota, current_container_count を取得
+5. 管理画面を表示（制限数をもとにコンテナ作成制限を適用）
+
+#### コンテナ作成時
+1. アプリ内の remaining_quota を参照
+2. 判定: `if (currentContainers >= remaining_quota) { showError(...) }`
+3. コンテナ作成許可 → 次の heartbeat で数を更新
+
+#### 定期ハートビート（30 分ごと）
+1. ローカルのコンテナ数をカウント
+2. `POST /auth/heartbeat` を呼び出し → session_expires_at を延長
+3. current_container_count をサーバーに報告（同期）
+
+### 管理画面（Token 管理）
+
+#### トークン一覧テーブル
+新カラム追加:
+- 「使用中コンテナ数」: current_container_count フィールドの値
+
+#### トークン詳細表示
+```
+トークン情報
+├─ Token ID
+├─ Username
+├─ 有効期限
+└─ 状態
+
+使用状況
+├─ 作成可能: remaining_quota
+├─ 使用中: current_container_count  ✅ 追加
+├─ 残数: remaining_quota - current_container_count
+└─ 最終更新: container_count_updated_at
+
+PC バインディング
+├─ デバイスID
+├─ バインド日時
+└─ 再統込ボタン
+```
+
+#### 編集ダイアログ
+- Username, remaining_quota, expires_at, disabled は編集可能
+- current_container_count は自動同期のため編集不可
+
+### DB スキーマ（LicenseTokens テーブル）
+- `token_id` (PK, String)
+- `username` (String, optional)
+- `remaining_quota` (Number) - 作成可能な上限
+- `current_container_count` (Number) ✅ 追加 - 現在のコンテナ数
+- `container_count_updated_at` (Number) ✅ 追加 - コンテナ数の更新時刻
+- `expires_at` (Number)
+- `disabled` (Boolean)
+- `bound_device_id` (String, optional)
+- `bound_at` (Number, optional)
+- `session_expires_at` (Number, optional)
+- `updated_at` (Number)

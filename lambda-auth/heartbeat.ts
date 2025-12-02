@@ -19,22 +19,34 @@ export const handler = async (event: any = {}) => {
     const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
     const body = event.body ? (typeof event.body === 'string' ? JSON.parse(event.body) : event.body) : {};
     const device_id = body?.device_id;
+    const current_container_count = body?.current_container_count ?? null;
     if (!token || !device_id) return jsonResp(400, { ok: false, code: 'BAD_REQUEST', message: 'token and device_id required' });
 
     const getResp = await ddb.send(new GetItemCommand({ TableName: TOKENS_TABLE, Key: marshall({ token_id: token }) }));
     if (!getResp.Item) return jsonResp(401, { ok: false, code: 'INVALID_TOKEN' });
-    const item = unmarshall(getResp.Item) as any;
+    let item = unmarshall(getResp.Item) as any;
     const now = nowSec();
     if (item.disabled) return jsonResp(423, { ok: false, code: 'TOKEN_DISABLED' });
     if (item.expires_at && Number(item.expires_at) > 0 && Number(item.expires_at) < now) return jsonResp(410, { ok: false, code: 'TOKEN_EXPIRED' });
     if (item.bound_device_id !== device_id) return jsonResp(403, { ok: false, code: 'BOUND_TO_OTHER' });
 
     const newLease = now + LEASE_SECONDS;
-    await ddb.send(new UpdateItemCommand({ TableName: TOKENS_TABLE, Key: marshall({ token_id: token }), UpdateExpression: 'SET session_expires_at = :s, updated_at = :now', ExpressionAttributeValues: marshall({ ':s': newLease, ':now': now }) }));
+    const updateExpr: string[] = ['SET session_expires_at = :s, updated_at = :now'];
+    const exprValues: Record<string, any> = { ':s': newLease, ':now': now };
+    
+    // Save current_container_count if provided
+    if (current_container_count !== null) {
+      updateExpr.push('current_container_count = :ccc, container_count_updated_at = :ts');
+      exprValues[':ccc'] = current_container_count;
+      exprValues[':ts'] = now;
+      item.current_container_count = current_container_count;
+    }
+
+    await ddb.send(new UpdateItemCommand({ TableName: TOKENS_TABLE, Key: marshall({ token_id: token }), UpdateExpression: updateExpr.join(', '), ExpressionAttributeValues: marshall(exprValues) }));
 
     try { const log = { event_id: `${token}#${now}#heartbeat`, token, event_type: 'heartbeat', actor: device_id, ts: now, ttl: now + LOG_TTL_SECONDS }; await ddb.send(new PutItemCommand({ TableName: TOKEN_EVENTS_TABLE, Item: marshall(log) })); } catch (e) { console.warn('putLog failed', String(e)); }
 
-    return jsonResp(200, { ok: true, code: 'OK', data: { token: item.token, remaining_quota: item.remaining_quota || 0, session_expires_at: newLease } });
+    return jsonResp(200, { ok: true, code: 'OK', data: { token: item.token, remaining_quota: item.remaining_quota || 0, current_container_count: item.current_container_count || 0, session_expires_at: newLease } });
   } catch (e: any) { console.error('heartbeat error', e); return jsonResp(500, { ok: false, code: 'SERVER_ERROR', message: String(e?.message || e) }); }
 };
 
