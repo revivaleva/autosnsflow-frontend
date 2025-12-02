@@ -439,6 +439,32 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
             ))}
           </div>
         )}
+
+        {/* Drag and drop zone */}
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            e.currentTarget.classList.add("bg-blue-50", "dark:bg-blue-900/20", "border-blue-400");
+          }}
+          onDragLeave={(e) => {
+            e.currentTarget.classList.remove("bg-blue-50", "dark:bg-blue-900/20", "border-blue-400");
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            e.currentTarget.classList.remove("bg-blue-50", "dark:bg-blue-900/20", "border-blue-400");
+            const files = e.dataTransfer.files ? Array.from(e.dataTransfer.files) : [];
+            const imageFiles = files.filter((f) => f.type.startsWith("image/"));
+            if (imageFiles.length > 0) {
+              const combined = [...images, ...imageFiles].slice(0, 4);
+              setImages(combined);
+            }
+          }}
+          className="mt-3 border-2 border-dashed border-gray-300 dark:border-gray-600 rounded p-4 text-center transition-colors"
+        >
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            画像をドラッグ&ドロップするか、上のボタンをクリック
+          </p>
+        </div>
       </div>
 
       {/* タブは折りたたみ可能にする */}

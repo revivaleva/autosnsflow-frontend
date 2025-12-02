@@ -40,6 +40,12 @@ export const env = {
     "",
 } as const;
 
+// Debug log for S3 env vars (server-side only)
+if (typeof window === "undefined") {
+  console.log("[env] S3_MEDIA_BUCKET:", env.S3_MEDIA_BUCKET ? "SET" : "UNDEFINED");
+  console.log("[env] S3_MEDIA_REGION:", env.S3_MEDIA_REGION ? "SET" : "UNDEFINED");
+}
+
 // Helper: normalize environment variable retrieval
 // Treat undefined, empty string, or literal "undefined" (string) as not set
 export function getEnvVar(name: string): string | undefined {

@@ -2,20 +2,48 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { verifyUserFromRequest } from "@/lib/auth";
 import { env } from "@/lib/env";
+import { getConfigValue, loadConfig } from "@/lib/config";
 import crypto from "crypto";
 
-const s3 = new S3Client({
-  region: env.S3_MEDIA_REGION,
-  credentials:
-    env.AUTOSNSFLOW_ACCESS_KEY_ID && env.AUTOSNSFLOW_SECRET_ACCESS_KEY
-      ? {
-          accessKeyId: env.AUTOSNSFLOW_ACCESS_KEY_ID,
-          secretAccessKey: env.AUTOSNSFLOW_SECRET_ACCESS_KEY,
-        }
-      : undefined,
-});
+let s3: S3Client | null = null;
+let BUCKET: string | null = null;
 
-const BUCKET = env.S3_MEDIA_BUCKET;
+async function getS3Client(): Promise<S3Client> {
+  if (!s3) {
+    const region = getConfigValue("S3_MEDIA_REGION") || env.S3_MEDIA_REGION || "ap-northeast-1";
+    s3 = new S3Client({
+      region,
+      credentials:
+        env.AUTOSNSFLOW_ACCESS_KEY_ID && env.AUTOSNSFLOW_SECRET_ACCESS_KEY
+          ? {
+              accessKeyId: env.AUTOSNSFLOW_ACCESS_KEY_ID,
+              secretAccessKey: env.AUTOSNSFLOW_SECRET_ACCESS_KEY,
+            }
+          : undefined,
+    });
+  }
+  return s3;
+}
+
+async function getBucket(): Promise<string> {
+  if (!BUCKET) {
+    console.log("[upload-media] loading AppConfig...");
+    try {
+      const cfg = await loadConfig();
+      console.log("[upload-media] AppConfig loaded, keys count:", Object.keys(cfg).length);
+      console.log("[upload-media] All config keys:", Object.keys(cfg).join(", "));
+      const fromConfig = cfg["S3_MEDIA_BUCKET"];
+      const fromEnv = env.S3_MEDIA_BUCKET;
+      console.log("[upload-media] S3_MEDIA_BUCKET from config:", fromConfig, "from env:", fromEnv);
+      BUCKET = fromConfig || fromEnv || "";
+    } catch (e: any) {
+      console.error("[upload-media] Failed to load AppConfig:", e?.message || e);
+      BUCKET = env.S3_MEDIA_BUCKET || "";
+    }
+  }
+  return BUCKET;
+}
+
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 const MAX_FILES = 4;
@@ -60,13 +88,16 @@ export default async function handler(
   console.log(`[upload-media] request method=${req.method} user=${userId}`);
 
   try {
-    if (!BUCKET) {
+    const bucket = await getBucket();
+    if (!bucket) {
+      console.error("[upload-media] BUCKET not set");
       return res
         .status(500)
         .json({ error: "s3_bucket_not_configured" });
     }
 
     if (req.method === "POST") {
+      const s3Client = await getS3Client();
       // Handle multipart/form-data uploads via multipart parsing
       // For now, accept base64-encoded image data via JSON
       const body = safeBody(req.body);
@@ -131,21 +162,28 @@ export default async function handler(
           const s3Key = `media/${userId}/${timestamp}-${randomId}.${ext}`;
 
           // Upload to S3
-          await s3.send(
-            new PutObjectCommand({
-              Bucket: BUCKET,
-              Key: s3Key,
-              Body: buffer,
-              ContentType: file.type,
-              ServerSideEncryption: "AES256",
-              Metadata: {
-                "user-id": userId,
-                "uploaded-at": new Date().toISOString(),
-              },
-            })
-          );
+          console.log(`[upload-media] uploading ${s3Key} to ${bucket}`);
+          try {
+            await s3Client.send(
+              new PutObjectCommand({
+                Bucket: bucket,
+                Key: s3Key,
+                Body: buffer,
+                ContentType: file.type,
+                ServerSideEncryption: "AES256",
+                Metadata: {
+                  "user-id": userId,
+                  "uploaded-at": new Date().toISOString(),
+                },
+              })
+            );
+            console.log(`[upload-media] uploaded successfully: ${s3Key}`);
+          } catch (s3Err: any) {
+            console.error(`[upload-media] S3 upload failed for ${s3Key}:`, s3Err?.message || s3Err);
+            throw s3Err;
+          }
 
-          const url = `s3://${BUCKET}/${s3Key}`;
+          const url = `s3://${bucket}/${s3Key}`;
           uploadedUrls.push(url);
           console.log(`[upload-media] uploaded ${s3Key} user=${userId}`);
         } catch (e: any) {
