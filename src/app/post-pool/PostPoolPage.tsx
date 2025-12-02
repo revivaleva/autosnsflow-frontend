@@ -199,12 +199,53 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
     }
     setLoading(true);
     try {
-      // For now, ignore image upload and send images as empty
+      let mediaUrls: string[] = [];
+
+      // Upload images if any were selected
+      if (images.length > 0) {
+        const fileDataPromises = images.map(
+          (file) =>
+            new Promise<{ data: string; type: string; name: string }>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => {
+                resolve({
+                  data: String(reader.result),
+                  type: file.type,
+                  name: file.name,
+                });
+              };
+              reader.onerror = () => reject(new Error("failed_to_read_file"));
+              reader.readAsDataURL(file);
+            })
+        );
+
+        const fileData = await Promise.all(fileDataPromises);
+
+        const uploadResp = await fetch("/api/post-pool/upload-media", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ files: fileData }),
+        });
+
+        const uploadJson = await uploadResp.json().catch(() => ({}));
+        if (!uploadResp.ok || !uploadJson.ok) {
+          throw new Error(uploadJson.error || "media_upload_failed");
+        }
+        mediaUrls = uploadJson.urls || [];
+        console.log(`[post-pool] uploaded ${mediaUrls.length} media files`);
+      }
+
+      // Save to pool with media URLs
       const resp = await fetch("/api/post-pool", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ type: poolType, content: content.trim(), images: [] }),
+        body: JSON.stringify({
+          type: poolType,
+          content: content.trim(),
+          images: mediaUrls,
+        }),
       });
       const j = await resp.json().catch(() => ({}));
       if (!resp.ok || !j.ok) throw new Error(j.error || "save_failed");
@@ -358,16 +399,46 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
         <textarea className="w-full border rounded p-2 min-h-[300px] bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100" value={content} onChange={(e) => setContent(e.target.value)} placeholder="投稿本文を入力（改行可）"></textarea>
         <div className="flex items-center justify-between mt-2">
           <div className="flex items-center gap-2">
-            <label className="bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-100 px-3 py-1 rounded cursor-pointer">
-              画像
+            <label className="bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-100 px-3 py-1 rounded cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
+              画像（最大4枚）
               <input type="file" accept="image/*" multiple onChange={handleImageSelect} className="hidden" />
             </label>
+            {images.length > 0 && (
+              <span className="text-sm text-blue-600 dark:text-blue-400 font-medium">
+                {images.length}個選択
+              </span>
+            )}
           </div>
             <div className="flex items-center gap-2">
             <div className={`text-sm ${String(content || "").length > 140 ? 'text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-gray-300'}`}>文字数: {String(content || "").length}</div>
-            <button className="bg-green-500 dark:bg-green-600 text-white px-4 py-2 rounded text-sm font-medium" onClick={handleSave} disabled={loading}>{loading ? "登録中..." : "登録"}</button>
+            <button className="bg-green-500 dark:bg-green-600 text-white px-4 py-2 rounded text-sm font-medium hover:bg-green-600 dark:hover:bg-green-700 transition-colors disabled:opacity-60" onClick={handleSave} disabled={loading}>{loading ? "登録中..." : "登録"}</button>
           </div>
         </div>
+
+        {/* Image preview */}
+        {images.length > 0 && (
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {images.map((file, idx) => (
+              <div key={idx} className="relative group">
+                <img
+                  src={URL.createObjectURL(file)}
+                  alt={`preview ${idx}`}
+                  className="w-full h-24 object-cover rounded border border-gray-300 dark:border-gray-600"
+                />
+                <button
+                  onClick={() => setImages((prev) => prev.filter((_, i) => i !== idx))}
+                  className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-xs font-bold"
+                  type="button"
+                >
+                  ×
+                </button>
+                <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs p-1 rounded-b text-center truncate">
+                  {file.name}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* タブは折りたたみ可能にする */}
@@ -441,6 +512,7 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
               <thead className="bg-gray-100 dark:bg-gray-800">
                 <tr>
                   <th className="p-2 text-left">本文</th>
+                  <th className="p-2 text-center" style={{ width: 100 }}>画像</th>
                   <th className="p-2 text-right" style={{ width: 140 }}>作成日</th>
                   <th className="p-2 text-center" style={{ width: 100 }}>操作</th>
                 </tr>
@@ -466,13 +538,23 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
                         {it.content}
                       </div>
                     </td>
+                    <td className="px-2 py-1 text-center">
+                      {(it.images && it.images.length > 0) ? (
+                        <div className="flex items-center justify-center gap-1">
+                          <span className="text-sm font-medium text-blue-600 dark:text-blue-400">{it.images.length}</span>
+                          <span className="text-xs text-gray-500 dark:text-gray-400">個</span>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-gray-400 dark:text-gray-500">なし</span>
+                      )}
+                    </td>
                     <td className="px-2 py-1 text-right text-sm text-gray-600 dark:text-gray-300">{it.createdAt ? new Date(it.createdAt * 1000).toLocaleString() : ""}</td>
                     <td className="px-2 py-1 text-center">
-                      <button className="bg-red-500 dark:bg-red-600 text-white px-2 py-1 rounded" onClick={() => handleDelete(it.poolId)}>削除</button>
+                      <button className="bg-red-500 dark:bg-red-600 text-white px-2 py-1 rounded hover:bg-red-600 dark:hover:bg-red-700 transition-colors text-sm" onClick={() => handleDelete(it.poolId)}>削除</button>
                     </td>
                   </tr>
                 ))}
-                {items.length === 0 && <tr><td colSpan={3} className="p-4 text-center text-gray-500 dark:text-gray-400">データがありません</td></tr>}
+                {items.length === 0 && <tr><td colSpan={4} className="p-4 text-center text-gray-500 dark:text-gray-400">データがありません</td></tr>}
               </tbody>
             </table>
           )}

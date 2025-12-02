@@ -1,15 +1,133 @@
 import { createDynamoClient } from '@/lib/ddb';
 import { PutItemCommand, QueryCommand, UpdateItemCommand, GetItemCommand, DeleteItemCommand } from '@aws-sdk/client-dynamodb';
+import { S3Client, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { streamToBuffer } from '@aws-sdk/util-stream-node';
 
 const ddb = createDynamoClient();
 const TBL_X_SCHEDULED = process.env.TBL_X_SCHEDULED || 'XScheduledPosts';
+const S3_BUCKET = process.env.S3_MEDIA_BUCKET || '';
+const AWS_REGION = process.env.AWS_REGION || 'ap-northeast-1';
 
-export async function postToX({ accessToken, text }: { accessToken: string; text: string }) {
+const s3 = new S3Client({ region: AWS_REGION });
+
+// Helper: Download media from S3 and convert to multipart data for X API
+async function getMediaFromS3(s3Url: string): Promise<Buffer | null> {
+  try {
+    // Parse s3://bucket/key format
+    if (!s3Url.startsWith('s3://')) return null;
+    const parts = s3Url.slice(5).split('/');
+    const bucket = parts[0];
+    const key = parts.slice(1).join('/');
+    
+    const getObjResp = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+    const buffer = await streamToBuffer(getObjResp.Body as any);
+    return buffer;
+  } catch (e: any) {
+    console.error('[x-auto] failed to download media from S3:', e?.message || e);
+    return null;
+  }
+}
+
+// Helper: Upload media to X and get media_id
+async function uploadMediaToX(accessToken: string, mediaBuffer: Buffer, mediaType: string): Promise<string | null> {
+  try {
+    const formData = new FormData();
+    const blob = new Blob([mediaBuffer], { type: mediaType });
+    formData.append('media', blob);
+
+    const uploadRes = await fetch('https://upload.twitter.com/1.1/media/upload.json', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${accessToken}` },
+      body: formData as any,
+    });
+
+    if (!uploadRes.ok) {
+      throw new Error(`Media upload failed: ${uploadRes.status} ${await uploadRes.text()}`);
+    }
+
+    const uploadData = await uploadRes.json() as any;
+    const mediaId = uploadData?.media_id_string || uploadData?.media_id;
+    if (!mediaId) {
+      throw new Error('No media_id in response');
+    }
+
+    return String(mediaId);
+  } catch (e: any) {
+    console.error('[x-auto] media upload to X failed:', e?.message || e);
+    return null;
+  }
+}
+
+// Helper: Delete media from S3
+async function deleteMediaFromS3(s3Url: string): Promise<void> {
+  try {
+    if (!s3Url.startsWith('s3://')) return;
+    const parts = s3Url.slice(5).split('/');
+    const bucket = parts[0];
+    const key = parts.slice(1).join('/');
+    
+    await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+    console.info('[x-auto] deleted media from S3:', s3Url);
+  } catch (e: any) {
+    console.error('[x-auto] failed to delete media from S3:', e?.message || e);
+  }
+}
+
+// Main posting function with media support
+export async function postToX({ 
+  accessToken, 
+  text,
+  mediaUrls = [],
+}: { 
+  accessToken: string; 
+  text: string;
+  mediaUrls?: string[];
+}) {
+  const mediaIds: string[] = [];
+
+  // Upload media files to X if provided
+  if (Array.isArray(mediaUrls) && mediaUrls.length > 0) {
+    for (const mediaUrl of mediaUrls.slice(0, 4)) { // X API max 4 media per tweet
+      try {
+        const mediaBuffer = await getMediaFromS3(mediaUrl);
+        if (!mediaBuffer) {
+          console.warn('[x-auto] skipping invalid media URL:', mediaUrl);
+          continue;
+        }
+
+        // Determine media type from S3 URL
+        const ext = mediaUrl.split('.').pop()?.toLowerCase() || 'jpg';
+        const mediaTypeMap: Record<string, string> = {
+          jpg: 'image/jpeg',
+          jpeg: 'image/jpeg',
+          png: 'image/png',
+          gif: 'image/gif',
+          webp: 'image/webp',
+        };
+        const mediaType = mediaTypeMap[ext] || 'image/jpeg';
+
+        const mediaId = await uploadMediaToX(accessToken, mediaBuffer, mediaType);
+        if (mediaId) {
+          mediaIds.push(mediaId);
+          console.info('[x-auto] media uploaded to X:', { mediaUrl, mediaId });
+        }
+      } catch (e: any) {
+        console.error('[x-auto] error uploading media:', e?.message || e);
+      }
+    }
+  }
+
+  // Post to X with or without media
   const url = 'https://api.x.com/2/tweets';
+  const postBody: any = { text };
+  if (mediaIds.length > 0) {
+    postBody.media = { media_ids: mediaIds };
+  }
+
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify(postBody),
   });
   if (!res.ok) throw new Error(`X post failed: ${res.status} ${await res.text()}`);
   return await res.json();
@@ -366,14 +484,34 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
           try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_SKIP_NO_CONTENT', payload: { accountId, pk, sk } }); } catch(_) {}
           continue;
         }
-        r = await postToX({ accessToken, text: postText });
+        // Extract media URLs from the scheduled post item (attached by pool claim or initial setup)
+        const mediaUrls: string[] = [];
+        if (it.images && it.images.S) {
+          try {
+            const imgs = JSON.parse(it.images.S);
+            if (Array.isArray(imgs)) {
+              mediaUrls.push(...imgs);
+            }
+          } catch (_) {}
+        }
+        r = await postToX({ accessToken, text: postText, mediaUrls });
       } catch (postErr) {
         // Try token refresh using stored refreshToken
         try {
           const newToken = await refreshXAccountToken(userId, accountId);
           if (newToken) {
             accessToken = newToken;
-            r = await postToX({ accessToken, text: content });
+            // Extract media URLs again for retry
+            const mediaUrls: string[] = [];
+            if (it.images && it.images.S) {
+              try {
+                const imgs = JSON.parse(it.images.S);
+                if (Array.isArray(imgs)) {
+                  mediaUrls.push(...imgs);
+                }
+              } catch (_) {}
+            }
+            r = await postToX({ accessToken, text: content, mediaUrls });
           } else {
             // mark permanent failure on 403-like errors
             try {
@@ -563,14 +701,15 @@ export async function postFromPoolForAccount(userId: string, acct: any, opts: { 
     try {
       let accessToken = acct.oauthAccessToken || acct.accessToken || '';
       let resp;
+      const mediaUrls = (claimedFromPool.images || []) as string[];
       try {
-        resp = await postToX({ accessToken, text: cand.content || '' });
+        resp = await postToX({ accessToken, text: cand.content || '', mediaUrls });
       } catch (postErr:any) {
         // try refresh
         const newToken = await refreshXAccountToken(userId, accountId);
         if (newToken) {
           accessToken = newToken;
-          resp = await postToX({ accessToken, text: cand.content || '' });
+          resp = await postToX({ accessToken, text: cand.content || '', mediaUrls });
         } else {
           throw postErr;
         }
@@ -578,9 +717,33 @@ export async function postFromPoolForAccount(userId: string, acct: any, opts: { 
       const postId = (resp && resp.data && (resp.data.id || resp.data.id_str)) || '';
       if (!postId) throw new Error('no_post_id');
 
-      // 5) delete pool item
-      // pool already consumed by atomic DeleteItem above; nothing to do here
- 
+      // 5) Delete media from S3 if reuse setting is disabled
+      // Check reuse setting for this pool type
+      let shouldDeleteMedia = true;
+      try {
+        const TBL_USER_TYPE_TIME_SETTINGS = process.env.TBL_USER_TYPE_TIME_SETTINGS || 'UserTypeTimeSettings';
+        const uts = await ddb.send(new GetItemCommand({
+          TableName: TBL_USER_TYPE_TIME_SETTINGS,
+          Key: { user_id: { S: String(userId) }, type: { S: String(poolType) } },
+          ProjectionExpression: 'reuse',
+        }));
+        const uit: any = (uts as any).Item || {};
+        shouldDeleteMedia = !Boolean(uit.reuse && (uit.reuse.BOOL === true || String(uit.reuse.S) === 'true'));
+      } catch (_) {
+        shouldDeleteMedia = true; // default to delete if setting lookup fails
+      }
+
+      // Delete media files from S3 if not reusing
+      if (shouldDeleteMedia && mediaUrls.length > 0) {
+        for (const mediaUrl of mediaUrls) {
+          try {
+            await deleteMediaFromS3(mediaUrl);
+          } catch (e: any) {
+            console.error('[x-auto] error deleting media after post:', e?.message || e);
+          }
+        }
+      }
+
       // 5min flow updates the existing scheduled record (TBL_SCHEDULED) elsewhere; do not create/update separate XScheduledPosts here.
 
       // 6) write ExecutionLogs / Discord notification (reuse postDiscordMaster if available globally)

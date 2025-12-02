@@ -1,0 +1,60 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: S3 bucket for media uploads (images and videos) for AutoSNSFlow
+
+Parameters:
+  MediaRetentionDays:
+    Type: Number
+    Default: 90
+    Description: Days to retain media files before deletion (0 = never delete)
+
+Resources:
+  MediaBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${AWS::StackName}-autosnsflow-media-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldMediaFiles
+            Status: Enabled
+            ExpirationInDays: !If [ShouldExpire, !Ref MediaRetentionDays, !Ref AWS::NoValue]
+            NoncurrentVersionExpirationInDays: 7
+
+  MediaBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref MediaBucket
+      PolicyText:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyUnencryptedObjectUploads
+            Effect: Deny
+            Principal: '*'
+            Action: s3:PutObject
+            Resource: !Sub '${MediaBucket.Arn}/*'
+            Condition:
+              StringNotEquals:
+                s3:x-amz-server-side-encryption: AES256
+
+Conditions:
+  ShouldExpire: !Not [!Equals [!Ref MediaRetentionDays, 0]]
+
+Outputs:
+  MediaBucketName:
+    Description: Name of the S3 bucket for media storage
+    Value: !Ref MediaBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-MediaBucketName'
+
+  MediaBucketArn:
+    Description: ARN of the S3 bucket
+    Value: !GetAtt MediaBucket.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-MediaBucketArn'
+

@@ -30,6 +30,14 @@ export const env = {
     process.env.AUTOSNSFLOW_ACCESS_KEY_ID || "",       // [ADD]
   AUTOSNSFLOW_SECRET_ACCESS_KEY:
     process.env.AUTOSNSFLOW_SECRET_ACCESS_KEY || "",   // [ADD]
+
+  // [ADD] S3 media storage
+  S3_MEDIA_BUCKET:
+    process.env.S3_MEDIA_BUCKET || "",
+  S3_MEDIA_REGION:
+    process.env.S3_MEDIA_REGION ||
+    process.env.AWS_REGION ||
+    "",
 } as const;
 
 // Helper: normalize environment variable retrieval
