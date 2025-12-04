@@ -1,0 +1,59 @@
+# Amplify の API Gateway ペイロード制限を増やすための設定メモ
+#
+# 問題: API Gateway のデフォルトペイロード上限は 10MB
+# 本番環境で 413 (Request Entity Too Large) が発生
+#
+# 解決策 1: Amplify CLI で REST API を作成（ペイロード制限設定可能）
+# ============================================
+# $ amplify api add
+# ? Select from one of the below mentioned services: REST
+# ? Provide a friendly name for your resource: autosnsflow-api
+# ? Provide a path (e.g., /items): /
+# ? Choose a Lambda source: Create a new Lambda function
+# ... (設定を進める)
+#
+# その後、amplify/backend/api/autosnsflow-api/cloudformation-template.json を編集:
+# {
+#   "ApiGatewayRestApi": {
+#     "Type": "AWS::ApiGateway::RestApi",
+#     "Properties": {
+#       ...
+#       "Policy": {
+#         "Version": "2012-10-17",
+#         "Statement": [{
+#           "Effect": "Allow",
+#           "Principal": "*",
+#           "Action": "execute-api:Invoke",
+#           "Resource": "execute-api:/*"
+#         }]
+#       }
+#     }
+#   }
+# }
+#
+# 解決策 2: CloudFormation で API Gateway Deployment リソースにペイロード設定
+# ============================================
+# ApiGatewayDeployment リソースで MethodSettings を設定:
+# "MethodSettings": [
+#   {
+#     "ResourcePath": "/*",
+#     "HttpMethod": "*",
+#     "ThrottleSettings": {
+#       "BurstLimit": 5000,
+#       "RateLimit": 2000
+#     }
+#   }
+# ]
+#
+# ※ただし API Gateway 自体の制限は HTTP プロトコルレベル（~10MB）のため、
+#    ペイロード制限設定では解決できない場合がある
+#
+# 解決策 3: S3 署名付き URL を使用（推奨）
+# ============================================
+# 大きなファイルは S3 に直接アップロード:
+# 1. フロント → /api/get-s3-upload-url で署名付き URL を取得
+# 2. フロント → S3 に直接アップロード (Content-Length: 4.87MB)
+# 3. フロント → /api/post-pool/confirm-media でメタデータを保存
+#
+# これにより API Gateway のペイロード制限を回避可能
+
