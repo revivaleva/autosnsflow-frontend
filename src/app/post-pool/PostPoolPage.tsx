@@ -265,39 +265,67 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
     try {
       let mediaUrls: string[] = [];
 
-      // Upload images if any were selected
+      // Upload images if any were selected using S3 presigned URLs
       if (images.length > 0) {
-        const fileDataPromises = images.map(
-          (file) =>
-            new Promise<{ data: string; type: string; name: string }>((resolve, reject) => {
-              const reader = new FileReader();
-              reader.onload = () => {
-                resolve({
-                  data: String(reader.result),
-                  type: file.type,
-                  name: file.name,
-                });
-              };
-              reader.onerror = () => reject(new Error("failed_to_read_file"));
-              reader.readAsDataURL(file);
-            })
-        );
+        for (const file of images) {
+          try {
+            // Step 1: Get presigned URL from backend
+            const urlResp = await fetch("/api/media/get-s3-upload-url", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              credentials: "include",
+              body: JSON.stringify({
+                fileName: file.name,
+                fileSize: file.size,
+                fileType: file.type,
+              }),
+            });
 
-        const fileData = await Promise.all(fileDataPromises);
+            const urlJson = await urlResp.json().catch(() => ({}));
+            if (!urlResp.ok || !urlJson.ok) {
+              throw new Error(urlJson.error || "failed_to_get_upload_url");
+            }
 
-        const uploadResp = await fetch("/api/post-pool/upload-media", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include",
-          body: JSON.stringify({ files: fileData }),
-        });
+            const { signedUrl, s3Url } = urlJson;
 
-        const uploadJson = await uploadResp.json().catch(() => ({}));
-        if (!uploadResp.ok || !uploadJson.ok) {
-          throw new Error(uploadJson.error || "media_upload_failed");
+            // Step 2: Upload directly to S3 using presigned URL
+            const uploadResp = await fetch(signedUrl, {
+              method: "PUT",
+              headers: {
+                "Content-Type": file.type,
+              },
+              body: file,
+            });
+
+            if (!uploadResp.ok) {
+              throw new Error(`S3 upload failed: ${uploadResp.status}`);
+            }
+
+            // Step 3: Confirm upload with backend
+            const confirmResp = await fetch("/api/media/confirm-upload", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              credentials: "include",
+              body: JSON.stringify({
+                s3Url,
+                fileName: file.name,
+                fileType: file.type,
+                fileSize: file.size,
+              }),
+            });
+
+            const confirmJson = await confirmResp.json().catch(() => ({}));
+            if (!confirmResp.ok || !confirmJson.ok) {
+              throw new Error(confirmJson.error || "failed_to_confirm_upload");
+            }
+
+            mediaUrls.push(s3Url);
+            console.log(`[post-pool] uploaded to S3: ${s3Url}`);
+          } catch (e: any) {
+            console.error(`[post-pool] failed to upload ${file.name}:`, e?.message);
+            throw new Error(`Media upload failed: ${file.name}`);
+          }
         }
-        mediaUrls = uploadJson.urls || [];
-        console.log(`[post-pool] uploaded ${mediaUrls.length} media files`);
       }
 
       // Save to pool with media URLs

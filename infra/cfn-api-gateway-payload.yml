@@ -1,0 +1,57 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: API Gateway Stage configuration for increased payload size limits
+
+Parameters:
+  ApiGatewayRestApiId:
+    Type: String
+    Description: The REST API ID managed by Amplify (set via environment variable or manual input)
+    Default: ''
+  
+  StageName:
+    Type: String
+    Description: The stage name (usually 'prod' or 'main' for Amplify)
+    Default: prod
+
+Conditions:
+  HasApiGatewayRestApiId: !Not [!Equals [!Ref ApiGatewayRestApiId, '']]
+
+Resources:
+  ApiGatewayStageSettings:
+    Type: AWS::ApiGateway::Stage
+    Condition: HasApiGatewayRestApiId
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApiId
+      StageName: !Ref StageName
+      Description: Stage with increased payload limits for media uploads
+      MethodSettings:
+        - ResourcePath: '/*'
+          HttpMethod: '*'
+          LoggingLevel: INFO
+          DataTraceEnabled: true
+          MetricsEnabled: true
+          ThrottlingBurstLimit: 5000
+          ThrottlingRateLimit: 2000
+
+  ApiGatewayAccount:
+    Type: AWS::ApiGateway::Account
+    Properties:
+      CloudWatchRoleArn: !GetAtt ApiGatewayCloudWatchRole.Arn
+
+  ApiGatewayCloudWatchRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+
+Outputs:
+  Note:
+    Description: API Gateway payload size is limited by the HTTP protocol (up to ~10MB for request/response). To increase beyond this, consider using multipart uploads or S3 signed URLs for large files.
+    Value: For files larger than API Gateway's default limits, recommend implementing S3 multipart upload or presigned URLs
+
