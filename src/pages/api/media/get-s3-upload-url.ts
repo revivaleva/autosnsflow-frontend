@@ -3,7 +3,7 @@ import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { verifyUserFromRequest } from "@/lib/auth";
 import { env } from "@/lib/env";
-import { getConfigValue } from "@/lib/config";
+import { getConfigValue, loadConfig } from "@/lib/config";
 import crypto from "crypto";
 
 let s3: S3Client | null = null;
@@ -28,8 +28,18 @@ async function getS3Client(): Promise<S3Client> {
 
 async function getBucket(): Promise<string> {
   if (!BUCKET) {
-    const fromEnv = env.S3_MEDIA_BUCKET;
-    BUCKET = fromEnv || "";
+    try {
+      const fromConfig = getConfigValue("S3_MEDIA_BUCKET");
+      if (fromConfig) {
+        BUCKET = fromConfig;
+      } else {
+        const fromEnv = env.S3_MEDIA_BUCKET;
+        BUCKET = fromEnv || "";
+      }
+    } catch (e) {
+      const fromEnv = env.S3_MEDIA_BUCKET;
+      BUCKET = fromEnv || "";
+    }
   }
   return BUCKET;
 }
@@ -59,11 +69,16 @@ export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
 ) {
-  const user = await verifyUserFromRequest(req).catch(() => null);
-  if (!user?.sub) return res.status(401).json({ error: "unauthorized" });
-  const userId = user.sub;
-
   try {
+    // Ensure AppConfig is loaded before accessing config values
+    await loadConfig().catch(() => {
+      // If AppConfig load fails, we'll fall back to env vars
+    });
+
+    const user = await verifyUserFromRequest(req).catch(() => null);
+    if (!user?.sub) return res.status(401).json({ error: "unauthorized" });
+    const userId = user.sub;
+
     if (req.method !== "POST") {
       res.setHeader("Allow", ["POST"]);
       return res.status(405).json({ error: "method_not_allowed" });

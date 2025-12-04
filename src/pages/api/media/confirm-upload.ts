@@ -2,12 +2,13 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { S3Client, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { verifyUserFromRequest } from "@/lib/auth";
 import { env } from "@/lib/env";
+import { getConfigValue, loadConfig } from "@/lib/config";
 
 let s3: S3Client | null = null;
 
 async function getS3Client(): Promise<S3Client> {
   if (!s3) {
-    const region = env.S3_MEDIA_REGION || "ap-northeast-1";
+    const region = getConfigValue("S3_MEDIA_REGION") || env.S3_MEDIA_REGION || "ap-northeast-1";
     s3 = new S3Client({
       region,
       credentials:
@@ -34,11 +35,16 @@ export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
 ) {
-  const user = await verifyUserFromRequest(req).catch(() => null);
-  if (!user?.sub) return res.status(401).json({ error: "unauthorized" });
-  const userId = user.sub;
-
   try {
+    // Ensure AppConfig is loaded before accessing config values
+    await loadConfig().catch(() => {
+      // If AppConfig load fails, we'll fall back to env vars
+    });
+
+    const user = await verifyUserFromRequest(req).catch(() => null);
+    if (!user?.sub) return res.status(401).json({ error: "unauthorized" });
+    const userId = user.sub;
+
     if (req.method !== "POST") {
       res.setHeader("Allow", ["POST"]);
       return res.status(405).json({ error: "method_not_allowed" });
