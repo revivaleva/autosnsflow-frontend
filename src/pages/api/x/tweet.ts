@@ -402,6 +402,14 @@ async function claimPoolItemForX(
   }
 }
 
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: "50mb",
+    },
+  },
+};
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
     const user = await verifyUserFromRequest(req);
