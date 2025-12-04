@@ -2,8 +2,6 @@ import { createDynamoClient } from '@/lib/ddb';
 import { PutItemCommand, QueryCommand, UpdateItemCommand, GetItemCommand, DeleteItemCommand } from '@aws-sdk/client-dynamodb';
 import { S3Client, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { streamToBuffer } from '@aws-sdk/util-stream-node';
-import OAuth from 'oauth-1.0a';
-import crypto from 'crypto';
 
 const ddb = createDynamoClient();
 const TBL_X_SCHEDULED = process.env.TBL_X_SCHEDULED || 'XScheduledPosts';
