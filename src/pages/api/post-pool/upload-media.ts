@@ -44,8 +44,19 @@ async function getBucket(): Promise<string> {
   return BUCKET;
 }
 
-const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
-const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB (increased for video support)
+const ALLOWED_TYPES = [
+  // Images
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+  // Videos
+  "video/mp4",
+  "video/quicktime",
+  "video/x-msvideo",
+  "video/webm",
+];
 const MAX_FILES = 4;
 
 interface UploadedFile {
@@ -130,11 +141,11 @@ export default async function handler(
             continue;
           }
 
-          // Decode base64 data
+          // Decode base64 data (supports both image and video)
           let buffer: Buffer;
           try {
             const base64Data = file.data.replace(
-              /^data:image\/[a-z]+;base64,/,
+              /^data:(image|video)\/[a-z0-9\-+]+;base64,/,
               ""
             );
             buffer = Buffer.from(base64Data, "base64");
@@ -156,7 +167,10 @@ export default async function handler(
           }
 
           // Generate S3 key
-          const ext = file.type === "image/jpeg" ? "jpg" : file.type.split("/")[1];
+          let ext = file.type.split("/")[1];
+          if (file.type === "image/jpeg") ext = "jpg";
+          if (file.type === "video/quicktime") ext = "mov";
+          if (file.type === "video/x-msvideo") ext = "avi";
           const timestamp = Date.now();
           const randomId = crypto.randomBytes(8).toString("hex");
           const s3Key = `media/${userId}/${timestamp}-${randomId}.${ext}`;

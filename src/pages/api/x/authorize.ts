@@ -95,7 +95,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
     if (!scopeRaw) scopeRaw = process.env.X_SCOPES || '';
     // ensure tweet.read is present in scopes
-    const scopeList = (scopeRaw || 'tweet.write users.read offline.access').trim().split(/\s+/).filter(Boolean);
+    const scopeList = (scopeRaw || 'tweet.write users.read media.write offline.access').trim().split(/\s+/).filter(Boolean);
     if (!scopeList.includes('tweet.read')) scopeList.push('tweet.read');
     const scope = encodeURIComponent(scopeList.join(' '));
 

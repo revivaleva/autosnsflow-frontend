@@ -120,8 +120,14 @@ function safeBody(b: any) {
 }
 
 function unmarshallScheduled(it: any) {
+  // Extract scheduledPostId from the explicit field, fallback to SK parsing
+  const scheduledPostId = it.scheduledPostId?.S || '';
+  // Extract full SK for API calls that need it
+  const sk = it.SK?.S || '';
+  
   return {
-    scheduledPostId: it.scheduledPostId?.S || (it.SK?.S || '').replace(/^SCHEDULEDPOST#/, ''),
+    scheduledPostId: scheduledPostId,
+    sk: sk,  // Include full SK for reference
     accountId: it.accountId?.S || '',
     accountName: it.accountName?.S || '',
     content: it.content?.S || '',
