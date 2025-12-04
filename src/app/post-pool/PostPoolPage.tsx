@@ -38,6 +38,7 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
   const [filterAccount, setFilterAccount] = useState<string>('');
   const [sortKey, setSortKey] = useState<'scheduledAt' | 'postedAt'>('scheduledAt');
   const [sortAsc, setSortAsc] = useState<boolean>(false); // newest first by default
+  const [postingXId, setPostingXId] = useState<string>(''); // X 即時投稿実行中フラグ
 
   useEffect(() => { loadPool(); loadAccountsCount(); }, [poolType]);
   useEffect(() => {
@@ -104,6 +105,69 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
     } catch (e) {
       console.error('CSV export failed', e);
       alert('CSV出力に失敗しました: ' + String(e));
+    }
+  };
+
+  // X 予約投稿を即時投稿する
+  const handleManualPostX = async (post: any) => {
+    console.log('[handleManualPostX] post object:', post);
+    console.log('[handleManualPostX] scheduledPostId:', post.scheduledPostId);
+    
+    if (!post.scheduledPostId) {
+      alert('投稿IDが見つかりません');
+      return;
+    }
+    
+    // Warn if content is empty
+    if (!post.content || String(post.content).trim() === '') {
+      if (!window.confirm("⚠️ 本文がまだ生成されていません。\n空のテキストで投稿しますか？")) return;
+    } else if (!window.confirm("即時投稿を実行しますか？")) {
+      return;
+    }
+
+    setPostingXId(post.scheduledPostId);
+    try {
+      const payload = { 
+        scheduledPostId: post.scheduledPostId,
+        sk: post.sk,  // Include full SK for correct DB lookup
+        accountId: post.accountId,
+        content: post.content,
+        text: post.content  // also send as text for compatibility
+      };
+      console.log('[handleManualPostX] sending payload:', payload);
+      
+      const resp = await fetch('/api/x/tweet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(payload),
+      });
+      const data = await resp.json().catch(() => ({}));
+
+      if (!resp.ok || !data?.ok) {
+        alert(`即時投稿に失敗しました: ${data?.error || resp.statusText}`);
+        return;
+      }
+
+      // UI を更新（投稿済みに変更）
+      setScheduledPostsX(prev =>
+        prev.map(p =>
+          p.scheduledPostId === post.scheduledPostId
+            ? { 
+                ...p, 
+                postedAt: data.post?.postedAt || Math.floor(Date.now() / 1000), 
+                postId: data.post?.postId,
+                status: data.post?.status || 'posted'
+              }
+            : p
+        )
+      );
+
+      alert(`✅ 即時投稿に成功しました\n投稿ID: ${data.post?.postId || '—'}`);
+    } catch (e: any) {
+      alert(`即時投稿に失敗しました: ${e.message}`);
+    } finally {
+      setPostingXId('');
     }
   };
 
@@ -187,7 +251,7 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
     }
   };
 
-  const handleImageSelect = (ev: React.ChangeEvent<HTMLInputElement>) => {
+  const handleMediaSelect = (ev: React.ChangeEvent<HTMLInputElement>) => {
     const files = ev.target.files ? Array.from(ev.target.files) : [];
     setImages(files);
   };
@@ -399,49 +463,64 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
         <textarea className="w-full border rounded p-2 min-h-[300px] bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100" value={content} onChange={(e) => setContent(e.target.value)} placeholder="投稿本文を入力（改行可）"></textarea>
         <div className="flex items-center justify-between mt-2">
           <div className="flex items-center gap-2">
-            <label className="bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-100 px-3 py-1 rounded cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
-              画像（最大4枚）
-              <input type="file" accept="image/*" multiple onChange={handleImageSelect} className="hidden" />
-            </label>
+            <input 
+              type="file" 
+              accept="image/*,video/*" 
+              multiple 
+              onChange={handleMediaSelect} 
+              id="media-input"
+              className="hidden" 
+            />
             {images.length > 0 && (
               <span className="text-sm text-blue-600 dark:text-blue-400 font-medium">
                 {images.length}個選択
               </span>
             )}
           </div>
-            <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2">
             <div className={`text-sm ${String(content || "").length > 140 ? 'text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-gray-300'}`}>文字数: {String(content || "").length}</div>
             <button className="bg-green-500 dark:bg-green-600 text-white px-4 py-2 rounded text-sm font-medium hover:bg-green-600 dark:hover:bg-green-700 transition-colors disabled:opacity-60" onClick={handleSave} disabled={loading}>{loading ? "登録中..." : "登録"}</button>
           </div>
         </div>
 
-        {/* Image preview */}
+        {/* Media preview (images and videos) */}
         {images.length > 0 && (
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {images.map((file, idx) => (
-              <div key={idx} className="relative group">
-                <img
-                  src={URL.createObjectURL(file)}
-                  alt={`preview ${idx}`}
-                  className="w-full h-24 object-cover rounded border border-gray-300 dark:border-gray-600"
-                />
-                <button
-                  onClick={() => setImages((prev) => prev.filter((_, i) => i !== idx))}
-                  className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-xs font-bold"
-                  type="button"
-                >
-                  ×
-                </button>
-                <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs p-1 rounded-b text-center truncate">
-                  {file.name}
+            {images.map((file, idx) => {
+              const isVideo = file.type.startsWith("video/");
+              return (
+                <div key={idx} className="relative group">
+                  {isVideo ? (
+                    <video
+                      src={URL.createObjectURL(file)}
+                      className="w-full h-24 object-cover rounded border border-gray-300 dark:border-gray-600 bg-black"
+                    />
+                  ) : (
+                    <img
+                      src={URL.createObjectURL(file)}
+                      alt={`preview ${idx}`}
+                      className="w-full h-24 object-cover rounded border border-gray-300 dark:border-gray-600"
+                    />
+                  )}
+                  <button
+                    onClick={() => setImages((prev) => prev.filter((_, i) => i !== idx))}
+                    className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-xs font-bold"
+                    type="button"
+                  >
+                    ×
+                  </button>
+                  <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs p-1 rounded-b text-center truncate">
+                    {isVideo ? "🎬 " : "🖼️ "}{file.name}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
-        {/* Drag and drop zone */}
+        {/* Drag and drop zone - clickable */}
         <div
+          onClick={() => document.getElementById('media-input')?.click()}
           onDragOver={(e) => {
             e.preventDefault();
             e.currentTarget.classList.add("bg-blue-50", "dark:bg-blue-900/20", "border-blue-400");
@@ -453,16 +532,17 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
             e.preventDefault();
             e.currentTarget.classList.remove("bg-blue-50", "dark:bg-blue-900/20", "border-blue-400");
             const files = e.dataTransfer.files ? Array.from(e.dataTransfer.files) : [];
-            const imageFiles = files.filter((f) => f.type.startsWith("image/"));
-            if (imageFiles.length > 0) {
-              const combined = [...images, ...imageFiles].slice(0, 4);
+            // Support both images and videos
+            const mediaFiles = files.filter((f) => f.type.startsWith("image/") || f.type.startsWith("video/"));
+            if (mediaFiles.length > 0) {
+              const combined = [...images, ...mediaFiles].slice(0, 4);
               setImages(combined);
             }
           }}
-          className="mt-3 border-2 border-dashed border-gray-300 dark:border-gray-600 rounded p-4 text-center transition-colors"
+          className="mt-3 border-2 border-dashed border-gray-300 dark:border-gray-600 rounded p-4 text-center transition-colors cursor-pointer hover:border-gray-400 dark:hover:border-gray-500 hover:bg-gray-50 dark:hover:bg-gray-800/50"
         >
           <p className="text-sm text-gray-500 dark:text-gray-400">
-            画像をドラッグ&ドロップするか、上のボタンをクリック
+            画像・動画をドラッグ&ドロップするか、ここをクリック（最大4個）
           </p>
         </div>
       </div>
@@ -655,6 +735,7 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
                     <th className="border p-2" style={{ width: 520 }}>本文テキスト</th>
                     <th className="border p-2" style={{ width: 160 }}>投稿日時</th>
                     <th className="border p-2" style={{ width: 160 }}>投稿ID</th>
+                    <th className="border p-2" style={{ width: 120 }}>操作</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -735,9 +816,24 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
                           <a href={`https://x.com/${encodeURIComponent(p.accountId)}/status/${encodeURIComponent(p.postId)}`} target="_blank" rel="noreferrer" className="text-blue-600 dark:text-blue-400 underline">{String(p.postId).slice(0,30)}</a>
                         ) : ''}
                       </td>
+                      <td className="px-2 py-1">
+                        {!p.postedAt && (
+                          <button
+                            className={`text-white px-2 py-1 rounded text-xs ${
+                              postingXId === p.scheduledPostId
+                                ? 'bg-green-300 cursor-not-allowed'
+                                : 'bg-green-500 hover:bg-green-600'
+                            }`}
+                            onClick={() => handleManualPostX(p)}
+                            disabled={postingXId === p.scheduledPostId}
+                          >
+                            {postingXId === p.scheduledPostId ? '実行中…' : '即時投稿'}
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   ))}
-                  {scheduledPostsX.length === 0 && <tr><td colSpan={5} className="p-4 text-center text-gray-500 dark:text-gray-400">データがありません</td></tr>}
+                  {scheduledPostsX.length === 0 && <tr><td colSpan={6} className="p-4 text-center text-gray-500 dark:text-gray-400">データがありません</td></tr>}
                 </tbody>
               </table>
             </div>

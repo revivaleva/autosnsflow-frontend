@@ -2,6 +2,8 @@ import { createDynamoClient } from '@/lib/ddb';
 import { PutItemCommand, QueryCommand, UpdateItemCommand, GetItemCommand, DeleteItemCommand } from '@aws-sdk/client-dynamodb';
 import { S3Client, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { streamToBuffer } from '@aws-sdk/util-stream-node';
+import OAuth from 'oauth-1.0a';
+import crypto from 'crypto';
 
 const ddb = createDynamoClient();
 const TBL_X_SCHEDULED = process.env.TBL_X_SCHEDULED || 'XScheduledPosts';
@@ -28,32 +30,303 @@ async function getMediaFromS3(s3Url: string): Promise<Buffer | null> {
   }
 }
 
-// Helper: Upload media to X and get media_id
+// Helper: Upload video to X v2 using chunked upload (Initialize -> Append -> Finalize)
+// Follows X API v2 video upload specification with proper endpoints
+async function uploadVideoToX(accessToken: string, mediaBuffer: Buffer): Promise<string | null> {
+  try {
+    const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
+
+    console.info('[x-auto] uploading video with chunked upload', { size: mediaBuffer.length, chunks: Math.ceil(mediaBuffer.length / CHUNK_SIZE) });
+
+    // Step 1: Initialize - Create upload session with JSON body
+    // X API v2 spec: POST /2/media/upload/initialize
+    const initBody = {
+      media_category: 'tweet_video',
+      media_type: 'video/mp4',
+      total_bytes: mediaBuffer.length,
+      shared: false
+    };
+
+    console.info('[x-auto] video Initialize request', { 
+      url: 'https://api.x.com/2/media/upload/initialize',
+      body: initBody
+    });
+
+    const initRes = await fetch('https://api.x.com/2/media/upload/initialize', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(initBody),
+    });
+
+    const initData = await initRes.json().catch(() => ({})) as any;
+    
+    // X API v2 returns { data: { id: "..." } }
+    const mediaId = initData?.data?.id;
+    
+    if (!initRes.ok || !mediaId) {
+      console.error('[x-auto] video Initialize failed', { 
+        status: initRes.status,
+        title: initData?.title,
+        detail: initData?.detail,
+        errors: initData?.errors,
+        responseBody: initData
+      });
+      return null;
+    }
+
+    console.info('[x-auto] video upload session initialized', { mediaId });
+
+    // Step 2: Append - Send video data in chunks
+    // X API v2 spec: POST /2/media/upload/{id}/append with multipart/form-data
+    let totalSent = 0;
+    for (let i = 0; i < mediaBuffer.length; i += CHUNK_SIZE) {
+      const chunk = mediaBuffer.slice(i, i + CHUNK_SIZE);
+      const chunkIndex = Math.floor(i / CHUNK_SIZE);
+
+      console.info('[x-auto] uploading chunk', { chunkIndex, size: chunk.length, totalSent });
+
+      const appendFormData = new FormData();
+      const blob = new Blob([chunk], { type: 'video/mp4' });
+      appendFormData.append('media', blob, 'video.mp4');
+      appendFormData.append('segment_index', String(chunkIndex));
+
+      const appendRes = await fetch(`https://api.x.com/2/media/upload/${mediaId}/append`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          // FormData will set Content-Type with boundary
+        },
+        body: appendFormData as any,
+      });
+
+      if (!appendRes.ok) {
+        const errJson = await appendRes.json().catch(() => ({})) as any;
+        console.error('[x-auto] chunk upload failed', { status: appendRes.status, chunk: chunkIndex, errors: errJson?.errors });
+        return null;
+      }
+
+      totalSent += chunk.length;
+    }
+
+    // Step 3: Finalize - Complete upload
+    // X API v2 spec: POST /2/media/upload/{id}/finalize (no body)
+    console.info('[x-auto] finalizing video upload', { mediaId });
+
+    const finalizeRes = await fetch(`https://api.x.com/2/media/upload/${mediaId}/finalize`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+      },
+    });
+
+    const finalizeData = await finalizeRes.json().catch(() => ({})) as any;
+
+    if (!finalizeRes.ok) {
+      console.error('[x-auto] video Finalize failed', { status: finalizeRes.status, errors: finalizeData?.errors });
+      return null;
+    }
+
+    const processingState = finalizeData?.data?.processing_info?.state || 'succeeded';
+    console.info('[x-auto] video Finalize completed', { 
+      mediaId,
+      processingState
+    });
+
+    // If processing is pending or in_progress, wait for it to complete
+    if (processingState === 'pending' || processingState === 'in_progress') {
+      console.info('[x-auto] video encoding in progress, waiting for processing...', { mediaId, initialState: processingState });
+      
+      const checkAfterSecs = finalizeData?.data?.processing_info?.check_after_secs || 5;
+      const success = await waitForVideoProcessing(accessToken, mediaId, processingState, checkAfterSecs);
+      
+      if (!success) {
+        console.error('[x-auto] video processing failed or timeout', { mediaId });
+        return null;
+      }
+    } else if (processingState === 'failed') {
+      console.error('[x-auto] video processing failed', { mediaId });
+      return null;
+    }
+
+    console.info('[x-auto] video uploaded and processed successfully', { mediaId });
+    
+    return String(mediaId);
+
+  } catch (e: any) {
+    console.error('[x-auto] video chunked upload failed:', String(e));
+    return null;
+  }
+}
+
+// Helper: Get media processing status
+async function getMediaStatus(accessToken: string, mediaId: string): Promise<{ state: string; checkAfterSecs: number } | null> {
+  try {
+    const url = new URL('https://api.x.com/2/media/upload');
+    url.searchParams.set('command', 'STATUS');
+    url.searchParams.set('media_id', mediaId);
+
+    const res = await fetch(url.toString(), {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+      },
+    });
+
+    const json = await res.json().catch(() => ({})) as any;
+    if (!res.ok) {
+      console.error('[x-auto] STATUS request failed', { status: res.status, errors: json?.errors });
+      return null;
+    }
+
+    const processingInfo = json?.data?.processing_info;
+    const state = processingInfo?.state || 'succeeded';
+    const checkAfterSecs = processingInfo?.check_after_secs || 5;
+
+    return { state, checkAfterSecs };
+  } catch (e: any) {
+    console.error('[x-auto] STATUS request error:', String(e));
+    return null;
+  }
+}
+
+// Helper: Wait for video processing to complete (poll STATUS endpoint)
+async function waitForVideoProcessing(
+  accessToken: string,
+  mediaId: string,
+  initialState: string,
+  initialCheckAfter: number
+): Promise<boolean> {
+  let state = initialState;
+  let checkAfterSecs = initialCheckAfter;
+  let attempts = 0;
+  const MAX_ATTEMPTS = 30; // Max 30 attempts (roughly 2-3 minutes depending on check_after_secs)
+  const MAX_WAIT_TIME = 180000; // 3 minutes max wait
+  const startTime = Date.now();
+
+  while (state === 'pending' || state === 'in_progress') {
+    attempts++;
+    
+    if (attempts > MAX_ATTEMPTS || (Date.now() - startTime) > MAX_WAIT_TIME) {
+      console.error('[x-auto] video processing timeout', { 
+        mediaId, 
+        attempts, 
+        finalState: state,
+        elapsedMs: Date.now() - startTime
+      });
+      return false;
+    }
+
+    console.info('[x-auto] waiting before STATUS check', { 
+      mediaId, 
+      state, 
+      checkAfterSecs, 
+      attempts 
+    });
+
+    // Wait for the recommended check_after_secs
+    await new Promise(resolve => setTimeout(resolve, checkAfterSecs * 1000));
+
+    const status = await getMediaStatus(accessToken, mediaId);
+    if (!status) {
+      console.warn('[x-auto] STATUS check returned null, retrying...', { attempts });
+      checkAfterSecs = 5; // Fallback to 5 seconds
+      continue;
+    }
+
+    state = status.state;
+    checkAfterSecs = status.checkAfterSecs;
+
+    console.info('[x-auto] STATUS check result', { 
+      mediaId, 
+      state, 
+      checkAfterSecs, 
+      attempts 
+    });
+
+    if (state === 'failed') {
+      console.error('[x-auto] video processing failed', { mediaId });
+      return false;
+    }
+
+    if (state === 'succeeded') {
+      console.info('[x-auto] video processing succeeded', { 
+        mediaId, 
+        attemptsNeeded: attempts 
+      });
+      return true;
+    }
+  }
+
+  // Should not reach here, but if state is already succeeded, return true
+  return state === 'succeeded';
+}
+
+// Helper: Upload image to X and get media_id (v2 API with multipart/form-data)
+// Uses X API v2 /2/media/upload endpoint with Bearer token authentication
+// Images only - videos use uploadVideoToX instead
 async function uploadMediaToX(accessToken: string, mediaBuffer: Buffer, mediaType: string): Promise<string | null> {
   try {
+    console.info('[x-auto] uploading image via v2 API:', { 
+      mediaSize: mediaBuffer.length,
+      mediaType
+    });
+
+    // Create FormData and append media file + metadata
     const formData = new FormData();
     const blob = new Blob([mediaBuffer], { type: mediaType });
     formData.append('media', blob);
+    formData.append('media_type', mediaType);
+    formData.append('media_category', 'tweet_image'); // Images only
 
-    const uploadRes = await fetch('https://upload.twitter.com/1.1/media/upload.json', {
+    const uploadRes = await fetch('https://api.x.com/2/media/upload', {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${accessToken}` },
+      headers: { 
+        'Authorization': `Bearer ${accessToken}`,
+        // Note: Do NOT set Content-Type manually; fetch/form-data handles it
+      },
       body: formData as any,
     });
 
+    const responseText = await uploadRes.text();
+    console.info('[x-auto] media upload v2 response:', { 
+      status: uploadRes.status,
+      statusText: uploadRes.statusText,
+      bodyLength: responseText.length
+    });
+
     if (!uploadRes.ok) {
-      throw new Error(`Media upload failed: ${uploadRes.status} ${await uploadRes.text()}`);
+      console.error('[x-auto] media upload v2 failed response:', responseText.slice(0, 500));
+      throw new Error(`Media upload failed: ${uploadRes.status} ${responseText.slice(0, 200)}`);
     }
 
-    const uploadData = await uploadRes.json() as any;
-    const mediaId = uploadData?.media_id_string || uploadData?.media_id;
+    let uploadData: any;
+    try {
+      uploadData = JSON.parse(responseText);
+    } catch (e) {
+      console.error('[x-auto] failed to parse v2 response as JSON:', responseText.slice(0, 200));
+      throw new Error('Invalid JSON response from media upload v2');
+    }
+
+    // Check for errors in response
+    if (uploadData?.errors) {
+      console.error('[x-auto] X API v2 returned errors:', uploadData.errors);
+      throw new Error(`X API v2 error: ${JSON.stringify(uploadData.errors)}`);
+    }
+
+    // Extract media_id from v2 response (prioritize data.id per X v2 API spec)
+    const mediaId = uploadData?.data?.id || uploadData?.media_id_string || uploadData?.media_id;
     if (!mediaId) {
-      throw new Error('No media_id in response');
+      console.error('[x-auto] no media_id in v2 response:', uploadData);
+      throw new Error('No media_id in v2 response');
     }
 
+    console.info('[x-auto] media uploaded successfully via v2:', { mediaId, mediaType, mediaKey: uploadData?.media_key });
     return String(mediaId);
   } catch (e: any) {
-    console.error('[x-auto] media upload to X failed:', e?.message || e);
+    console.error('[x-auto] media upload to X v2 failed:', { err: e?.message || String(e) });
     return null;
   }
 }
@@ -74,28 +347,35 @@ async function deleteMediaFromS3(s3Url: string): Promise<void> {
 }
 
 // Main posting function with media support
+// Note: Requires clientSecret for OAuth 1.0a media uploads
 export async function postToX({ 
   accessToken, 
   text,
   mediaUrls = [],
+  clientSecret = '',
+  accessTokenSecret = '',
 }: { 
   accessToken: string; 
   text: string;
   mediaUrls?: string[];
+  clientSecret?: string;
+  accessTokenSecret?: string;
 }) {
   const mediaIds: string[] = [];
 
   // Upload media files to X if provided
   if (Array.isArray(mediaUrls) && mediaUrls.length > 0) {
+    console.info('[x-auto] attempting to upload', mediaUrls.length, 'media files');
     for (const mediaUrl of mediaUrls.slice(0, 4)) { // X API max 4 media per tweet
       try {
+        console.info('[x-auto] processing media URL:', mediaUrl);
         const mediaBuffer = await getMediaFromS3(mediaUrl);
         if (!mediaBuffer) {
           console.warn('[x-auto] skipping invalid media URL:', mediaUrl);
           continue;
         }
 
-        // Determine media type from S3 URL
+        // Determine media type and category from S3 URL
         const ext = mediaUrl.split('.').pop()?.toLowerCase() || 'jpg';
         const mediaTypeMap: Record<string, string> = {
           jpg: 'image/jpeg',
@@ -103,18 +383,41 @@ export async function postToX({
           png: 'image/png',
           gif: 'image/gif',
           webp: 'image/webp',
+          mp4: 'video/mp4',
+          mov: 'video/quicktime',
+          avi: 'video/x-msvideo',
+          webm: 'video/webm',
         };
         const mediaType = mediaTypeMap[ext] || 'image/jpeg';
-
-        const mediaId = await uploadMediaToX(accessToken, mediaBuffer, mediaType);
+        const isVideo = ['mp4', 'mov', 'avi', 'webm'].includes(ext);
+        
+        let mediaId: string | null = null;
+        
+        if (isVideo) {
+          // Use chunked upload for videos
+          console.info('[x-auto] uploading video', { mediaUrl, size: mediaBuffer.length, mediaType });
+          mediaId = await uploadVideoToX(accessToken, mediaBuffer);
+        } else {
+          // Use simple multipart upload for images
+          console.info('[x-auto] uploading image', { mediaUrl, size: mediaBuffer.length, mediaType });
+          mediaId = await uploadMediaToX(accessToken, mediaBuffer, mediaType);
+        }
+        
         if (mediaId) {
           mediaIds.push(mediaId);
-          console.info('[x-auto] media uploaded to X:', { mediaUrl, mediaId });
+          console.info('[x-auto] media uploaded to X:', { mediaUrl, mediaId, isVideo });
+        } else {
+          console.warn('[x-auto] media upload returned null:', mediaUrl);
         }
       } catch (e: any) {
-        console.error('[x-auto] error uploading media:', e?.message || e);
+        console.error('[x-auto] error uploading media:', { mediaUrl, err: e?.message || String(e) });
       }
     }
+  }
+  
+  // If media upload failed but we have URLs, log warning
+  if (mediaUrls.length > 0 && mediaIds.length === 0) {
+    console.warn('[x-auto] WARNING: all media uploads failed, posting text only');
   }
 
   // Post to X with or without media
