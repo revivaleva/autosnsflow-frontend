@@ -272,13 +272,48 @@ async function uploadMediaToX(accessToken: string, mediaBuffer: Buffer, mediaTyp
       mediaType
     });
 
-    // Create FormData and append media file + metadata
-    const formData = new FormData();
-    const blob = new Blob([mediaBuffer], { type: mediaType });
-    formData.append('media', blob);
-    formData.append('media_type', mediaType);
-    formData.append('media_category', 'tweet_image'); // Images only
+    // Check if FormData and Blob are available
+    let formData: any;
+    try {
+      if (typeof FormData === 'undefined') {
+        console.error('[x-auto] FormData is not defined in this environment');
+        throw new Error('FormData is not available in Lambda runtime');
+      }
+      formData = new FormData();
+      console.info('[x-auto] FormData created successfully');
+    } catch (e: any) {
+      console.error('[x-auto] FormData creation failed:', { 
+        error: e?.message || String(e),
+        stack: e?.stack,
+        formDataAvailable: typeof FormData !== 'undefined',
+        blobAvailable: typeof Blob !== 'undefined'
+      });
+      throw e;
+    }
 
+    // Create Blob and append to FormData
+    try {
+      if (typeof Blob === 'undefined') {
+        console.error('[x-auto] Blob is not defined in this environment');
+        throw new Error('Blob is not available in Lambda runtime');
+      }
+      const blob = new Blob([mediaBuffer], { type: mediaType });
+      console.info('[x-auto] Blob created successfully', { blobSize: blob.size, blobType: blob.type });
+      formData.append('media', blob);
+      formData.append('media_type', mediaType);
+      formData.append('media_category', 'tweet_image'); // Images only
+      console.info('[x-auto] FormData fields appended successfully');
+    } catch (e: any) {
+      console.error('[x-auto] Blob creation or FormData append failed:', { 
+        error: e?.message || String(e),
+        stack: e?.stack,
+        mediaBufferLength: mediaBuffer.length,
+        mediaType
+      });
+      throw e;
+    }
+
+    console.info('[x-auto] sending media upload request to X API v2');
     const uploadRes = await fetch('https://api.x.com/2/media/upload', {
       method: 'POST',
       headers: { 
@@ -292,39 +327,69 @@ async function uploadMediaToX(accessToken: string, mediaBuffer: Buffer, mediaTyp
     console.info('[x-auto] media upload v2 response:', { 
       status: uploadRes.status,
       statusText: uploadRes.statusText,
-      bodyLength: responseText.length
+      bodyLength: responseText.length,
+      responsePreview: responseText.slice(0, 200)
     });
 
     if (!uploadRes.ok) {
-      console.error('[x-auto] media upload v2 failed response:', responseText.slice(0, 500));
+      console.error('[x-auto] media upload v2 failed response:', {
+        status: uploadRes.status,
+        statusText: uploadRes.statusText,
+        responseBody: responseText.slice(0, 1000),
+        headers: Object.fromEntries(uploadRes.headers.entries())
+      });
       throw new Error(`Media upload failed: ${uploadRes.status} ${responseText.slice(0, 200)}`);
     }
 
     let uploadData: any;
     try {
       uploadData = JSON.parse(responseText);
+      console.info('[x-auto] parsed upload response JSON successfully');
     } catch (e) {
-      console.error('[x-auto] failed to parse v2 response as JSON:', responseText.slice(0, 200));
+      console.error('[x-auto] failed to parse v2 response as JSON:', {
+        responseText: responseText.slice(0, 500),
+        error: e instanceof Error ? e.message : String(e),
+        stack: e instanceof Error ? e.stack : undefined
+      });
       throw new Error('Invalid JSON response from media upload v2');
     }
 
     // Check for errors in response
     if (uploadData?.errors) {
-      console.error('[x-auto] X API v2 returned errors:', uploadData.errors);
+      console.error('[x-auto] X API v2 returned errors:', {
+        errors: uploadData.errors,
+        fullResponse: uploadData
+      });
       throw new Error(`X API v2 error: ${JSON.stringify(uploadData.errors)}`);
     }
 
     // Extract media_id from v2 response (prioritize data.id per X v2 API spec)
     const mediaId = uploadData?.data?.id || uploadData?.media_id_string || uploadData?.media_id;
     if (!mediaId) {
-      console.error('[x-auto] no media_id in v2 response:', uploadData);
+      console.error('[x-auto] no media_id in v2 response:', {
+        fullResponse: uploadData,
+        dataId: uploadData?.data?.id,
+        mediaIdString: uploadData?.media_id_string,
+        mediaId: uploadData?.media_id
+      });
       throw new Error('No media_id in v2 response');
     }
 
-    console.info('[x-auto] media uploaded successfully via v2:', { mediaId, mediaType, mediaKey: uploadData?.media_key });
+    console.info('[x-auto] media uploaded successfully via v2:', { 
+      mediaId, 
+      mediaType, 
+      mediaKey: uploadData?.media_key,
+      fullResponse: uploadData
+    });
     return String(mediaId);
   } catch (e: any) {
-    console.error('[x-auto] media upload to X v2 failed:', { err: e?.message || String(e) });
+    console.error('[x-auto] media upload to X v2 failed:', { 
+      err: e?.message || String(e),
+      stack: e?.stack,
+      name: e?.name,
+      mediaType,
+      mediaBufferLength: mediaBuffer?.length
+    });
     return null;
   }
 }
@@ -920,6 +985,7 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
 
 // Consume one PostPool item for this user/account and post it to X.
 export async function postFromPoolForAccount(userId: string, acct: any, opts: { dryRun?: boolean, lockTtlSec?: number } = {}) {
+  console.info('[x-auto] postFromPoolForAccount called', { userId, accountId: acct?.accountId, poolType: acct?.type, dryRun: !!opts.dryRun });
   const TBL_POOL = process.env.TBL_POST_POOL || 'PostPool';
   const now = Math.floor(Date.now() / 1000);
   const lockTtl = Number(opts.lockTtlSec || 600);
@@ -929,6 +995,7 @@ export async function postFromPoolForAccount(userId: string, acct: any, opts: { 
 
   // 1) Query pool items for this user and poolType
   try {
+    console.info('[x-auto] querying PostPool', { userId, poolType, TBL_POOL });
     const q = await ddb.send(new QueryCommand({
       TableName: TBL_POOL,
       KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
@@ -936,6 +1003,7 @@ export async function postFromPoolForAccount(userId: string, acct: any, opts: { 
       Limit: 50,
     }));
     const items: any[] = (q as any).Items || [];
+    console.info('[x-auto] PostPool query result', { userId, poolType, itemsCount: items.length });
     // filter by poolType
     const candidates = items.map(it => ({
       pk: it.PK,
@@ -943,10 +1011,14 @@ export async function postFromPoolForAccount(userId: string, acct: any, opts: { 
       poolId: it.poolId?.S || (it.SK?.S || '').replace(/^POOL#/, ''),
       type: it.type?.S || 'general',
       content: it.content?.S || '',
+      images: it.images?.S ? JSON.parse(it.images.S) : [],
       createdAt: it.createdAt?.N ? Number(it.createdAt.N) : 0,
     })).filter(x => (x.type || 'general') === poolType);
 
+    console.info('[x-auto] PostPool candidates after filtering', { userId, poolType, candidatesCount: candidates.length, candidates: candidates.map(c => ({ poolId: c.poolId, hasContent: !!c.content, imagesCount: (c.images || []).length })) });
+
     if (!candidates.length) {
+      console.warn('[x-auto] no pool items found for user/poolType', { userId, poolType });
       return { posted: 0, debug: { reason: 'no_pool_items' } };
     }
 
@@ -1000,18 +1072,25 @@ export async function postFromPoolForAccount(userId: string, acct: any, opts: { 
 
     // 4) perform post using acct tokens (try refresh on failure)
     try {
+      console.info('[x-auto] preparing to post to X', { userId, accountId, contentLength: (cand.content || '').length, mediaUrlsCount: (claimedFromPool.images || []).length, mediaUrls: claimedFromPool.images });
       let accessToken = acct.oauthAccessToken || acct.accessToken || '';
       let resp;
       const mediaUrls = (claimedFromPool.images || []) as string[];
+      console.info('[x-auto] calling postToX', { userId, accountId, hasAccessToken: !!accessToken, textLength: (cand.content || '').length, mediaUrlsCount: mediaUrls.length });
       try {
         resp = await postToX({ accessToken, text: cand.content || '', mediaUrls });
+        console.info('[x-auto] postToX succeeded', { userId, accountId, response: resp });
       } catch (postErr:any) {
+        console.error('[x-auto] postToX failed, attempting token refresh', { userId, accountId, error: postErr?.message || String(postErr), stack: postErr?.stack });
         // try refresh
         const newToken = await refreshXAccountToken(userId, accountId);
         if (newToken) {
+          console.info('[x-auto] token refreshed, retrying postToX', { userId, accountId });
           accessToken = newToken;
           resp = await postToX({ accessToken, text: cand.content || '', mediaUrls });
+          console.info('[x-auto] postToX succeeded after token refresh', { userId, accountId, response: resp });
         } else {
+          console.error('[x-auto] token refresh failed, throwing original error', { userId, accountId });
           throw postErr;
         }
       }
@@ -1052,9 +1131,17 @@ export async function postFromPoolForAccount(userId: string, acct: any, opts: { 
       try { await postDiscordMaster(`**[X POST FROM POOL]** user=${userId} account=${accountId} poolId=${cand.poolId} postId=${postId}\n${String(cand.content || '').slice(0,200)}`); } catch(_) {}
 
       debug.posted = 1;
+      console.info('[x-auto] postFromPoolForAccount succeeded', { userId, accountId, postId, poolId: cand.poolId });
       return { posted: 1, debug, postId };
     } catch (e:any) {
-      debug.errors.push({ err: String(e) });
+      console.error('[x-auto] postFromPoolForAccount posting failed', { 
+        userId, 
+        accountId, 
+        error: e?.message || String(e),
+        stack: e?.stack,
+        name: e?.name
+      });
+      debug.errors.push({ err: String(e), stack: e?.stack, name: e?.name });
       // Do not create/update XScheduledPosts here on failure; 5min reservation updates are handled by the calling flow.
       // release lock
       try {
@@ -1067,7 +1154,14 @@ export async function postFromPoolForAccount(userId: string, acct: any, opts: { 
       return { posted: 0, debug };
     }
   } catch (e:any) {
-    return { posted: 0, debug: { err: String(e) } };
+    console.error('[x-auto] postFromPoolForAccount outer catch failed', { 
+      userId, 
+      accountId, 
+      error: e?.message || String(e),
+      stack: e?.stack,
+      name: e?.name
+    });
+    return { posted: 0, debug: { err: String(e), stack: e?.stack, name: e?.name } };
   }
 }
 

@@ -184,7 +184,7 @@ export default async function handler(
                 Key: s3Key,
                 Body: buffer,
                 ContentType: file.type,
-                ServerSideEncryption: "AES256",
+                // ServerSideEncryption removed: bucket default encryption will handle it
                 Metadata: {
                   "user-id": userId,
                   "uploaded-at": new Date().toISOString(),

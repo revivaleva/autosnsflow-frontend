@@ -123,11 +123,12 @@ export default async function handler(
 
     // Generate presigned PUT URL
     const s3Client = await getS3Client();
+    const region = getConfigValue("S3_MEDIA_REGION") || env.S3_MEDIA_REGION || "ap-northeast-1";
     const command = new PutObjectCommand({
       Bucket: bucket,
       Key: s3Key,
       ContentType: fileType,
-      ServerSideEncryption: "AES256",
+      // ServerSideEncryption removed: bucket default encryption will handle it
       Metadata: {
         "user-id": userId,
         "uploaded-at": new Date().toISOString(),
@@ -144,6 +145,10 @@ export default async function handler(
         s3Key: s3Key.slice(0, 50),
         fileSize,
         fileType,
+        bucket,
+        region,
+        hasAccessKey: !!env.AUTOSNSFLOW_ACCESS_KEY_ID,
+        hasSecretKey: !!env.AUTOSNSFLOW_SECRET_ACCESS_KEY,
       });
     } catch (_) {}
 
