@@ -1,7 +1,7 @@
 import { createDynamoClient } from '@/lib/ddb';
 import { PutItemCommand, QueryCommand, UpdateItemCommand, GetItemCommand, DeleteItemCommand } from '@aws-sdk/client-dynamodb';
 import { S3Client, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
-import { streamToBuffer } from '@aws-sdk/util-stream-node';
+import { Readable } from 'stream';
 
 const ddb = createDynamoClient();
 const TBL_X_SCHEDULED = process.env.TBL_X_SCHEDULED || 'XScheduledPosts';
@@ -13,6 +13,16 @@ const s3 = new S3Client({ region: AWS_REGION });
 // Helper to safely read DynamoDB string attribute
 const getS = (a: any) => (a && typeof a.S !== 'undefined') ? a.S : undefined;
 
+// Helper: Convert stream to buffer
+async function streamToBuffer(stream: Readable): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  return new Promise((resolve, reject) => {
+    stream.on('data', (chunk) => chunks.push(chunk));
+    stream.on('error', reject);
+    stream.on('end', () => resolve(Buffer.concat(chunks)));
+  });
+}
+
 // Helper: Download media from S3 and convert to multipart data for X API
 async function getMediaFromS3(s3Url: string): Promise<Buffer | null> {
   try {
@@ -22,11 +32,19 @@ async function getMediaFromS3(s3Url: string): Promise<Buffer | null> {
     const bucket = parts[0];
     const key = parts.slice(1).join('/');
     
+    console.info('[x-auto] downloading media from S3', { bucket, key: key.slice(0, 50) });
     const getObjResp = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
-    const buffer = await streamToBuffer(getObjResp.Body as any);
+    
+    if (!getObjResp.Body) {
+      console.error('[x-auto] S3 GetObject returned no body', { bucket, key });
+      return null;
+    }
+    
+    const buffer = await streamToBuffer(getObjResp.Body as Readable);
+    console.info('[x-auto] S3 download successful', { bucket, key: key.slice(0, 50), size: buffer.length });
     return buffer;
   } catch (e: any) {
-    console.error('[x-auto] failed to download media from S3:', e?.message || e);
+    console.error('[x-auto] failed to download media from S3:', { error: e?.message || String(e), stack: e?.stack, s3Url: s3Url.slice(0, 100) });
     return null;
   }
 }
