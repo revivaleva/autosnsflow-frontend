@@ -1008,15 +1008,24 @@ export async function postFromPoolForAccount(userId: string, acct: any, opts: { 
     const items: any[] = (q as any).Items || [];
     console.info('[x-auto] PostPool query result', { userId, poolType, itemsCount: items.length });
     // filter by poolType
-    const candidates = items.map(it => ({
-      pk: it.PK,
-      sk: it.SK,
-      poolId: it.poolId?.S || (it.SK?.S || '').replace(/^POOL#/, ''),
-      type: it.type?.S || 'general',
-      content: it.content?.S || '',
-      images: it.images?.S ? JSON.parse(it.images.S) : [],
-      createdAt: it.createdAt?.N ? Number(it.createdAt.N) : 0,
-    })).filter(x => (x.type || 'general') === poolType);
+    const candidates = items.map(it => {
+      const itemType = getS(it.type) || 'general';
+      return {
+        pk: it.PK,
+        sk: it.SK,
+        poolId: getS(it.poolId) || (getS(it.SK) || '').replace(/^POOL#/, ''),
+        type: itemType,
+        content: getS(it.content) || '',
+        images: getS(it.images) ? JSON.parse(getS(it.images)) : [],
+        createdAt: it.createdAt?.N ? Number(it.createdAt.N) : 0,
+      };
+    }).filter(x => (x.type || 'general') === poolType);
+    
+    console.info('[x-auto] PostPool items type breakdown', { 
+      userId, 
+      poolType, 
+      itemsTypes: items.map(it => ({ poolId: getS(it.poolId) || (getS(it.SK) || '').replace(/^POOL#/, ''), type: getS(it.type) || 'general' }))
+    });
 
     console.info('[x-auto] PostPool candidates after filtering', { userId, poolType, candidatesCount: candidates.length, candidates: candidates.map(c => ({ poolId: c.poolId, hasContent: !!c.content, imagesCount: (c.images || []).length })) });
 
