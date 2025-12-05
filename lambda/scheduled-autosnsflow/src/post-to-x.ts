@@ -10,6 +10,9 @@ const AWS_REGION = process.env.AWS_REGION || 'ap-northeast-1';
 
 const s3 = new S3Client({ region: AWS_REGION });
 
+// Helper to safely read DynamoDB string attribute
+const getS = (a: any) => (a && typeof a.S !== 'undefined') ? a.S : undefined;
+
 // Helper: Download media from S3 and convert to multipart data for X API
 async function getMediaFromS3(s3Url: string): Promise<Buffer | null> {
   try {
