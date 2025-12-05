@@ -1513,6 +1513,30 @@ export const handler = async (event: any = {}) => {
 
   
 
+  // Test job: post from pool for X account (bypasses scheduled reservations)
+  if (job === 'test-post-from-pool' && event?.userId && event?.accountId) {
+    const rawUserId = String(event.userId || '');
+    const userId = rawUserId.replace(/^USER#/, '');
+    const accountId = String(event.accountId || '');
+    try {
+      const xAccounts = await getXAccounts(userId);
+      const xacct = xAccounts.find((a: any) => a.accountId === accountId);
+      if (!xacct) {
+        return { statusCode: 404, body: JSON.stringify({ testInvocation: true, job, userId, accountId, error: 'X account not found' }) };
+      }
+      const xmod = await import('./post-to-x');
+      const result = await xmod.postFromPoolForAccount(userId, xacct, { dryRun: !!event?.dryRun });
+      const testOut = (global as any).__TEST_OUTPUT__ || [];
+      try { (global as any).__TEST_OUTPUT__ = []; } catch(_) {}
+      return { statusCode: 200, body: JSON.stringify({ testInvocation: true, job, userId, accountId, result, testOutput: testOut }) };
+    } catch (e) {
+      console.warn('[TEST] test-post-from-pool failed:', String(e));
+      const testOut = (global as any).__TEST_OUTPUT__ || [];
+      try { (global as any).__TEST_OUTPUT__ = []; } catch(_) {}
+      return { statusCode: 500, body: JSON.stringify({ testInvocation: true, job, userId, accountId, error: String(e), testOutput: testOut }) };
+    }
+  }
+
   // If caller provided a userId for hourly/5min jobs, run only that user's flow
   // and return a test-oriented response including which accounts were targeted.
   if (event?.userId && (job === 'hourly' || job === 'every-5min')) {
