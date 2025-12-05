@@ -1050,44 +1050,73 @@ export async function postFromPoolForAccount(userId: string, acct: any, opts: { 
       return { posted: 0, debug: { dryRun: true, poolId: cand.poolId } };
     }
 
-    // 2) Atomically claim (delete) a pool item for this candidate list.
-    let claimedFromPool: any = null;
-    console.info('[x-auto] attempting to claim pool item', { userId, accountId, candidatesCount: candidates.length, candidatePoolIds: candidates.map(c => c.poolId) });
-    for (const candidate of candidates) {
-      try {
-        const pk = String(candidate.pk.S);
-        const sk = String(candidate.sk.S);
-        console.info('[x-auto] attempting DeleteItemCommand', { userId, accountId, poolId: candidate.poolId, pk, sk });
-        const delRes: any = await ddb.send(new DeleteItemCommand({
-          TableName: TBL_POOL,
-          Key: { PK: { S: pk }, SK: { S: sk } },
-          ConditionExpression: "attribute_exists(PK) AND attribute_exists(SK)",
-          ReturnValues: 'ALL_OLD',
-        }));
-        const attrs = delRes && delRes.Attributes ? delRes.Attributes : null;
-        console.info('[x-auto] DeleteItemCommand result', { userId, accountId, poolId: candidate.poolId, hasAttributes: !!attrs });
-        if (attrs) {
-          claimedFromPool = {
-            poolId: candidate.poolId,
-            content: getS(attrs.content) || candidate.content || "",
-            images: attrs.images ? (getS(attrs.images) ? JSON.parse(getS(attrs.images)) : []) : (candidate.images || []),
-          };
-          console.info('[x-auto] pool item claimed successfully', { userId, accountId, poolId: candidate.poolId, contentLength: (claimedFromPool.content || '').length, imagesCount: (claimedFromPool.images || []).length });
-          // set cand to the claimed one for downstream logging/usage
-          Object.assign(cand, candidate);
-          break;
-        }
-      } catch (e:any) {
-        // failed to claim this candidate (race) - try next
-        console.warn('[x-auto] failed to claim pool item', { userId, accountId, poolId: candidate.poolId, error: e?.message || String(e), errorName: e?.name, stack: e?.stack });
-        continue;
-      }
+    // 2) Check reuse setting for this pool type
+    let reuse = false;
+    try {
+      const TBL_USER_TYPE_TIME_SETTINGS = process.env.TBL_USER_TYPE_TIME_SETTINGS || 'UserTypeTimeSettings';
+      const uts = await ddb.send(new GetItemCommand({
+        TableName: TBL_USER_TYPE_TIME_SETTINGS,
+        Key: { user_id: { S: String(userId) }, type: { S: String(poolType) } },
+        ProjectionExpression: 'reuse',
+      }));
+      const uit: any = (uts as any).Item || {};
+      reuse = Boolean(uit.reuse && (uit.reuse.BOOL === true || String(uit.reuse.S) === 'true'));
+      console.info('[x-auto] reuse setting checked', { userId, poolType, reuse });
+    } catch (e: any) {
+      console.warn('[x-auto] failed to check reuse setting, defaulting to false', { userId, poolType, error: e?.message || String(e) });
+      reuse = false;
     }
-    if (!claimedFromPool) {
-      // nobody claimable
-      console.error('[x-auto] no claimable pool item found', { userId, accountId, candidatesCount: candidates.length, triedPoolIds: candidates.map(c => c.poolId) });
-      debug.errors.push({ err: 'no_claimable_pool_item' });
-      return { posted: 0, debug };
+
+    // 3) Get pool item (delete if reuse=false, just read if reuse=true)
+    let claimedFromPool: any = null;
+    if (reuse) {
+      // Reuse mode: pick candidate without deleting
+      console.info('[x-auto] reuse mode: selecting pool item without deleting', { userId, accountId, poolId: cand.poolId });
+      claimedFromPool = {
+        poolId: cand.poolId,
+        content: cand.content || "",
+        images: cand.images || [],
+      };
+      console.info('[x-auto] pool item selected for reuse', { userId, accountId, poolId: cand.poolId, contentLength: (claimedFromPool.content || '').length, imagesCount: (claimedFromPool.images || []).length });
+    } else {
+      // Consume mode: atomically claim (delete) a pool item
+      console.info('[x-auto] consume mode: attempting to claim pool item', { userId, accountId, candidatesCount: candidates.length, candidatePoolIds: candidates.map(c => c.poolId) });
+      for (const candidate of candidates) {
+        try {
+          const pk = String(candidate.pk.S);
+          const sk = String(candidate.sk.S);
+          console.info('[x-auto] attempting DeleteItemCommand', { userId, accountId, poolId: candidate.poolId, pk, sk });
+          const delRes: any = await ddb.send(new DeleteItemCommand({
+            TableName: TBL_POOL,
+            Key: { PK: { S: pk }, SK: { S: sk } },
+            ConditionExpression: "attribute_exists(PK) AND attribute_exists(SK)",
+            ReturnValues: 'ALL_OLD',
+          }));
+          const attrs = delRes && delRes.Attributes ? delRes.Attributes : null;
+          console.info('[x-auto] DeleteItemCommand result', { userId, accountId, poolId: candidate.poolId, hasAttributes: !!attrs });
+          if (attrs) {
+            claimedFromPool = {
+              poolId: candidate.poolId,
+              content: getS(attrs.content) || candidate.content || "",
+              images: attrs.images ? (getS(attrs.images) ? JSON.parse(getS(attrs.images)) : []) : (candidate.images || []),
+            };
+            console.info('[x-auto] pool item claimed successfully', { userId, accountId, poolId: candidate.poolId, contentLength: (claimedFromPool.content || '').length, imagesCount: (claimedFromPool.images || []).length });
+            // set cand to the claimed one for downstream logging/usage
+            Object.assign(cand, candidate);
+            break;
+          }
+        } catch (e:any) {
+          // failed to claim this candidate (race) - try next
+          console.warn('[x-auto] failed to claim pool item', { userId, accountId, poolId: candidate.poolId, error: e?.message || String(e), errorName: e?.name, stack: e?.stack });
+          continue;
+        }
+      }
+      if (!claimedFromPool) {
+        // nobody claimable
+        console.error('[x-auto] no claimable pool item found', { userId, accountId, candidatesCount: candidates.length, triedPoolIds: candidates.map(c => c.poolId) });
+        debug.errors.push({ err: 'no_claimable_pool_item' });
+        return { posted: 0, debug };
+      }
     }
 
     // Note: Do not create new XScheduledPosts records here. 5min flow should update existing scheduled posts only.
