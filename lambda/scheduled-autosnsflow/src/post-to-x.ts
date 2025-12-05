@@ -1031,8 +1031,10 @@ export async function postFromPoolForAccount(userId: string, acct: any, opts: { 
     debug.tried = 1;
 
     // If dryRun requested, do not acquire locks or modify DB — just report the candidate.
-    if (opts.dryRun || (global as any).__TEST_CAPTURE__) {
+    // Note: __TEST_CAPTURE__ is for logging only, not for dry-run behavior
+    if (opts.dryRun) {
       try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'DRYRUN_POST_FROM_POOL', payload: { userId, accountId, poolId: cand.poolId } }); } catch(_) {}
+      console.info('[x-auto] postFromPoolForAccount dryRun mode, skipping actual post', { userId, accountId, poolId: cand.poolId });
       return { posted: 0, debug: { dryRun: true, poolId: cand.poolId } };
     }
 
