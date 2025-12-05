@@ -43,6 +43,8 @@ frontend:
         - echo "AUTOSNSFLOW_SECRET_ACCESS_KEY=$AUTOSNSFLOW_SECRET_ACCESS_KEY" >> .env.production
         - echo "NEXT_PUBLIC_AWS_REGION=$NEXT_PUBLIC_AWS_REGION" >> .env.production
         - echo "MASTER_DISCORD_WEBHOOK=$MASTER_DISCORD_WEBHOOK" >> .env.production
+        - echo "S3_MEDIA_BUCKET=$S3_MEDIA_BUCKET" >> .env.production
+        - echo "S3_MEDIA_REGION=$S3_MEDIA_REGION" >> .env.production
     build:
       commands:
         # [MODIFY] 常にビルドを実行（required-server-files.json生成のため）
@@ -58,6 +60,8 @@ frontend:
           printf "TBL_THREADS_ACCOUNTS=%s\n" "$TBL_THREADS_ACCOUNTS" >> .env.production
           printf "TBL_SETTINGS=%s\n" "$TBL_SETTINGS" >> .env.production
           printf "MASTER_DISCORD_WEBHOOK=%s\n" "$MASTER_DISCORD_WEBHOOK" >> .env.production
+          printf "S3_MEDIA_BUCKET=%s\n" "$S3_MEDIA_BUCKET" >> .env.production
+          printf "S3_MEDIA_REGION=%s\n" "$S3_MEDIA_REGION" >> .env.production
         - NEXT_TELEMETRY_DISABLED=1 npm run build
   artifacts:
     baseDirectory: .next
