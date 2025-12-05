@@ -298,6 +298,11 @@ export default function PostPoolPage({ poolType }: { poolType: "general" | "ero"
             });
 
             if (!uploadResp.ok) {
+              const bodyText = await uploadResp.text().catch(() => "");
+              console.error("[post-pool] S3 upload error", {
+                status: uploadResp.status,
+                body: bodyText,
+              });
               throw new Error(`S3 upload failed: ${uploadResp.status}`);
             }
 
