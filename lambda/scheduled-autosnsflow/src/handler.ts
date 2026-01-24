@@ -4428,6 +4428,7 @@ async function countAllExecutionLogs() {
 
 // Full-table prune helper: iterate all users and run pruneOldScheduledPosts
 // [FIX] 2026-01-24: maxPages上限を追加（コスト暴走防止）
+// [FIX] 2026-01-24: DynamoDB予約語'type'をExpressionAttributeNamesでエスケープ（ValidationException回避）
 async function pruneOldScheduledPostsAll() {
   try {
     // Full-table prune using Scan so we can evaluate scheduledAt/postedAt without per-user queries
@@ -4457,9 +4458,17 @@ async function pruneOldScheduledPostsAll() {
       try { console.warn('[warn] could not scan DeletionQueue, proceeding without exclusions', String(e)); } catch(_) {}
     }
 
+    // [FIX] DynamoDB予約語'type'をエスケープ: ProjectionExpressionで#typeを使用し、ExpressionAttributeNamesでマッピング
+    // これによりValidationException: Invalid ProjectionExpressionエラーを回避
     let pageCount = 0;
     do {
-      const s = await ddb.send(new ScanCommand({ TableName: TBL_SCHEDULED, ProjectionExpression: 'PK,SK,scheduledAt,postedAt,accountId,type', ExclusiveStartKey: lastKey, Limit: 1000 }));
+      const s = await ddb.send(new ScanCommand({ 
+        TableName: TBL_SCHEDULED, 
+        ProjectionExpression: 'PK,SK,scheduledAt,postedAt,accountId,#type', 
+        ExpressionAttributeNames: { '#type': 'type' },
+        ExclusiveStartKey: lastKey, 
+        Limit: 1000 
+      }));
       pageCount++;
       for (const it of (s.Items || [])) {
         try {
