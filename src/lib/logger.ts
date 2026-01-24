@@ -52,6 +52,14 @@ export async function putLog(entry: ExecutionLogEntry) {
     if (typeof entry.deletedCount === 'number') item.deletedCount = { N: String(entry.deletedCount) };
     if (entry.targetId) item.targetId = { S: String(entry.targetId) };
 
+    // Set TTL attr for new logs so DynamoDB TTL can remove them automatically if enabled.
+    const retentionDays = Number(process.env.RETENTION_DAYS || process.env.EXECUTIONLOG_TTL_DAYS || '3') || 3;
+    if (retentionDays > 0) {
+      const nowSec = Math.floor(now.getTime() / 1000);
+      const ttlAt = nowSec + (retentionDays * 24 * 60 * 60);
+      item.ttlAt = { N: String(ttlAt) };
+    }
+
     await ddb.send(new PutItemCommand({ TableName: LOG_TBL, Item: item }));
   } catch (e) {
     // never throw from logger

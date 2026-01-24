@@ -237,7 +237,7 @@ async function resolveExecutionPruneDays(): Promise<number> {
   if (execVal > 0) return execVal;
   const rLogs = Number(config.getConfigValue('RETENTION_DAYS_LOGS') || process.env.RETENTION_DAYS_LOGS || '0') || 0;
   if (rLogs > 0) return rLogs + 1;
-  const base = Number(config.getConfigValue('RETENTION_DAYS') || process.env.RETENTION_DAYS || '7') || 7;
+  const base = Number(config.getConfigValue('RETENTION_DAYS') || process.env.RETENTION_DAYS || '3') || 3;
   return base + 1;
 }
 
@@ -1397,7 +1397,7 @@ async function putLog({
   // Set TTL attr for new logs so DynamoDB TTL can remove them automatically if enabled.
   try { await config.loadConfig(); } catch (_) {}
   try {
-    const retentionDays = Number(config.getConfigValue('RETENTION_DAYS') || process.env.RETENTION_DAYS || '7') || 7;
+    const retentionDays = Number(config.getConfigValue('RETENTION_DAYS') || process.env.RETENTION_DAYS || '3') || 3;
     if (retentionDays > 0) {
       const ttlAt = now + (retentionDays * 24 * 60 * 60);
       item.ttlAt = { N: String(ttlAt) };
@@ -1440,7 +1440,7 @@ const MASTER_DISCORD_WEBHOOK = process.env.MASTER_DISCORD_WEBHOOK || "";
 async function backfillExecutionLogsTTLBatch(maxUpdates = 20) {
   try {
     try { await config.loadConfig(); } catch(_) {}
-    const retentionDays = Number(config.getConfigValue('RETENTION_DAYS') || process.env.RETENTION_DAYS || '7') || 7;
+    const retentionDays = Number(config.getConfigValue('RETENTION_DAYS') || process.env.RETENTION_DAYS || '3') || 3;
     const ttlVal = Math.floor(Date.now() / 1000) + (retentionDays * 24 * 60 * 60);
 
     let lastKey: any = undefined;
@@ -4198,7 +4198,9 @@ async function pruneOldExecutionLogs(userId: any) {
 // 削除候補の件数だけを数える dry-run 用関数（ExecutionLogs）
 async function countPruneExecutionLogs(userId: any) {
   try {
-    const sevenDaysAgo = Math.floor(Date.now() / 1000) - (7 * 24 * 60 * 60);
+    try { await config.loadConfig(); } catch(_) {}
+    const execPruneDays = await resolveExecutionPruneDays();
+    const thresholdSec = Math.floor(Date.now() / 1000) - (execPruneDays * 24 * 60 * 60);
     let lastKey: any = undefined;
     let totalCandidates = 0;
     do {
@@ -4217,7 +4219,7 @@ async function countPruneExecutionLogs(userId: any) {
       for (const it of (q.Items || [])) {
         try {
           const createdAt = Number(it.createdAt?.N || 0);
-          if (createdAt && createdAt <= sevenDaysAgo) totalCandidates++;
+          if (createdAt && createdAt <= thresholdSec) totalCandidates++;
         } catch (_) { /* continue */ }
       }
 
