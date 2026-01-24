@@ -1,11 +1,12 @@
 # /lambda/scheduled-autosnsflow/create-or-update-schedule.sh
 # 【用途】EventBridge のスケジュールを新関数に向けます
 # 使い方:
-#   bash create-or-update-schedule.sh ap-northeast-1 scheduled-autosnsflow "rate(5 minutes)"
+#   bash create-or-update-schedule.sh ap-northeast-1 scheduled-autosnsflow "rate(15 minutes)"
+# ※コスト最適化のため、デフォルトを15分に変更 (2026-01-24)
 
 REGION="${1:-ap-northeast-1}"
 FUNCTION_NAME="${2:-scheduled-autosnsflow}"
-SCHEDULE="${3:-rate(5 minutes)}"
+SCHEDULE="${3:-rate(15 minutes)}"
 RULE_NAME="${FUNCTION_NAME}-rule"
 
 set -euo pipefail
