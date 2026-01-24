@@ -6,9 +6,19 @@ description:
 
 ## ブランチ運用（必読）
 
+### 基本方針
+
+**ローカルでの編集は常に`staging`ブランチで行います。**
+
+リモートへ反映する際の手順：
+1. まず`staging`ブランチにpush
+2. 必要に応じて`lambda`や`main`ブランチにマージ
+
+### ブランチの役割
+
 - **main**：本番。ここへは「明示指示があった時のみ」マージ。直接 push 禁止。
-- **staging**：通常の開発・修正・デバッグはここへ。特段の指示が無い場合は staging。
-- **lambda**：定期実行関連は必ずここへ push。共通部分は staging 経由で反映。
+- **staging**：通常の開発・修正・デバッグはここへ。**ローカルでの編集は常にこのブランチで行う**。特段の指示が無い場合は staging。
+- **lambda**：定期実行関連は必ずここへ push。`staging`からマージしてpushすると自動ビルドが実行される。共通部分は staging 経由で反映。
 
 **追加ルール（staging→lambda ワークフロー）**
 
@@ -191,9 +201,21 @@ description:
 
 ## ブランチ運用（必読）
 
+### 基本方針
+
+**ローカルでの編集は常に`staging`ブランチで行います。**
+
+リモートへ反映する際の手順：
+1. まず`staging`ブランチにpush
+2. 必要に応じて`lambda`や`main`ブランチにマージ
+
+### ブランチの役割
+
 - **main**：本番。ここへは「明示指示があった時のみ」マージ。直接 push 禁止。  
-- **staging**：通常の開発・修正・デバッグはここへ。特段の指示が無い場合は staging。  
-- **lambda**：定期実行（`scheduled` / `auto-post` / `lambda/scheduled-autosnsflow`）関連は必ずここへ push。push で自動ビルド/デプロイが走る。  
+- **staging**：通常の開発・修正・デバッグはここへ。**ローカルでの編集は常にこのブランチで行う**。特段の指示が無い場合は staging。  
+- **lambda**：定期実行（`scheduled` / `auto-post` / `lambda/scheduled-autosnsflow`）関連は必ずここへ push。`staging`からマージしてpushすると自動ビルド/デプロイが走る。  
+
+### 反映の流れ
 
 共通部分（`src/lib/` 配下）は **staging → main → lambda の順に反映**。  
 定期実行専用処理（`lambda/` 配下）は **lambda ブランチ直 push も可**。ただし共通部分を修正する場合は必ず staging を経由する。  
@@ -416,15 +438,26 @@ git -C "\\wsl.localhost\Ubuntu\home\revival\projects\AutoSNSFlow\frontend" <comm
 ステップ実行を徹底。&& 禁止。長い出力はログへ保存して確認。
 
 推奨ワークフロー（commit → staging push）
-git -C "\\wsl.localhost\Ubuntu\home\revival\projects\AutoSNSFlow\frontend" add <files...>
 
-git -C "\\wsl.localhost\Ubuntu\home\revival\projects\AutoSNSFlow\frontend" commit -m "<msg>"
+**ローカルでの編集は常に`staging`ブランチで行います。**
 
-git -C "\\wsl.localhost\Ubuntu\home\revival\projects\AutoSNSFlow\frontend" checkout staging（なければ checkout -b staging）
+```bash
+# stagingブランチで作業（既にstagingブランチにいる場合は不要）
+git checkout staging
 
-git -C "\\wsl.localhost\Ubuntu\home\revival\projects\AutoSNSFlow\frontend" merge --no-edit main
+# 変更をコミット
+git add <files...>
+git commit -m "<msg>"
 
-git -C "\\wsl.localhost\Ubuntu\home\revival\projects\AutoSNSFlow\frontend" push origin staging
+# stagingブランチにpush
+git push origin staging
+
+# 必要に応じてlambdaやmainにマージ
+# lambdaへのマージ例：
+# git checkout lambda
+# git merge staging
+# git push origin lambda
+```
 
 ---
 

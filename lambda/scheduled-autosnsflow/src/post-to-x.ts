@@ -1,7 +1,7 @@
 import { createDynamoClient } from '@/lib/ddb';
 import { PutItemCommand, QueryCommand, UpdateItemCommand, GetItemCommand, DeleteItemCommand } from '@aws-sdk/client-dynamodb';
 import { S3Client, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
-import { streamToBuffer } from '@aws-sdk/util-stream-node';
+import { Readable } from 'stream';
 
 const ddb = createDynamoClient();
 const TBL_X_SCHEDULED = process.env.TBL_X_SCHEDULED || 'XScheduledPosts';
@@ -9,6 +9,19 @@ const S3_BUCKET = process.env.S3_MEDIA_BUCKET || '';
 const AWS_REGION = process.env.AWS_REGION || 'ap-northeast-1';
 
 const s3 = new S3Client({ region: AWS_REGION });
+
+// Helper to safely read DynamoDB string attribute
+const getS = (a: any) => (a && typeof a.S !== 'undefined') ? a.S : undefined;
+
+// Helper: Convert stream to buffer
+async function streamToBuffer(stream: Readable): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  return new Promise((resolve, reject) => {
+    stream.on('data', (chunk) => chunks.push(chunk));
+    stream.on('error', reject);
+    stream.on('end', () => resolve(Buffer.concat(chunks)));
+  });
+}
 
 // Helper: Download media from S3 and convert to multipart data for X API
 async function getMediaFromS3(s3Url: string): Promise<Buffer | null> {
@@ -19,11 +32,19 @@ async function getMediaFromS3(s3Url: string): Promise<Buffer | null> {
     const bucket = parts[0];
     const key = parts.slice(1).join('/');
     
+    console.info('[x-auto] downloading media from S3', { bucket, key: key.slice(0, 50) });
     const getObjResp = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
-    const buffer = await streamToBuffer(getObjResp.Body as any);
+    
+    if (!getObjResp.Body) {
+      console.error('[x-auto] S3 GetObject returned no body', { bucket, key });
+      return null;
+    }
+    
+    const buffer = await streamToBuffer(getObjResp.Body as Readable);
+    console.info('[x-auto] S3 download successful', { bucket, key: key.slice(0, 50), size: buffer.length });
     return buffer;
   } catch (e: any) {
-    console.error('[x-auto] failed to download media from S3:', e?.message || e);
+    console.error('[x-auto] failed to download media from S3:', { error: e?.message || String(e), stack: e?.stack, s3Url: s3Url.slice(0, 100) });
     return null;
   }
 }
@@ -272,13 +293,48 @@ async function uploadMediaToX(accessToken: string, mediaBuffer: Buffer, mediaTyp
       mediaType
     });
 
-    // Create FormData and append media file + metadata
-    const formData = new FormData();
-    const blob = new Blob([mediaBuffer], { type: mediaType });
-    formData.append('media', blob);
-    formData.append('media_type', mediaType);
-    formData.append('media_category', 'tweet_image'); // Images only
+    // Check if FormData and Blob are available
+    let formData: any;
+    try {
+      if (typeof FormData === 'undefined') {
+        console.error('[x-auto] FormData is not defined in this environment');
+        throw new Error('FormData is not available in Lambda runtime');
+      }
+      formData = new FormData();
+      console.info('[x-auto] FormData created successfully');
+    } catch (e: any) {
+      console.error('[x-auto] FormData creation failed:', { 
+        error: e?.message || String(e),
+        stack: e?.stack,
+        formDataAvailable: typeof FormData !== 'undefined',
+        blobAvailable: typeof Blob !== 'undefined'
+      });
+      throw e;
+    }
 
+    // Create Blob and append to FormData
+    try {
+      if (typeof Blob === 'undefined') {
+        console.error('[x-auto] Blob is not defined in this environment');
+        throw new Error('Blob is not available in Lambda runtime');
+      }
+      const blob = new Blob([mediaBuffer], { type: mediaType });
+      console.info('[x-auto] Blob created successfully', { blobSize: blob.size, blobType: blob.type });
+      formData.append('media', blob);
+      formData.append('media_type', mediaType);
+      formData.append('media_category', 'tweet_image'); // Images only
+      console.info('[x-auto] FormData fields appended successfully');
+    } catch (e: any) {
+      console.error('[x-auto] Blob creation or FormData append failed:', { 
+        error: e?.message || String(e),
+        stack: e?.stack,
+        mediaBufferLength: mediaBuffer.length,
+        mediaType
+      });
+      throw e;
+    }
+
+    console.info('[x-auto] sending media upload request to X API v2');
     const uploadRes = await fetch('https://api.x.com/2/media/upload', {
       method: 'POST',
       headers: { 
@@ -292,39 +348,69 @@ async function uploadMediaToX(accessToken: string, mediaBuffer: Buffer, mediaTyp
     console.info('[x-auto] media upload v2 response:', { 
       status: uploadRes.status,
       statusText: uploadRes.statusText,
-      bodyLength: responseText.length
+      bodyLength: responseText.length,
+      responsePreview: responseText.slice(0, 200)
     });
 
     if (!uploadRes.ok) {
-      console.error('[x-auto] media upload v2 failed response:', responseText.slice(0, 500));
+      console.error('[x-auto] media upload v2 failed response:', {
+        status: uploadRes.status,
+        statusText: uploadRes.statusText,
+        responseBody: responseText.slice(0, 1000),
+        headers: Object.fromEntries(uploadRes.headers.entries())
+      });
       throw new Error(`Media upload failed: ${uploadRes.status} ${responseText.slice(0, 200)}`);
     }
 
     let uploadData: any;
     try {
       uploadData = JSON.parse(responseText);
+      console.info('[x-auto] parsed upload response JSON successfully');
     } catch (e) {
-      console.error('[x-auto] failed to parse v2 response as JSON:', responseText.slice(0, 200));
+      console.error('[x-auto] failed to parse v2 response as JSON:', {
+        responseText: responseText.slice(0, 500),
+        error: e instanceof Error ? e.message : String(e),
+        stack: e instanceof Error ? e.stack : undefined
+      });
       throw new Error('Invalid JSON response from media upload v2');
     }
 
     // Check for errors in response
     if (uploadData?.errors) {
-      console.error('[x-auto] X API v2 returned errors:', uploadData.errors);
+      console.error('[x-auto] X API v2 returned errors:', {
+        errors: uploadData.errors,
+        fullResponse: uploadData
+      });
       throw new Error(`X API v2 error: ${JSON.stringify(uploadData.errors)}`);
     }
 
     // Extract media_id from v2 response (prioritize data.id per X v2 API spec)
     const mediaId = uploadData?.data?.id || uploadData?.media_id_string || uploadData?.media_id;
     if (!mediaId) {
-      console.error('[x-auto] no media_id in v2 response:', uploadData);
+      console.error('[x-auto] no media_id in v2 response:', {
+        fullResponse: uploadData,
+        dataId: uploadData?.data?.id,
+        mediaIdString: uploadData?.media_id_string,
+        mediaId: uploadData?.media_id
+      });
       throw new Error('No media_id in v2 response');
     }
 
-    console.info('[x-auto] media uploaded successfully via v2:', { mediaId, mediaType, mediaKey: uploadData?.media_key });
+    console.info('[x-auto] media uploaded successfully via v2:', { 
+      mediaId, 
+      mediaType, 
+      mediaKey: uploadData?.media_key,
+      fullResponse: uploadData
+    });
     return String(mediaId);
   } catch (e: any) {
-    console.error('[x-auto] media upload to X v2 failed:', { err: e?.message || String(e) });
+    console.error('[x-auto] media upload to X v2 failed:', { 
+      err: e?.message || String(e),
+      stack: e?.stack,
+      name: e?.name,
+      mediaType,
+      mediaBufferLength: mediaBuffer?.length
+    });
     return null;
   }
 }
@@ -920,6 +1006,7 @@ export async function runAutoPostForXAccount(acct: any, userId: string) {
 
 // Consume one PostPool item for this user/account and post it to X.
 export async function postFromPoolForAccount(userId: string, acct: any, opts: { dryRun?: boolean, lockTtlSec?: number } = {}) {
+  console.info('[x-auto] postFromPoolForAccount called', { userId, accountId: acct?.accountId, poolType: acct?.type, dryRun: !!opts.dryRun });
   const TBL_POOL = process.env.TBL_POST_POOL || 'PostPool';
   const now = Math.floor(Date.now() / 1000);
   const lockTtl = Number(opts.lockTtlSec || 600);
@@ -929,6 +1016,7 @@ export async function postFromPoolForAccount(userId: string, acct: any, opts: { 
 
   // 1) Query pool items for this user and poolType
   try {
+    console.info('[x-auto] querying PostPool', { userId, poolType, TBL_POOL });
     const q = await ddb.send(new QueryCommand({
       TableName: TBL_POOL,
       KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
@@ -936,17 +1024,31 @@ export async function postFromPoolForAccount(userId: string, acct: any, opts: { 
       Limit: 50,
     }));
     const items: any[] = (q as any).Items || [];
+    console.info('[x-auto] PostPool query result', { userId, poolType, itemsCount: items.length });
     // filter by poolType
-    const candidates = items.map(it => ({
-      pk: it.PK,
-      sk: it.SK,
-      poolId: it.poolId?.S || (it.SK?.S || '').replace(/^POOL#/, ''),
-      type: it.type?.S || 'general',
-      content: it.content?.S || '',
-      createdAt: it.createdAt?.N ? Number(it.createdAt.N) : 0,
-    })).filter(x => (x.type || 'general') === poolType);
+    const candidates = items.map(it => {
+      const itemType = getS(it.type) || 'general';
+      return {
+        pk: it.PK,
+        sk: it.SK,
+        poolId: getS(it.poolId) || (getS(it.SK) || '').replace(/^POOL#/, ''),
+        type: itemType,
+        content: getS(it.content) || '',
+        images: getS(it.images) ? JSON.parse(getS(it.images)) : [],
+        createdAt: it.createdAt?.N ? Number(it.createdAt.N) : 0,
+      };
+    }).filter(x => (x.type || 'general') === poolType);
+    
+    console.info('[x-auto] PostPool items type breakdown', { 
+      userId, 
+      poolType, 
+      itemsTypes: items.map(it => ({ poolId: getS(it.poolId) || (getS(it.SK) || '').replace(/^POOL#/, ''), type: getS(it.type) || 'general' }))
+    });
+
+    console.info('[x-auto] PostPool candidates after filtering', { userId, poolType, candidatesCount: candidates.length, candidates: candidates.map(c => ({ poolId: c.poolId, hasContent: !!c.content, imagesCount: (c.images || []).length })) });
 
     if (!candidates.length) {
+      console.warn('[x-auto] no pool items found for user/poolType', { userId, poolType });
       return { posted: 0, debug: { reason: 'no_pool_items' } };
     }
 
@@ -959,59 +1061,105 @@ export async function postFromPoolForAccount(userId: string, acct: any, opts: { 
     debug.tried = 1;
 
     // If dryRun requested, do not acquire locks or modify DB — just report the candidate.
-    if (opts.dryRun || (global as any).__TEST_CAPTURE__) {
+    // Note: __TEST_CAPTURE__ is for logging only, not for dry-run behavior
+    if (opts.dryRun) {
       try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'DRYRUN_POST_FROM_POOL', payload: { userId, accountId, poolId: cand.poolId } }); } catch(_) {}
+      console.info('[x-auto] postFromPoolForAccount dryRun mode, skipping actual post', { userId, accountId, poolId: cand.poolId });
       return { posted: 0, debug: { dryRun: true, poolId: cand.poolId } };
     }
 
-    // 2) Atomically claim (delete) a pool item for this candidate list.
-    let claimedFromPool: any = null;
-    for (const candidate of candidates) {
-      try {
-        const delRes: any = await ddb.send(new DeleteItemCommand({
-          TableName: TBL_POOL,
-          Key: { PK: { S: String(candidate.pk.S) }, SK: { S: String(candidate.sk.S) } },
-          ConditionExpression: "attribute_exists(PK) AND attribute_exists(SK)",
-          ReturnValues: 'ALL_OLD',
-        }));
-        const attrs = delRes && delRes.Attributes ? delRes.Attributes : null;
-        if (attrs) {
-          claimedFromPool = {
-            poolId: candidate.poolId,
-            content: getS(attrs.content) || candidate.content || "",
-            images: attrs.images ? (getS(attrs.images) ? JSON.parse(getS(attrs.images)) : []) : (candidate.images || []),
-          };
-          // set cand to the claimed one for downstream logging/usage
-          Object.assign(cand, candidate);
-          break;
-        }
-      } catch (e:any) {
-        // failed to claim this candidate (race) - try next
-        continue;
-      }
+    // 2) Check reuse setting for this pool type
+    let reuse = false;
+    try {
+      const TBL_USER_TYPE_TIME_SETTINGS = process.env.TBL_USER_TYPE_TIME_SETTINGS || 'UserTypeTimeSettings';
+      const uts = await ddb.send(new GetItemCommand({
+        TableName: TBL_USER_TYPE_TIME_SETTINGS,
+        Key: { user_id: { S: String(userId) }, type: { S: String(poolType) } },
+        ProjectionExpression: 'reuse',
+      }));
+      const uit: any = (uts as any).Item || {};
+      reuse = Boolean(uit.reuse && (uit.reuse.BOOL === true || String(uit.reuse.S) === 'true'));
+      console.info('[x-auto] reuse setting checked', { userId, poolType, reuse });
+    } catch (e: any) {
+      console.warn('[x-auto] failed to check reuse setting, defaulting to false', { userId, poolType, error: e?.message || String(e) });
+      reuse = false;
     }
-    if (!claimedFromPool) {
-      // nobody claimable
-      debug.errors.push({ err: 'no_claimable_pool_item' });
-      return { posted: 0, debug };
+
+    // 3) Get pool item (delete if reuse=false, just read if reuse=true)
+    let claimedFromPool: any = null;
+    if (reuse) {
+      // Reuse mode: pick candidate without deleting
+      console.info('[x-auto] reuse mode: selecting pool item without deleting', { userId, accountId, poolId: cand.poolId });
+      claimedFromPool = {
+        poolId: cand.poolId,
+        content: cand.content || "",
+        images: cand.images || [],
+      };
+      console.info('[x-auto] pool item selected for reuse', { userId, accountId, poolId: cand.poolId, contentLength: (claimedFromPool.content || '').length, imagesCount: (claimedFromPool.images || []).length });
+    } else {
+      // Consume mode: atomically claim (delete) a pool item
+      console.info('[x-auto] consume mode: attempting to claim pool item', { userId, accountId, candidatesCount: candidates.length, candidatePoolIds: candidates.map(c => c.poolId) });
+      for (const candidate of candidates) {
+        try {
+          const pk = String(candidate.pk.S);
+          const sk = String(candidate.sk.S);
+          console.info('[x-auto] attempting DeleteItemCommand', { userId, accountId, poolId: candidate.poolId, pk, sk });
+          const delRes: any = await ddb.send(new DeleteItemCommand({
+            TableName: TBL_POOL,
+            Key: { PK: { S: pk }, SK: { S: sk } },
+            ConditionExpression: "attribute_exists(PK) AND attribute_exists(SK)",
+            ReturnValues: 'ALL_OLD',
+          }));
+          const attrs = delRes && delRes.Attributes ? delRes.Attributes : null;
+          console.info('[x-auto] DeleteItemCommand result', { userId, accountId, poolId: candidate.poolId, hasAttributes: !!attrs });
+          if (attrs) {
+            claimedFromPool = {
+              poolId: candidate.poolId,
+              content: getS(attrs.content) || candidate.content || "",
+              images: attrs.images ? (getS(attrs.images) ? JSON.parse(getS(attrs.images)) : []) : (candidate.images || []),
+            };
+            console.info('[x-auto] pool item claimed successfully', { userId, accountId, poolId: candidate.poolId, contentLength: (claimedFromPool.content || '').length, imagesCount: (claimedFromPool.images || []).length });
+            // set cand to the claimed one for downstream logging/usage
+            Object.assign(cand, candidate);
+            break;
+          }
+        } catch (e:any) {
+          // failed to claim this candidate (race) - try next
+          console.warn('[x-auto] failed to claim pool item', { userId, accountId, poolId: candidate.poolId, error: e?.message || String(e), errorName: e?.name, stack: e?.stack });
+          continue;
+        }
+      }
+      if (!claimedFromPool) {
+        // nobody claimable
+        console.error('[x-auto] no claimable pool item found', { userId, accountId, candidatesCount: candidates.length, triedPoolIds: candidates.map(c => c.poolId) });
+        debug.errors.push({ err: 'no_claimable_pool_item' });
+        return { posted: 0, debug };
+      }
     }
 
     // Note: Do not create new XScheduledPosts records here. 5min flow should update existing scheduled posts only.
 
     // 4) perform post using acct tokens (try refresh on failure)
     try {
+      console.info('[x-auto] preparing to post to X', { userId, accountId, contentLength: (cand.content || '').length, mediaUrlsCount: (claimedFromPool.images || []).length, mediaUrls: claimedFromPool.images });
       let accessToken = acct.oauthAccessToken || acct.accessToken || '';
       let resp;
       const mediaUrls = (claimedFromPool.images || []) as string[];
+      console.info('[x-auto] calling postToX', { userId, accountId, hasAccessToken: !!accessToken, textLength: (cand.content || '').length, mediaUrlsCount: mediaUrls.length });
       try {
         resp = await postToX({ accessToken, text: cand.content || '', mediaUrls });
+        console.info('[x-auto] postToX succeeded', { userId, accountId, response: resp });
       } catch (postErr:any) {
+        console.error('[x-auto] postToX failed, attempting token refresh', { userId, accountId, error: postErr?.message || String(postErr), stack: postErr?.stack });
         // try refresh
         const newToken = await refreshXAccountToken(userId, accountId);
         if (newToken) {
+          console.info('[x-auto] token refreshed, retrying postToX', { userId, accountId });
           accessToken = newToken;
           resp = await postToX({ accessToken, text: cand.content || '', mediaUrls });
+          console.info('[x-auto] postToX succeeded after token refresh', { userId, accountId, response: resp });
         } else {
+          console.error('[x-auto] token refresh failed, throwing original error', { userId, accountId });
           throw postErr;
         }
       }
@@ -1052,9 +1200,17 @@ export async function postFromPoolForAccount(userId: string, acct: any, opts: { 
       try { await postDiscordMaster(`**[X POST FROM POOL]** user=${userId} account=${accountId} poolId=${cand.poolId} postId=${postId}\n${String(cand.content || '').slice(0,200)}`); } catch(_) {}
 
       debug.posted = 1;
+      console.info('[x-auto] postFromPoolForAccount succeeded', { userId, accountId, postId, poolId: cand.poolId });
       return { posted: 1, debug, postId };
     } catch (e:any) {
-      debug.errors.push({ err: String(e) });
+      console.error('[x-auto] postFromPoolForAccount posting failed', { 
+        userId, 
+        accountId, 
+        error: e?.message || String(e),
+        stack: e?.stack,
+        name: e?.name
+      });
+      debug.errors.push({ err: String(e), stack: e?.stack, name: e?.name });
       // Do not create/update XScheduledPosts here on failure; 5min reservation updates are handled by the calling flow.
       // release lock
       try {
@@ -1067,7 +1223,14 @@ export async function postFromPoolForAccount(userId: string, acct: any, opts: { 
       return { posted: 0, debug };
     }
   } catch (e:any) {
-    return { posted: 0, debug: { err: String(e) } };
+    console.error('[x-auto] postFromPoolForAccount outer catch failed', { 
+      userId, 
+      accountId, 
+      error: e?.message || String(e),
+      stack: e?.stack,
+      name: e?.name
+    });
+    return { posted: 0, debug: { err: String(e), stack: e?.stack, name: e?.name } };
   }
 }
 
