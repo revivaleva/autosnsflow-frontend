@@ -53,10 +53,25 @@ const ddb = new DynamoDBClient({ region });
 // Feature flags / env toggles
 const DISABLE_QUOTE_PROCESSING = !!process.env.DISABLE_QUOTE_PROCESSING;
 
+// [FIX] 2026-01-24: DynamoDB消費量追跡（コスト監視用）
+const ddbMetrics = {
+  readUnits: 0,
+  writeUnits: 0,
+  scanCount: 0,
+  queryCount: 0,
+  reset() { this.readUnits = 0; this.writeUnits = 0; this.scanCount = 0; this.queryCount = 0; },
+  log(context?: string) {
+    if (this.readUnits > 0 || this.writeUnits > 0 || this.scanCount > 0 || this.queryCount > 0) {
+      console.info('[ddb-metrics]', { context, readUnits: this.readUnits, writeUnits: this.writeUnits, scanCount: this.scanCount, queryCount: this.queryCount });
+    }
+  }
+};
+
 // Wrap ddb.send to automatically alias reserved keyword 'status' in ProjectionExpression
-// This prevents ValidationException when 'status' is used as an attribute name in projections
+// and track ConsumedCapacity for cost monitoring
 {
   const origSend = ddb.send.bind(ddb);
+  const TRACK_CAPACITY = process.env.TRACK_DDB_CAPACITY === 'true' || process.env.TRACK_DDB_CAPACITY === '1';
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (ddb as any).send = async function(cmd: any) {
     try {
@@ -66,8 +81,26 @@ const DISABLE_QUOTE_PROCESSING = !!process.env.DISABLE_QUOTE_PROCESSING;
         input.ExpressionAttributeNames = Object.assign({}, input.ExpressionAttributeNames || {}, { '#st': 'status' });
         input.ProjectionExpression = input.ProjectionExpression.replace(/\bstatus\b/g, '#st');
       }
+      // Track Scan/Query counts
+      const cmdName = cmd?.constructor?.name || '';
+      if (cmdName === 'ScanCommand') ddbMetrics.scanCount++;
+      else if (cmdName === 'QueryCommand') ddbMetrics.queryCount++;
+      // Optionally add ReturnConsumedCapacity for detailed tracking
+      if (TRACK_CAPACITY && input && !input.ReturnConsumedCapacity) {
+        input.ReturnConsumedCapacity = 'TOTAL';
+      }
     } catch (_) {}
-    return origSend(cmd);
+    const result = await origSend(cmd);
+    // Track consumed capacity if available
+    try {
+      const cc = (result as any)?.ConsumedCapacity;
+      if (cc) {
+        if (cc.ReadCapacityUnits) ddbMetrics.readUnits += cc.ReadCapacityUnits;
+        if (cc.WriteCapacityUnits) ddbMetrics.writeUnits += cc.WriteCapacityUnits;
+        if (cc.CapacityUnits) ddbMetrics.readUnits += cc.CapacityUnits; // for read-only ops
+      }
+    } catch (_) {}
+    return result;
   };
 }
 
@@ -1612,8 +1645,11 @@ export const handler = async (event: any = {}) => {
       // Notify master channel with summary (best-effort)
       try { await postDiscordMaster(formatMasterMessage({ job: 'hourly', startedAt, finishedAt: Date.now(), userTotal: userIds.length, userSucceeded: succeeded, totals })); } catch(_) {}
 
+      // [FIX] 2026-01-24: DynamoDB消費量をログ出力（コスト監視用）
+      ddbMetrics.log('hourly');
       return { statusCode: 200, body: JSON.stringify({ processedUsers: userIds.length, userSucceeded: succeeded, totals }) };
     } catch (e) {
+      ddbMetrics.log('hourly-error');
       console.warn('[error] hourly global processing failed:', String(e));
       return { statusCode: 500, body: JSON.stringify({ error: String(e) }) };
     }
@@ -1730,107 +1766,56 @@ export const handler = async (event: any = {}) => {
       t.repliesDeleted = 0;
       t.repliesTotal = 0;
       t.executionLogsDeleted = 0;
-      t.executionLogsTotal = Number(await (async function(){ try { return await countAllExecutionLogs(); } catch(_) { return 0; } })());
+      t.executionLogsTotal = 0;
       t.usageCountersDeleted = 0;
       t.usageCountersTotal = 0;
 
-      // Attempt to compute actual totals for dry-run reporting (may be expensive)
+      // [FIX] 2026-01-24: 重複Scanを排除し、1回のScanで総数と削除候補を同時に収集（コスト最適化）
       try {
         await config.loadConfig();
         const scanPage = Number(config.getConfigValue('PRUNE_SCAN_PAGE_SIZE') || process.env.PRUNE_SCAN_PAGE_SIZE || '1000') || 1000;
-
-        // ScheduledPosts: count by type
-        let last: any = undefined;
-        let normalCnt = 0;
-        let quoteCnt = 0;
-        do {
-          // 'type' is a reserved word in DynamoDB projection; use ExpressionAttributeNames
-          const s = await ddb.send(new ScanCommand({ TableName: TBL_SCHEDULED, ProjectionExpression: '#tp', ExpressionAttributeNames: { '#tp': 'type' }, ExclusiveStartKey: last, Limit: scanPage }));
-          const items = (s.Items || []);
-          for (const it of items) {
-            try {
-              const typ = (getS(it.type) || getS(it['#tp']) || '').toLowerCase();
-              if (typ === 'quote') quoteCnt++; else normalCnt++;
-            } catch (e) {
-              try { console.warn('[warn] inspect scheduled item type failed', String(e)); } catch(_) {}
-            }
-          }
-          last = (s as any).LastEvaluatedKey;
-        } while (last);
-        t.scheduledNormalTotal = normalCnt;
-        t.scheduledQuoteTotal = quoteCnt;
-
-        // Replies total
-        last = undefined;
-        let repliesCnt = 0;
-        do {
-          const s = await ddb.send(new ScanCommand({ TableName: TBL_REPLIES, ProjectionExpression: 'PK', ExclusiveStartKey: last, Limit: scanPage }));
-          repliesCnt += (s.Count || 0);
-          last = (s as any).LastEvaluatedKey;
-        } while (last);
-        t.repliesTotal = repliesCnt;
-
-        // UsageCounters total
-        last = undefined;
-        let usageCnt = 0;
-        do {
-          const s = await ddb.send(new ScanCommand({ TableName: TBL_USAGE, ProjectionExpression: 'PK,SK,updatedAt', ExclusiveStartKey: last, Limit: scanPage }));
-          usageCnt += (s.Count || 0);
-          last = (s as any).LastEvaluatedKey;
-        } while (last);
-        t.usageCountersTotal = usageCnt;
-      } catch (e) {
-        try { console.warn('[warn] dry-run totals scan failed:', String(e)); } catch(_) {}
-      }
-
-      // Compute deletion candidates counts (items that would be deleted) for dry-run
-      try {
-        // scheduled posts candidates by postedAt/scheduledAt
-        await config.loadConfig();
+        const maxPages = Number(config.getConfigValue('DRYRUN_MAX_PAGES') || process.env.DRYRUN_MAX_PAGES || '100') || 100;
         const retentionDays = Number(config.getConfigValue('RETENTION_DAYS') || '7') || 7;
         const execPruneDays = Number(config.getConfigValue('EXECUTION_LOGS_PRUNE_DELAY_DAYS') || String(retentionDays + 1)) || (retentionDays + 1);
         const scheduledThreshold = Math.floor(Date.now() / 1000) - (retentionDays * 24 * 60 * 60);
         const execThreshold = Math.floor(Date.now() / 1000) - (execPruneDays * 24 * 60 * 60);
+        const usageThreshold = Math.floor(Date.now() / 1000) - (Number(config.getConfigValue('RETENTION_DAYS_LOGS') || '20') * 24 * 60 * 60);
 
+        // ScheduledPosts: 1回のScanで総数と削除候補を同時計算
         let last: any = undefined;
-        let scheduledNormalCandidates = 0;
-        let scheduledQuoteCandidates = 0;
+        let normalCnt = 0, quoteCnt = 0, scheduledNormalCandidates = 0, scheduledQuoteCandidates = 0;
+        let pageCount = 0;
         do {
-          const s = await ddb.send(new ScanCommand({ TableName: TBL_SCHEDULED, ProjectionExpression: 'scheduledAt,postedAt,#tp', ExpressionAttributeNames: { '#tp': 'type' }, ExclusiveStartKey: last, Limit: Number(config.getConfigValue('PRUNE_SCAN_PAGE_SIZE') || process.env.PRUNE_SCAN_PAGE_SIZE || '1000') }));
+          const s = await ddb.send(new ScanCommand({ TableName: TBL_SCHEDULED, ProjectionExpression: 'scheduledAt,postedAt,#tp', ExpressionAttributeNames: { '#tp': 'type' }, ExclusiveStartKey: last, Limit: scanPage }));
+          pageCount++;
           for (const it of (s.Items || [])) {
             try {
+              const typ = (getS(it.type) || getS(it['#tp']) || '').toLowerCase();
+              if (typ === 'quote') quoteCnt++; else normalCnt++;
               const scheduledAt = normalizeEpochSec(getN(it.scheduledAt) || 0);
               const postedAt = normalizeEpochSec(getN(it.postedAt) || 0);
               const compareAt = postedAt > 0 ? postedAt : scheduledAt;
-              if (!compareAt) continue;
-              if (compareAt <= scheduledThreshold) {
-                const typ = (getS(it.type) || getS(it['#tp']) || '').toLowerCase();
+              if (compareAt && compareAt <= scheduledThreshold) {
                 if (typ === 'quote') scheduledQuoteCandidates++; else scheduledNormalCandidates++;
               }
             } catch (_) {}
           }
           last = (s as any).LastEvaluatedKey;
+          if (pageCount >= maxPages) { console.warn('[warn] dryRun ScheduledPosts scan reached maxPages', { pageCount }); break; }
         } while (last);
+        t.scheduledNormalTotal = normalCnt;
+        t.scheduledQuoteTotal = quoteCnt;
+        t.scheduledNormalDeleted = scheduledNormalCandidates;
+        t.scheduledQuoteDeleted = scheduledQuoteCandidates;
 
-        // ExecutionLogs candidates
+        // Replies: 1回のScanで総数と削除候補を同時計算
         last = undefined;
-        let execCandidates = 0;
+        let repliesCnt = 0, repliesCandidates = 0;
+        pageCount = 0;
         do {
-          const s = await ddb.send(new ScanCommand({ TableName: TBL_LOGS, ProjectionExpression: 'createdAt', ExclusiveStartKey: last, Limit: Number(config.getConfigValue('PRUNE_SCAN_PAGE_SIZE') || process.env.PRUNE_SCAN_PAGE_SIZE || '1000') }));
-          for (const it of (s.Items || [])) {
-            try {
-              const createdAt = Number(it.createdAt?.N || 0);
-              if (createdAt && createdAt <= execThreshold) execCandidates++;
-            } catch (_) {}
-          }
-          last = (s as any).LastEvaluatedKey;
-        } while (last);
-
-        // Replies candidates
-        last = undefined;
-        let repliesCandidates = 0;
-        do {
-          const s = await ddb.send(new ScanCommand({ TableName: TBL_REPLIES, ProjectionExpression: 'createdAt', ExclusiveStartKey: last, Limit: Number(config.getConfigValue('PRUNE_SCAN_PAGE_SIZE') || process.env.PRUNE_SCAN_PAGE_SIZE || '1000') }));
+          const s = await ddb.send(new ScanCommand({ TableName: TBL_REPLIES, ProjectionExpression: 'PK,createdAt', ExclusiveStartKey: last, Limit: scanPage }));
+          pageCount++;
+          repliesCnt += (s.Count || 0);
           for (const it of (s.Items || [])) {
             try {
               const createdAt = Number(it.createdAt?.N || 0);
@@ -1838,14 +1823,19 @@ export const handler = async (event: any = {}) => {
             } catch (_) {}
           }
           last = (s as any).LastEvaluatedKey;
+          if (pageCount >= maxPages) { console.warn('[warn] dryRun Replies scan reached maxPages', { pageCount }); break; }
         } while (last);
+        t.repliesTotal = repliesCnt;
+        t.repliesDeleted = repliesCandidates;
 
-        // UsageCounters candidates (updatedAt)
+        // UsageCounters: 1回のScanで総数と削除候補を同時計算
         last = undefined;
-        let usageCandidates = 0;
-        const usageThreshold = Math.floor(Date.now() / 1000) - (Number(config.getConfigValue('RETENTION_DAYS_LOGS') || '20') * 24 * 60 * 60);
+        let usageCnt = 0, usageCandidates = 0;
+        pageCount = 0;
         do {
-          const s = await ddb.send(new ScanCommand({ TableName: TBL_USAGE, ProjectionExpression: 'updatedAt', ExclusiveStartKey: last, Limit: Number(config.getConfigValue('PRUNE_SCAN_PAGE_SIZE') || process.env.PRUNE_SCAN_PAGE_SIZE || '1000') }));
+          const s = await ddb.send(new ScanCommand({ TableName: TBL_USAGE, ProjectionExpression: 'PK,SK,updatedAt', ExclusiveStartKey: last, Limit: scanPage }));
+          pageCount++;
+          usageCnt += (s.Count || 0);
           for (const it of (s.Items || [])) {
             try {
               const updatedAt = normalizeEpochSec(getN(it.updatedAt) || 0);
@@ -1853,15 +1843,32 @@ export const handler = async (event: any = {}) => {
             } catch (_) {}
           }
           last = (s as any).LastEvaluatedKey;
+          if (pageCount >= maxPages) { console.warn('[warn] dryRun UsageCounters scan reached maxPages', { pageCount }); break; }
         } while (last);
-
-        t.scheduledNormalDeleted = scheduledNormalCandidates;
-        t.scheduledQuoteDeleted = scheduledQuoteCandidates;
-        t.repliesDeleted = repliesCandidates;
-        t.executionLogsDeleted = execCandidates;
+        t.usageCountersTotal = usageCnt;
         t.usageCountersDeleted = usageCandidates;
+
+        // ExecutionLogs: 1回のScanで総数と削除候補を同時計算
+        last = undefined;
+        let execCnt = 0, execCandidates = 0;
+        pageCount = 0;
+        do {
+          const s = await ddb.send(new ScanCommand({ TableName: TBL_LOGS, ProjectionExpression: 'PK,createdAt', ExclusiveStartKey: last, Limit: scanPage }));
+          pageCount++;
+          execCnt += (s.Count || 0);
+          for (const it of (s.Items || [])) {
+            try {
+              const createdAt = Number(it.createdAt?.N || 0);
+              if (createdAt && createdAt <= execThreshold) execCandidates++;
+            } catch (_) {}
+          }
+          last = (s as any).LastEvaluatedKey;
+          if (pageCount >= maxPages) { console.warn('[warn] dryRun ExecutionLogs scan reached maxPages', { pageCount }); break; }
+        } while (last);
+        t.executionLogsTotal = execCnt;
+        t.executionLogsDeleted = execCandidates;
       } catch (e) {
-        try { console.warn('[warn] dry-run candidate count failed:', String(e)); } catch(_) {}
+        try { console.warn('[warn] dry-run stats scan failed:', String(e)); } catch(_) {}
       }
       await postDiscordMaster(formatMasterMessage({ job: "daily-prune", startedAt, finishedAt, userTotal: userIds.length, userSucceeded: 0, totals: t }));
       return { statusCode: 200, body: JSON.stringify({
@@ -1952,8 +1959,11 @@ export const handler = async (event: any = {}) => {
     const pruneMsAll = finishedAt - prunePhaseStart;
         const t = { candidates: totalCandidates, scanned: totalScanned, deleted: allDeleted + (allXDeleted||0), xDeleted: allXDeleted, preFilterTotal, logDeleted: allLogDeleted, orphanLogDeleted, pruneMs: pruneMsAll } as any;
         await postDiscordMaster(formatMasterMessage({ job: "daily-prune", startedAt, finishedAt, userTotal: userIds.length, userSucceeded, totals: t }));
+        // [FIX] 2026-01-24: DynamoDB消費量をログ出力（コスト監視用）
+        ddbMetrics.log('daily-prune-full');
         return { statusCode: 200, body: JSON.stringify({ deleted: allDeleted, logDeleted: allLogDeleted, preFilterTotal }) };
       } catch (e) {
+        ddbMetrics.log('daily-prune-full-error');
         console.warn('[warn] full-table prune failed:', e);
         await postDiscordMaster(`**[PRUNE] full-table prune failed**`);
         return { statusCode: 500, body: JSON.stringify({ error: String(e) }) };
@@ -1963,6 +1973,8 @@ export const handler = async (event: any = {}) => {
     const finishedAt = Date.now();
     const t = { candidates: totalCandidates, scanned: totalScanned, deleted: totalDeleted, preFilterTotal } as any;
     await postDiscordMaster(formatMasterMessage({ job: "daily-prune", startedAt, finishedAt, userTotal: userIds.length, userSucceeded, totals: t }));
+    // [FIX] 2026-01-24: DynamoDB消費量をログ出力（コスト監視用）
+    ddbMetrics.log('daily-prune');
     return { statusCode: 200, body: JSON.stringify({ deleted: totalDeleted }) };
   }
 
@@ -1996,8 +2008,11 @@ export const handler = async (event: any = {}) => {
       console.warn('[warn] ttl backfill failed:', String(e));
     }
     try { await postDiscordMaster(formatMasterMessage({ job: 'every-5min', startedAt, finishedAt: Date.now(), userTotal: userIds.length, userSucceeded: succeeded, totals })); } catch(_) {}
+    // [FIX] 2026-01-24: DynamoDB消費量をログ出力（コスト監視用）
+    ddbMetrics.log('every-5min');
     return { statusCode: 200, body: JSON.stringify({ processedUsers: userIds.length, userSucceeded: succeeded, totals }) };
   } catch (e) {
+    ddbMetrics.log('every-5min-error');
     console.warn('[error] every-5min global processing failed:', String(e));
     return { statusCode: 500, body: JSON.stringify({ error: String(e) }) };
   }
@@ -4084,17 +4099,32 @@ async function pruneOldXScheduledPostsAll() {
 }
 
 // 指定ユーザーの実行ログ（ExecutionLogs）で、createdAt が RETENTION_DAYS 前より古いものを削除する
+// [FIX] 2026-01-24: Scan から Query に変更（コスト最適化）
 async function pruneOldExecutionLogs(userId: any) {
   try {
     try { await config.loadConfig(); } catch(_) {}
     const execPruneDays = await resolveExecutionPruneDays();
     const thresholdSec = Math.floor(Date.now() / 1000) - (execPruneDays * 24 * 60 * 60);
     const perUserLogLimit = Number(config.getConfigValue('EXECUTION_LOGS_PRUNE_LIMIT') || process.env.EXECUTION_LOGS_PRUNE_LIMIT || '1000') || 1000;
+    const maxPages = Number(config.getConfigValue('PRUNE_MAX_PAGES') || process.env.PRUNE_MAX_PAGES || '50') || 50;
     let lastKey: any = undefined;
     let totalDeleted = 0;
+    let pageCount = 0;
     do {
-      const s = await ddb.send(new ScanCommand({ TableName: TBL_LOGS, ProjectionExpression: 'PK,SK,createdAt', ExclusiveStartKey: lastKey, Limit: 1000 }));
-      for (const it of (s.Items || [])) {
+      // [FIX] Use Query instead of Scan to filter by userId (PK = USER#userId)
+      const q = await ddb.send(new QueryCommand({
+        TableName: TBL_LOGS,
+        KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
+        ExpressionAttributeValues: {
+          ':pk': { S: `USER#${userId}` },
+          ':pfx': { S: 'LOG#' },
+        },
+        ProjectionExpression: 'PK,SK,createdAt',
+        ExclusiveStartKey: lastKey,
+        Limit: 1000,
+      }));
+      pageCount++;
+      for (const it of (q.Items || [])) {
         try {
           const createdAt = normalizeEpochSec(getN(it.createdAt) || 0);
           if (createdAt && createdAt <= thresholdSec) {
@@ -4106,7 +4136,13 @@ async function pruneOldExecutionLogs(userId: any) {
           console.warn('[warn] prune log delete failed for item', e);
         }
       }
-      lastKey = (s as any).LastEvaluatedKey;
+      if (totalDeleted >= perUserLogLimit) break;
+      // [FIX] maxPages上限でコスト暴走を防止
+      if (pageCount >= maxPages) {
+        console.warn('[warn] pruneOldExecutionLogs reached maxPages limit', { userId, pageCount, maxPages });
+        break;
+      }
+      lastKey = q.LastEvaluatedKey;
     } while (lastKey);
 
     if (totalDeleted > 0) {
@@ -4173,6 +4209,7 @@ async function pruneOldExecutionLogsAll() {
 
 // Scan full ExecutionLogs table and delete items whose PK is not user-scoped (do not start with 'USER#')
 // Uses the same retention logic (EXECUTION_LOGS_PRUNE_DELAY_DAYS) so TTL has time to run first.
+// [FIX] 2026-01-24: maxPages上限を追加（コスト暴走防止）
 async function pruneOrphanExecutionLogsAll() {
   try {
     try { await config.loadConfig(); } catch(_) {}
@@ -4180,11 +4217,14 @@ async function pruneOrphanExecutionLogsAll() {
     const retentionDays = Number(config.getConfigValue('RETENTION_DAYS') || '7') || 7;
     const thresholdSec = Math.floor(Date.now() / 1000) - (retentionDays * 24 * 60 * 60);
     const orphanLimit = Number(config.getConfigValue('ORPHAN_EXEC_LOGS_PRUNE_LIMIT') || process.env.ORPHAN_EXEC_LOGS_PRUNE_LIMIT || '10000') || 10000;
+    const maxPages = Number(config.getConfigValue('PRUNE_MAX_PAGES') || process.env.PRUNE_MAX_PAGES || '50') || 50;
 
     let lastKey: any = undefined;
     let totalDeleted = 0;
+    let pageCount = 0;
     do {
       const s = await ddb.send(new ScanCommand({ TableName: TBL_LOGS, ProjectionExpression: 'PK,SK,createdAt', ExclusiveStartKey: lastKey, Limit: 1000 }));
+      pageCount++;
       const its = (s as any).Items || [];
       for (const it of its) {
         try {
@@ -4203,6 +4243,10 @@ async function pruneOrphanExecutionLogsAll() {
       }
       lastKey = (s as any).LastEvaluatedKey;
       if (totalDeleted >= orphanLimit) break;
+      if (pageCount >= maxPages) {
+        console.warn('[warn] pruneOrphanExecutionLogsAll reached maxPages limit', { pageCount, maxPages, totalDeleted });
+        break;
+      }
     } while (lastKey);
 
     if (totalDeleted > 0) {
@@ -4216,28 +4260,50 @@ async function pruneOrphanExecutionLogsAll() {
 }
 
 // 指定ユーザーのRepliesを削除する（RETENTION_DAYS を参照、物理削除のみ）
+// [FIX] 2026-01-24: Scan から Query に変更（コスト最適化）
 async function pruneOldReplies(userId: any) {
   try {
     try { await config.loadConfig(); } catch(_) {}
     const retentionDays = Number(config.getConfigValue('RETENTION_DAYS') || '7') || 7;
     const thresholdSec = Math.floor(Date.now() / 1000) - (retentionDays * 24 * 60 * 60);
-    // Convert to full-table scan by createdAt to support user-agnostic pruning
+    const perUserReplyLimit = Number(config.getConfigValue('REPLIES_PRUNE_LIMIT') || process.env.REPLIES_PRUNE_LIMIT || '1000') || 1000;
+    const maxPages = Number(config.getConfigValue('PRUNE_MAX_PAGES') || process.env.PRUNE_MAX_PAGES || '50') || 50;
     let lastKey: any = undefined;
     let totalDeleted = 0;
+    let pageCount = 0;
     do {
-      const s = await ddb.send(new ScanCommand({ TableName: TBL_REPLIES, ProjectionExpression: 'PK,SK,createdAt', ExclusiveStartKey: lastKey, Limit: 1000 }));
-      for (const it of (s.Items || [])) {
+      // [FIX] Use Query instead of Scan to filter by userId (PK = USER#userId)
+      const q = await ddb.send(new QueryCommand({
+        TableName: TBL_REPLIES,
+        KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)',
+        ExpressionAttributeValues: {
+          ':pk': { S: `USER#${userId}` },
+          ':pfx': { S: 'REPLY#' },
+        },
+        ProjectionExpression: 'PK,SK,createdAt',
+        ExclusiveStartKey: lastKey,
+        Limit: 1000,
+      }));
+      pageCount++;
+      for (const it of (q.Items || [])) {
         try {
           const createdAt = normalizeEpochSec(getN(it.createdAt) || 0);
           if (createdAt && createdAt <= thresholdSec) {
             await ddb.send(new DeleteItemCommand({ TableName: TBL_REPLIES, Key: { PK: it.PK, SK: it.SK } }));
             totalDeleted++;
+            if (totalDeleted >= perUserReplyLimit) break;
           }
         } catch (e) {
           console.warn('[warn] prune reply delete failed for item', e);
         }
       }
-      lastKey = (s as any).LastEvaluatedKey;
+      if (totalDeleted >= perUserReplyLimit) break;
+      // [FIX] maxPages上限でコスト暴走を防止
+      if (pageCount >= maxPages) {
+        console.warn('[warn] pruneOldReplies reached maxPages limit', { userId, pageCount, maxPages });
+        break;
+      }
+      lastKey = q.LastEvaluatedKey;
     } while (lastKey);
 
     if (totalDeleted > 0) {
@@ -4304,10 +4370,14 @@ async function countPruneCandidates(userId: any) {
 }
 
 // Count ALL scheduled posts in the table (pre-filter total)
+// [FIX] 2026-01-24: maxPages上限を追加（コスト暴走防止）
 async function countAllScheduledPosts() {
   try {
+    await config.loadConfig();
+    const maxPages = Number(config.getConfigValue('COUNT_MAX_PAGES') || process.env.COUNT_MAX_PAGES || '100') || 100;
     let lastKey: any = undefined;
     let total = 0;
+    let pageCount = 0;
     do {
       const q = await ddb.send(new ScanCommand({
         TableName: TBL_SCHEDULED,
@@ -4315,8 +4385,13 @@ async function countAllScheduledPosts() {
         ExclusiveStartKey: lastKey,
         Limit: 1000,
       }));
+      pageCount++;
       total += (q.Count || 0);
       lastKey = q.LastEvaluatedKey;
+      if (pageCount >= maxPages) {
+        console.warn('[warn] countAllScheduledPosts reached maxPages limit', { pageCount, maxPages, partialTotal: total });
+        break;
+      }
     } while (lastKey);
     return total;
   } catch (e) {
@@ -4326,14 +4401,23 @@ async function countAllScheduledPosts() {
 }
 
 // Count all items in ExecutionLogs table
+// [FIX] 2026-01-24: maxPages上限を追加（コスト暴走防止）
 async function countAllExecutionLogs() {
   try {
+    await config.loadConfig();
+    const maxPages = Number(config.getConfigValue('COUNT_MAX_PAGES') || process.env.COUNT_MAX_PAGES || '100') || 100;
     let lastKey: any = undefined;
     let total = 0;
+    let pageCount = 0;
     do {
       const q = await ddb.send(new ScanCommand({ TableName: TBL_LOGS, ProjectionExpression: 'PK', ExclusiveStartKey: lastKey, Limit: 1000 }));
+      pageCount++;
       total += (q.Count || 0);
       lastKey = q.LastEvaluatedKey;
+      if (pageCount >= maxPages) {
+        console.warn('[warn] countAllExecutionLogs reached maxPages limit', { pageCount, maxPages, partialTotal: total });
+        break;
+      }
     } while (lastKey);
     return total;
   } catch (e) {
@@ -4343,6 +4427,7 @@ async function countAllExecutionLogs() {
 }
 
 // Full-table prune helper: iterate all users and run pruneOldScheduledPosts
+// [FIX] 2026-01-24: maxPages上限を追加（コスト暴走防止）
 async function pruneOldScheduledPostsAll() {
   try {
     // Full-table prune using Scan so we can evaluate scheduledAt/postedAt without per-user queries
@@ -4351,24 +4436,31 @@ async function pruneOldScheduledPostsAll() {
     // Build set of queued accountIds to exclude
     await config.loadConfig();
     const dqTable = config.getConfigValue('TBL_DELETION_QUEUE') || process.env.TBL_DELETION_QUEUE || 'DeletionQueue';
+    const maxPages = Number(config.getConfigValue('PRUNE_MAX_PAGES') || process.env.PRUNE_MAX_PAGES || '50') || 50;
+    const maxDeletePerRun = Number(config.getConfigValue('PRUNE_MAX_DELETE_PER_RUN') || process.env.PRUNE_MAX_DELETE_PER_RUN || '5000') || 5000;
     const queued = new Set<string>();
     try {
       let lk: any = undefined;
+      let dqPageCount = 0;
       do {
         const s = await ddb.send(new ScanCommand({ TableName: dqTable, ProjectionExpression: 'accountId', ExclusiveStartKey: lk, Limit: 1000 }));
+        dqPageCount++;
         for (const it of (s as any).Items || []) {
           const aid = getS(it.accountId);
           if (aid) queued.add(aid);
         }
         lk = (s as any).LastEvaluatedKey;
+        if (dqPageCount >= 10) break; // DeletionQueueのScanも上限設定
       } while (lk);
     } catch (e) {
       // If deletion queue not accessible, proceed but log
       try { console.warn('[warn] could not scan DeletionQueue, proceeding without exclusions', String(e)); } catch(_) {}
     }
 
+    let pageCount = 0;
     do {
       const s = await ddb.send(new ScanCommand({ TableName: TBL_SCHEDULED, ProjectionExpression: 'PK,SK,scheduledAt,postedAt,accountId,type', ExclusiveStartKey: lastKey, Limit: 1000 }));
+      pageCount++;
       for (const it of (s.Items || [])) {
         try {
           const acctId = getS(it.accountId) || '';
@@ -4382,12 +4474,21 @@ async function pruneOldScheduledPostsAll() {
           if (compareAt <= thresholdSec) {
             await ddb.send(new DeleteItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: it.PK, SK: it.SK } }));
             totalDeleted++;
+            if (totalDeleted >= maxDeletePerRun) break;
           }
         } catch (e) {
           console.warn('[warn] prune scheduled delete failed for item', e);
         }
       }
+      if (totalDeleted >= maxDeletePerRun) {
+        console.warn('[warn] pruneOldScheduledPostsAll reached maxDeletePerRun limit', { totalDeleted, maxDeletePerRun });
+        break;
+      }
       lastKey = (s as any).LastEvaluatedKey;
+      if (pageCount >= maxPages) {
+        console.warn('[warn] pruneOldScheduledPostsAll reached maxPages limit', { pageCount, maxPages, totalDeleted });
+        break;
+      }
     } while (lastKey);
     return totalDeleted;
   } catch (e) {
@@ -4397,27 +4498,41 @@ async function pruneOldScheduledPostsAll() {
 }
 
 // Full-table prune for UsageCounters using updatedAt
+// [FIX] 2026-01-24: maxPages上限を追加（コスト暴走防止）
 async function pruneOldUsageCountersAll() {
   try {
     await config.loadConfig();
     const retentionDays = Number(config.getConfigValue('RETENTION_DAYS_LOGS') || '20') || 20;
     const thresholdSec = Math.floor(Date.now() / 1000) - (retentionDays * 24 * 60 * 60);
+    const maxPages = Number(config.getConfigValue('PRUNE_MAX_PAGES') || process.env.PRUNE_MAX_PAGES || '50') || 50;
+    const maxDeletePerRun = Number(config.getConfigValue('PRUNE_MAX_DELETE_PER_RUN') || process.env.PRUNE_MAX_DELETE_PER_RUN || '5000') || 5000;
     // collect keys to delete
     const keys: Array<{ PK: any; SK: any }> = [];
     let lastKey: any = undefined;
+    let pageCount = 0;
     do {
       const s = await ddb.send(new ScanCommand({ TableName: TBL_USAGE, ProjectionExpression: 'PK,SK,updatedAt', ExclusiveStartKey: lastKey, Limit: 1000 }));
+      pageCount++;
       for (const it of (s.Items || [])) {
         try {
           const updatedAt = normalizeEpochSec(getN(it.updatedAt) || 0);
           if (updatedAt && updatedAt <= thresholdSec) {
             keys.push({ PK: it.PK, SK: it.SK });
+            if (keys.length >= maxDeletePerRun) break;
           }
         } catch (e) {
           console.warn('[warn] prune usage item inspect failed', e);
         }
       }
+      if (keys.length >= maxDeletePerRun) {
+        console.warn('[warn] pruneOldUsageCountersAll reached maxDeletePerRun limit during scan', { keysCount: keys.length });
+        break;
+      }
       lastKey = (s as any).LastEvaluatedKey;
+      if (pageCount >= maxPages) {
+        console.warn('[warn] pruneOldUsageCountersAll reached maxPages limit', { pageCount, maxPages, keysCount: keys.length });
+        break;
+      }
     } while (lastKey);
 
     // batch delete (25 per request)
