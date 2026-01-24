@@ -82,10 +82,10 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
   // (deletedCount remains 0 and the per-thread delete loop is effectively skipped.)
 
   let deletedCount = 0;
+  let errorCount = 0;
   // token reuse per account (accountId fixed here)
   let token: string | null = null;
   try {
-    try { await putLog({ userId, accountId, action: 'deletion', status: 'info', message: 'attempt_get_token' }); } catch (_) {}
     token = await getTokenForAccount({ userId, accountId });
     if (!token) {
       await putLog({ userId, accountId, action: 'deletion', status: 'warn', message: 'missing_oauth_access_token' });
@@ -93,7 +93,6 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
       try { const tThreads = process.env.TBL_THREADS_ACCOUNTS || 'ThreadsAccounts'; await ddb.send(new UpdateItemCommand({ TableName: tThreads, Key: { PK: { S: `USER#${userId}` }, SK: { S: `ACCOUNT#${accountId}` } }, UpdateExpression: 'SET #st = :s', ExpressionAttributeNames: { '#st': 'status' }, ExpressionAttributeValues: { ':s': { S: 'reauth_required' } } })); } catch(_) {}
       throw new Error('missing_oauth_access_token');
     }
-    try { await putLog({ userId, accountId, action: 'deletion', status: 'info', message: 'got_token', detail: { tokenPreview: token ? `len=${String(token.length)}` : null } }); } catch (_) {}
   } catch (e) {
     const msg = stringifyError(e);
     await putLog({ userId, accountId, action: 'deletion', status: 'error', message: 'failed_read_account_token', detail: { error: msg } });
@@ -105,9 +104,7 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
     if (!postId) continue;
     try {
     try {
-        try { await putLog({ userId, accountId, action: 'deletion', status: 'info', message: 'deleting_post', detail: { postId } }); } catch (_) {}
         await deleteThreadsPostWithToken({ postId, token });
-        try { await putLog({ userId, accountId, action: 'deletion', status: 'info', message: 'deleted_post', detail: { postId } }); } catch (_) {}
       } catch (err) {
         const msg = stringifyError(err);
         // treat missing post as success
@@ -118,10 +115,12 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
           console.warn('[delete-posts-for-account] threads delete failed', { userId, accountId, postId, error: msg });
           // if fatal, log to ExecutionLogs
           if (/threads_delete_failed:\s*4\d\d/.test(msg) || msg.includes('missing_access_token')) {
+            errorCount++;
             await putLog({ userId, accountId, action: 'deletion', status: 'error', message: 'delete_failed', detail: { postId, error: msg } });
             throw new Error(msg);
           }
           // otherwise treat as transient - throw to allow retry by caller
+          errorCount++;
           throw new Error(msg);
         }
       }
@@ -160,6 +159,13 @@ export async function deletePostsForAccount({ userId, accountId, limit }: { user
       // propagate as fatal to caller
       throw e;
     }
+  }
+
+  // ループ終了後にサマリログを1件出力
+  if (deletedCount > 0 || errorCount > 0) {
+    try {
+      await putLog({ userId, accountId, action: 'deletion', status: errorCount > 0 ? 'warn' : 'info', message: 'deletion_batch_completed', detail: { deletedCount, errorCount, totalProcessed: threads.slice(0, limit).length } });
+    } catch (_) {}
   }
 
   // check remaining on Threads side
