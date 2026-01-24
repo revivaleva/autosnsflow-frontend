@@ -945,7 +945,6 @@ async function createXScheduledPost(userId: any, xacct: any, whenJst: Date, opts
       const tbl = process.env.TBL_X_SCHEDULED || 'XScheduledPosts';
       try { console.info('[x-hourly] attempting PutItem', { userId, sk: skId, table: tbl }); } catch(_) {}
       await ddb.send(new PutItemCommand({ TableName: tbl, Item: sanitizeItem(item), ConditionExpression: 'attribute_not_exists(SK)' }));
-      await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "ok", message: "x reservation created", detail: { scheduledPostId: id, whenJst: whenJst.toISOString(), poolType: effectivePoolType, sk: skId, table: tbl } });
       return { created: 1, scheduledPostId: id, sk: skId };
     } catch (e:any) {
       try { console.error('[x-hourly] createXScheduledPost failed', String(e)); } catch(_) {}
@@ -1100,7 +1099,6 @@ async function createQuoteReservationForAccount(userId: any, acct: any, opts: an
         return { created: 1, skipped: false, sourcePostId: canonicalSource, queriedPK: pkForQuery, queriedAccountId: acctForQuery, queriedSourcePostId: canonicalSource };
       }
       await ddb.send(new PutItemCommand({ TableName: TBL_SCHEDULED, Item: scheduledItem }));
-      await putLog({ userId, type: 'auto-post', accountId: acct.accountId, status: 'ok', message: '引用予約を作成', detail: { scheduledPostId: id, sourcePostId: canonicalSource, queriedPK: pkForQuery, queriedAccountId: acctForQuery, queriedSourcePostId: canonicalSource } });
       return { created: 1, skipped: false, sourcePostId: canonicalSource, queriedPK: pkForQuery, queriedAccountId: acctForQuery, queriedSourcePostId: canonicalSource };
     } catch (e: any) {
       console.warn('[warn] createQuoteReservationForAccount failed during PutItem', String(e));
@@ -1246,7 +1244,6 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
 
       const instructionBlock = isQuoteType ? defaultQuoteInstruction : defaultPostInstruction;
       const prompt: string = `${policyBlock}${personaBlock}${sourceBlock}${instructionBlock}`.trim();
-      try { await putLog({ userId, type: 'auto-post', accountId: acct.accountId, targetId: scheduledPostId, status: 'info', message: 'prompt_constructed', detail: { isQuoteType, policyPromptUsed: Boolean(policyPrompt), themeSample: String(sourceTextForPrompt).slice(0,200) } }); } catch(_) {}
 
     // OpenAI 呼び出しは共通ヘルパーを使い、内部でリトライ／フォールバックする
     let text: any = undefined;
@@ -1292,8 +1289,6 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
 
       // log response length only (avoid full text in logs)
       try { /* debug removed */ } catch(_) {}
-      // also persist a small trace to ExecutionLogs for easier post-mortem (no full text stored to DB)
-      try { await putLog({ userId, type: 'openai-call', accountId: acct.accountId, targetId: scheduledPostId, status: 'info', message: 'openai_call_complete', detail: { textLength: text ? String(text).length : 0 } }); } catch (_) {}
     } catch (e) {
       // record failure and rethrow to be handled by caller
       try { console.error('[error] OpenAI call failed', String(e)); } catch(_) {}
@@ -1336,7 +1331,6 @@ async function generateAndAttachContent(userId: any, acct: any, scheduledPostId:
           ExpressionAttributeValues: { ":c": { S: cleanText }, ":acc": { S: acct.accountId }, ":scheduled": { S: "scheduled" } },
         }));
         try { /* debug removed */ } catch(_) {}
-        await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: scheduledPostId, status: "ok", message: "本文生成を完了" });
         // dump updated scheduled item (short) for test inspection
         try {
           const got = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: `USER#${userId}` }, SK: { S: `SCHEDULEDPOST#${scheduledPostId}` } }, ProjectionExpression: 'scheduledPostId, status, content, pendingForAutoPostAccount, numericPostId' }));
@@ -1756,8 +1750,31 @@ export const handler = async (event: any = {}) => {
     const pruneMs = prunePhaseEnd - prunePhaseStart;
     if (dryRun) {
       const finishedAt = Date.now();
+      // Build set of queued accountIds to exclude (for reporting)
+      let queuedAccountCount = 0;
+      try {
+        await config.loadConfig();
+        const dqTable = config.getConfigValue('TBL_DELETION_QUEUE') || process.env.TBL_DELETION_QUEUE || 'DeletionQueue';
+        const queued = new Set<string>();
+        let lk: any = undefined;
+        let dqPageCount = 0;
+        do {
+          const s = await ddb.send(new ScanCommand({ TableName: dqTable, ProjectionExpression: 'accountId', ExclusiveStartKey: lk, Limit: 1000 }));
+          dqPageCount++;
+          for (const it of (s as any).Items || []) {
+            const aid = getS(it.accountId);
+            if (aid) queued.add(aid);
+          }
+          lk = (s as any).LastEvaluatedKey;
+          if (dqPageCount >= 10) break;
+        } while (lk);
+        queuedAccountCount = queued.size;
+      } catch (e) {
+        try { console.warn('[warn] could not scan DeletionQueue for dryRun stats', String(e)); } catch(_) {}
+      }
+      
       // build totals object expected by formatMasterMessage
-      const t: any = { candidates: totalCandidates, scanned: totalScanned, deleted: 0, preFilterTotal, logCandidates: totalLogCandidates, pruneMs };
+      const t: any = { candidates: totalCandidates, scanned: totalScanned, deleted: 0, preFilterTotal, logCandidates: totalLogCandidates, pruneMs, queuedAccountCount };
       // Provide fallback fields so formatMasterMessage can render detailed lines
       t.scheduledNormalDeleted = 0;
       t.scheduledNormalTotal = 0;
@@ -1771,22 +1788,29 @@ export const handler = async (event: any = {}) => {
       t.usageCountersTotal = 0;
 
       // [FIX] 2026-01-24: 重複Scanを排除し、1回のScanで総数と削除候補を同時に収集（コスト最適化）
+      // 設定値を先に取得（return文で参照するため）
+      await config.loadConfig();
+      const retentionDays = Number(config.getConfigValue('RETENTION_DAYS') || '7') || 7;
+      const execPruneDays = Number(config.getConfigValue('EXECUTION_LOGS_PRUNE_DELAY_DAYS') || String(retentionDays + 1)) || (retentionDays + 1);
+      const usageRetentionDays = Number(config.getConfigValue('RETENTION_DAYS_LOGS') || '20') || 20;
+      t.retentionDays = retentionDays;
+      t.execPruneDays = execPruneDays;
+      t.usageRetentionDays = usageRetentionDays;
+      
       try {
-        await config.loadConfig();
         const scanPage = Number(config.getConfigValue('PRUNE_SCAN_PAGE_SIZE') || process.env.PRUNE_SCAN_PAGE_SIZE || '1000') || 1000;
         const maxPages = Number(config.getConfigValue('DRYRUN_MAX_PAGES') || process.env.DRYRUN_MAX_PAGES || '100') || 100;
-        const retentionDays = Number(config.getConfigValue('RETENTION_DAYS') || '7') || 7;
-        const execPruneDays = Number(config.getConfigValue('EXECUTION_LOGS_PRUNE_DELAY_DAYS') || String(retentionDays + 1)) || (retentionDays + 1);
         const scheduledThreshold = Math.floor(Date.now() / 1000) - (retentionDays * 24 * 60 * 60);
         const execThreshold = Math.floor(Date.now() / 1000) - (execPruneDays * 24 * 60 * 60);
-        const usageThreshold = Math.floor(Date.now() / 1000) - (Number(config.getConfigValue('RETENTION_DAYS_LOGS') || '20') * 24 * 60 * 60);
+        const usageThreshold = Math.floor(Date.now() / 1000) - (usageRetentionDays * 24 * 60 * 60);
 
         // ScheduledPosts: 1回のScanで総数と削除候補を同時計算
         let last: any = undefined;
         let normalCnt = 0, quoteCnt = 0, scheduledNormalCandidates = 0, scheduledQuoteCandidates = 0;
+        let scheduledPostsReachedMaxPages = false;
         let pageCount = 0;
         do {
-          const s = await ddb.send(new ScanCommand({ TableName: TBL_SCHEDULED, ProjectionExpression: 'scheduledAt,postedAt,#tp', ExpressionAttributeNames: { '#tp': 'type' }, ExclusiveStartKey: last, Limit: scanPage }));
+          const s = await ddb.send(new ScanCommand({ TableName: TBL_SCHEDULED, ProjectionExpression: 'scheduledAt,postedAt,#tp,accountId', ExpressionAttributeNames: { '#tp': 'type' }, ExclusiveStartKey: last, Limit: scanPage }));
           pageCount++;
           for (const it of (s.Items || [])) {
             try {
@@ -1801,16 +1825,22 @@ export const handler = async (event: any = {}) => {
             } catch (_) {}
           }
           last = (s as any).LastEvaluatedKey;
-          if (pageCount >= maxPages) { console.warn('[warn] dryRun ScheduledPosts scan reached maxPages', { pageCount }); break; }
+          if (pageCount >= maxPages) { 
+            console.warn('[warn] dryRun ScheduledPosts scan reached maxPages', { pageCount }); 
+            scheduledPostsReachedMaxPages = true;
+            break; 
+          }
         } while (last);
         t.scheduledNormalTotal = normalCnt;
         t.scheduledQuoteTotal = quoteCnt;
         t.scheduledNormalDeleted = scheduledNormalCandidates;
         t.scheduledQuoteDeleted = scheduledQuoteCandidates;
+        t.scheduledPostsReachedMaxPages = scheduledPostsReachedMaxPages;
 
         // Replies: 1回のScanで総数と削除候補を同時計算
         last = undefined;
         let repliesCnt = 0, repliesCandidates = 0;
+        let repliesReachedMaxPages = false;
         pageCount = 0;
         do {
           const s = await ddb.send(new ScanCommand({ TableName: TBL_REPLIES, ProjectionExpression: 'PK,createdAt', ExclusiveStartKey: last, Limit: scanPage }));
@@ -1823,14 +1853,20 @@ export const handler = async (event: any = {}) => {
             } catch (_) {}
           }
           last = (s as any).LastEvaluatedKey;
-          if (pageCount >= maxPages) { console.warn('[warn] dryRun Replies scan reached maxPages', { pageCount }); break; }
+          if (pageCount >= maxPages) { 
+            console.warn('[warn] dryRun Replies scan reached maxPages', { pageCount }); 
+            repliesReachedMaxPages = true;
+            break; 
+          }
         } while (last);
         t.repliesTotal = repliesCnt;
         t.repliesDeleted = repliesCandidates;
+        t.repliesReachedMaxPages = repliesReachedMaxPages;
 
         // UsageCounters: 1回のScanで総数と削除候補を同時計算
         last = undefined;
         let usageCnt = 0, usageCandidates = 0;
+        let usageCountersReachedMaxPages = false;
         pageCount = 0;
         do {
           const s = await ddb.send(new ScanCommand({ TableName: TBL_USAGE, ProjectionExpression: 'PK,SK,updatedAt', ExclusiveStartKey: last, Limit: scanPage }));
@@ -1843,14 +1879,20 @@ export const handler = async (event: any = {}) => {
             } catch (_) {}
           }
           last = (s as any).LastEvaluatedKey;
-          if (pageCount >= maxPages) { console.warn('[warn] dryRun UsageCounters scan reached maxPages', { pageCount }); break; }
+          if (pageCount >= maxPages) { 
+            console.warn('[warn] dryRun UsageCounters scan reached maxPages', { pageCount }); 
+            usageCountersReachedMaxPages = true;
+            break; 
+          }
         } while (last);
         t.usageCountersTotal = usageCnt;
         t.usageCountersDeleted = usageCandidates;
+        t.usageCountersReachedMaxPages = usageCountersReachedMaxPages;
 
         // ExecutionLogs: 1回のScanで総数と削除候補を同時計算
         last = undefined;
         let execCnt = 0, execCandidates = 0;
+        let executionLogsReachedMaxPages = false;
         pageCount = 0;
         do {
           const s = await ddb.send(new ScanCommand({ TableName: TBL_LOGS, ProjectionExpression: 'PK,createdAt', ExclusiveStartKey: last, Limit: scanPage }));
@@ -1863,10 +1905,15 @@ export const handler = async (event: any = {}) => {
             } catch (_) {}
           }
           last = (s as any).LastEvaluatedKey;
-          if (pageCount >= maxPages) { console.warn('[warn] dryRun ExecutionLogs scan reached maxPages', { pageCount }); break; }
+          if (pageCount >= maxPages) { 
+            console.warn('[warn] dryRun ExecutionLogs scan reached maxPages', { pageCount }); 
+            executionLogsReachedMaxPages = true;
+            break; 
+          }
         } while (last);
         t.executionLogsTotal = execCnt;
         t.executionLogsDeleted = execCandidates;
+        t.executionLogsReachedMaxPages = executionLogsReachedMaxPages;
       } catch (e) {
         try { console.warn('[warn] dry-run stats scan failed:', String(e)); } catch(_) {}
       }
@@ -1878,16 +1925,38 @@ export const handler = async (event: any = {}) => {
         scanned: totalScanned,
         logCandidates: totalLogCandidates,
         pruneMs,
+        // ScheduledPosts統計
         scheduledNormalDeleted: t.scheduledNormalDeleted,
         scheduledQuoteDeleted: t.scheduledQuoteDeleted,
-        repliesDeleted: t.repliesDeleted,
-        executionLogsDeleted: t.executionLogsDeleted,
-        usageCountersDeleted: t.usageCountersDeleted,
         scheduledNormalTotal: t.scheduledNormalTotal,
         scheduledQuoteTotal: t.scheduledQuoteTotal,
+        scheduledTotal: (t.scheduledNormalTotal || 0) + (t.scheduledQuoteTotal || 0),
+        scheduledDeleted: (t.scheduledNormalDeleted || 0) + (t.scheduledQuoteDeleted || 0),
+        // Replies統計
+        repliesDeleted: t.repliesDeleted,
         repliesTotal: t.repliesTotal,
+        // ExecutionLogs統計
+        executionLogsDeleted: t.executionLogsDeleted,
         executionLogsTotal: t.executionLogsTotal,
-        usageCountersTotal: t.usageCountersTotal
+        // UsageCounters統計
+        usageCountersDeleted: t.usageCountersDeleted,
+        usageCountersTotal: t.usageCountersTotal,
+        // 削除率
+        scheduledDeleteRate: t.scheduledNormalTotal > 0 ? ((t.scheduledNormalDeleted || 0) / t.scheduledNormalTotal * 100).toFixed(2) + '%' : '0%',
+        repliesDeleteRate: t.repliesTotal > 0 ? ((t.repliesDeleted || 0) / t.repliesTotal * 100).toFixed(2) + '%' : '0%',
+        executionLogsDeleteRate: t.executionLogsTotal > 0 ? ((t.executionLogsDeleted || 0) / t.executionLogsTotal * 100).toFixed(2) + '%' : '0%',
+        usageCountersDeleteRate: t.usageCountersTotal > 0 ? ((t.usageCountersDeleted || 0) / t.usageCountersTotal * 100).toFixed(2) + '%' : '0%',
+        // 上限到達フラグ
+        scheduledPostsReachedMaxPages: t.scheduledPostsReachedMaxPages || false,
+        repliesReachedMaxPages: t.repliesReachedMaxPages || false,
+        executionLogsReachedMaxPages: t.executionLogsReachedMaxPages || false,
+        usageCountersReachedMaxPages: t.usageCountersReachedMaxPages || false,
+        // DeletionQueue除外アカウント数
+        queuedAccountCount: queuedAccountCount,
+        // 設定値（既にtオブジェクトに設定済み）
+        retentionDays: t.retentionDays,
+        execPruneDays: t.execPruneDays,
+        usageRetentionDays: t.usageRetentionDays
       }) };
     }
 
@@ -2433,7 +2502,6 @@ async function ensureNextDayAutoPosts(userId: any, acct: any, opts: any = {}) {
     await putLog({ userId, type: "auto-post", accountId: acct.accountId, status: "error", message: "スロット取得に失敗", detail: { error: String(e), groupId: acct.autoPostGroupId } });
   }
   if (!slots || slots.length === 0) {
-    await putLog({ userId, type: "auto-post", accountId: acct.accountId, status: "skip", message: `スロット未設定のためスキップ (${group.groupName})` });
     return { created: 0, deleted: 0, skipped: true, debug: [{ reason: "no_slots", group: group.groupName }] } as any;
   }
   let useSlots = slots.slice(0, 10);
@@ -2473,20 +2541,12 @@ async function ensureNextDayAutoPosts(userId: any, acct: any, opts: any = {}) {
     // timeRange 未設定
     if (!timeRange) {
       debug.push({ ...trace, reason: "no_timeRange" });
-      await putLog({
-        userId, type: "auto-post", accountId: acct.accountId,
-        status: "skip", message: `timeRange 未設定 (${groupTypeStr})`
-      });
       continue;
     }
     
     // 既に明日分が存在
     if (exists) {
       debug.push({ ...trace, reason: "already_exists" });
-      await putLog({
-        userId, type: "auto-post", accountId: acct.accountId,
-        status: "skip", message: `明日分は既に存在 (${groupTypeStr})`
-      });
       continue;
     }
 
@@ -2498,10 +2558,6 @@ async function ensureNextDayAutoPosts(userId: any, acct: any, opts: any = {}) {
       trace.reserve = reserve;
       if (!reserve.ok) {
         debug.push({ ...trace, reason: "openai_limit" });
-        await putLog({
-          userId, type: "auto-post", accountId: acct.accountId,
-          status: "skip", message: "OpenAI日次上限のため予約作成をスキップ"
-        });
         continue; // ← "上限でも予約だけは作る" なら、この行を削除
       }
     } catch (e) {
@@ -2528,10 +2584,6 @@ async function ensureNextDayAutoPosts(userId: any, acct: any, opts: any = {}) {
     trace.when = when?.toISOString?.() || null;
     if (!when) {
       debug.push({ ...trace, reason: "time_pick_failed" });
-      await putLog({
-        userId, type: "auto-post", accountId: acct.accountId,
-        status: "skip", message: `時刻生成失敗 (${groupTypeStr})`
-      });
       continue;
     }
 
@@ -2586,11 +2638,9 @@ async function ensureNextDayAutoPostsForX(userId: any, xacct: any, opts: any = {
   // Guard: X アカウントの自動投稿が有効かつアクティブであること
   try {
     if (!xacct || xacct.autoPostEnabled !== true) {
-      try { await putLog({ userId, type: "auto-post-x", accountId: xacct && xacct.accountId, status: "skip", message: `autoPostEnabled=${!!(xacct && xacct.autoPostEnabled)} のためスキップ` }); } catch(_) {}
       return { created: 0, skipped: true };
     }
     if (xacct.status && xacct.status !== "active") {
-      try { await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "skip", message: `status=${xacct.status} のためスキップ` }); } catch(_) {}
       return { created: 0, skipped: true };
     }
   } catch (e) {
@@ -2610,7 +2660,6 @@ async function ensureNextDayAutoPostsForX(userId: any, xacct: any, opts: any = {
     try {
       const when = randomTimeInRangeJst(w, today, true); // next day
       if (!when) {
-        await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "skip", message: `invalid window ${w}` });
         continue;
       }
         try { console.info('[x-hourly] when computed', { userId, accountId: xacct.accountId, window: w, whenJst: when.toISOString() }); } catch(_) {}
@@ -2637,7 +2686,6 @@ async function ensureNextDayAutoPostsForX(userId: any, xacct: any, opts: any = {
         else if (String(w).startsWith('17')) field = 'night';
         const allowed = field === 'morning' ? morningOn : (field === 'noon' ? noonOn : (field === 'night' ? nightOn : false));
         if (!allowed) {
-          await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "skip", message: `user setting ${poolType}.${field} is OFF, skip window ${w}` });
           continue;
         }
       } catch (e) {
@@ -2669,7 +2717,6 @@ async function ensureNextDayAutoPostsForX(userId: any, xacct: any, opts: any = {
           } catch (_) {}
         }
         if (exists) {
-          await putLog({ userId, type: "auto-post-x", accountId: xacct.accountId, status: "skip", message: `既存予約あり ${w}` });
           continue;
         }
       } catch (e) {
@@ -2711,7 +2758,6 @@ async function postToThreads({ accessToken, oauthAccessToken, text, userIdOnPlat
 async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settings: any = undefined, debugMode = false) {
   if (!acct.autoPost) return { posted: 0 };
   if (acct.status && acct.status !== "active") {
-    await putLog({ userId, type: "auto-post", accountId: acct.accountId, status: "skip", message: `status=${acct.status} のためスキップ` });
     return { posted: 0 };
   }
 
@@ -2818,7 +2864,7 @@ async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settin
       // Exclude permanentFailure items completely from candidate set
       const permFail = !!x.permanentFailure;
       if (permFail) {
-        try { await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "skip", message: "permanentFailure - excluded from candidates", detail: { scheduledAt: x.scheduledAt, timeRange: x.timeRange } }); } catch(_) {}
+        // permanentFailure candidates are excluded silently
       } else {
         // include only non-permanent-failure candidates (deprioritization by attempts still applies)
         const attempts = Number(x.postAttempts || 0);
@@ -2829,7 +2875,6 @@ async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settin
         (debugInfo.items as any[]).push({ idx: iterIndex, pk, sk, status: x.status, postedAt: x.postedAt, scheduledAt: x.scheduledAt, timeRange: x.timeRange, stOK, postedZero, notExpired });
       }
     } else if (stOK && postedZero && !notExpired) {
-      await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "skip", message: `時刻範囲(${x.timeRange})を過ぎたため投稿せず失効` });
         if (debugMode) {
           if (!debugInfo.skips) debugInfo.skips = [];
           debugInfo.skips.push({ sk, reason: 'window_expired', scheduledAt: x.scheduledAt, timeRange: x.timeRange });
@@ -2949,7 +2994,6 @@ async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settin
 
     // Skip if text empty
   if (!text) {
-    await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "skip", message: "本文が未生成のためスキップ" });
       return { ok: false };
     }
 
@@ -2960,7 +3004,6 @@ async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settin
     if (endJst && nowSec() > toEpochSec(endJst)) {
       try {
           await ddb.send(new UpdateItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } }, UpdateExpression: "SET #st = :expired, expiredAt = :ts, expireReason = :rsn", ConditionExpression: "#st = :scheduled", ExpressionAttributeNames: { "#st": "status" }, ExpressionAttributeValues: { ":expired": { S: "expired" }, ":scheduled": { S: "scheduled" }, ":ts": { N: String(nowSec()) }, ":rsn": { S: "time-window-passed" } } }));
-          await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "skip", message: `時刻範囲(${cand.timeRange})を過ぎたため投稿せず失効` });
         } catch (e) { await putLog({ userId, type: "auto-post", accountId: acct.accountId, targetId: sk, status: "error", message: "失効処理に失敗", detail: { error: String(e) } }); }
         return { ok: false };
       }
@@ -3054,7 +3097,6 @@ async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settin
 async function runRepliesForAccount(acct: any, userId = DEFAULT_USER_ID, settings: any = undefined) {
   if (!acct.autoReply) return { replied: 0 };
   if (acct.status && acct.status !== "active") {
-    await putLog({ userId, type: "auto-reply", accountId: acct.accountId, status: "skip", message: `status=${acct.status} のためスキップ` });
     return { replied: 0 };
   }
 
@@ -3102,7 +3144,6 @@ async function runRepliesForAccount(acct: any, userId = DEFAULT_USER_ID, setting
   if (!acct.providerUserId) {
     const pid = await ensureProviderUserId(userId, acct);
     if (!pid) {
-      await putLog({ userId, type: "auto-reply", accountId: acct.accountId, status: "skip", message: "ThreadsのユーザーID未取得のためスキップ" });
       return { replied: 0 };
     }
   }
@@ -3271,7 +3312,6 @@ async function runSecondStageForAccount(acct: any, userId = DEFAULT_USER_ID, set
   if (!acct.providerUserId) {
     const pid = await ensureProviderUserId(userId, acct);
     if (!pid) {
-      await putLog({ userId, type: "second-stage", accountId: acct.accountId, targetId: sk, status: "skip", message: "ThreadsのユーザーID未取得のためスキップ" });
       return debugMode ? { posted2: 0, debug: { reason: "no_provider_user_id", pk, sk, firstPostId } } : { posted2: 0 };
     }
   }
