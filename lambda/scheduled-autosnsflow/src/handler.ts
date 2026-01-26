@@ -512,7 +512,9 @@ async function getDiscordWebhookSets(userId = DEFAULT_USER_ID) {
 /// ========== 設定・ユーザー ==========
 async function getActiveUserIds() {
   let lastKey: any; const ids: string[] = [];
+  let scanCount = 0;
   do {
+    scanCount++;
     const res: any = await ddb.send(
       new ScanCommand({
         TableName: TBL_SETTINGS,
@@ -542,6 +544,7 @@ async function getActiveUserIds() {
     }
     lastKey = res.LastEvaluatedKey;
   } while (lastKey);
+  console.info('[getActiveUserIds]', { scanCount, userIdCount: ids.length });
   return ids;
 }
 
@@ -1471,9 +1474,13 @@ async function backfillExecutionLogsTTLBatch(maxUpdates = 20) {
 
     let lastKey: any = undefined;
     let updated = 0;
+    let scanCount = 0;
+    let itemsScanned = 0;
     do {
+      scanCount++;
       const s = await ddb.send(new ScanCommand({ TableName: TBL_LOGS, ProjectionExpression: 'PK,SK,ttlAt', ExclusiveStartKey: lastKey, Limit: 200 }));
       const its = (s as any).Items || [];
+      itemsScanned += its.length;
       for (const it of its) {
         if (updated >= maxUpdates) break;
         try {
@@ -1494,6 +1501,7 @@ async function backfillExecutionLogsTTLBatch(maxUpdates = 20) {
       if (updated >= maxUpdates) break;
     } while (lastKey);
 
+    console.info('[backfillExecutionLogsTTLBatch]', { scanCount, itemsScanned, updated, maxUpdates });
     return updated;
   } catch (e) {
     console.warn('[warn] backfillExecutionLogsTTLBatch failed:', String(e));
@@ -2105,7 +2113,9 @@ export const handler = async (event: any = {}) => {
     }
     // Small TTL backfill for ExecutionLogs to avoid large-scale deletes.
     try {
+      timingMetrics.start('every-5min-ttl-backfill');
       const ttlBackfilled = await backfillExecutionLogsTTLBatch(20);
+      timingMetrics.endAndLog('every-5min-ttl-backfill', { updated: ttlBackfilled || 0 });
       if (ttlBackfilled && ttlBackfilled > 0) {
         try { await postDiscordMaster(`**[BACKFILL] ExecutionLogs に ttlAt を付与しました: ${ttlBackfilled} 件**`); } catch(_) {}
       }
@@ -2815,8 +2825,9 @@ async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settin
         ":acc": { S: acct.accountId },
         ":now": { N: String(nowSec()) },
       },
-      // PendingByAccTime GSI does not necessarily project 'status' — avoid requesting it
-      ProjectionExpression: "PK, SK, scheduledAt, postedAt",
+      // [FIX] 2026-01-26: N+1問題解決 - 必要な属性をすべて取得
+      ProjectionExpression: "PK, SK, scheduledAt, postedAt, content, timeRange, autoPostGroupId, numericPostId, #st, #type, postAttempts, permanentFailure",
+      ExpressionAttributeNames: { "#st": "status", "#type": "type" },
       ScanIndexForward: true,
       Limit: 50
     }));
@@ -2831,8 +2842,9 @@ async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settin
         ":acc": { S: acct.accountId },
         ":now": { N: String(nowSec()) },
       },
-      // Keys only でも動くように PK/SK と scheduledAt だけ取得
-      ProjectionExpression: "PK, SK, scheduledAt, postedAt",
+      // [FIX] 2026-01-26: N+1問題解決 - 必要な属性をすべて取得
+      ProjectionExpression: "PK, SK, scheduledAt, postedAt, content, timeRange, autoPostGroupId, numericPostId, #st, #type, postAttempts, permanentFailure",
+      ExpressionAttributeNames: { "#st": "status", "#type": "type" },
       ScanIndexForward: true, // 古い順に見る
       Limit: 50               // 上限を増やして取りこぼしを回避
     }));
@@ -2878,19 +2890,15 @@ async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settin
     }
   }
 
+  // [FIX] 2026-01-26: N+1問題解決 - Query結果を直接使用、GetItemCommand削除
   // Collect candidate items (scheduled, not posted, not expired)
   const candidates: any[] = [];
   let iterIndex = 0;
   for (const it of (q.Items || [])) {
     const pk = getS(it.PK) || '';
     const sk = getS(it.SK) || '';
-    const full = await ddb.send(new GetItemCommand({
-      TableName: TBL_SCHEDULED,
-      Key: { PK: { S: String(pk) }, SK: { S: String(sk) } },
-      ProjectionExpression: "content, postedAt, timeRange, scheduledAt, autoPostGroupId, numericPostId, #st, #type",
-      ExpressionAttributeNames: { "#st": "status", "#type": "type" }
-    }));
-    const x = unmarshall(full.Item || {});
+    // Query結果に必要な属性がすべて含まれているので、直接使用
+    const x = unmarshall(it);
     const postedZero = !x.postedAt || x.postedAt === 0 || x.postedAt === "0";
     const stOK = (x.status || "") === "scheduled";
     const notExpired = !x.timeRange || (() => {
@@ -3266,7 +3274,8 @@ async function runSecondStageForAccount(acct: any, userId = DEFAULT_USER_ID, set
         ":acc":    { S: acct.accountId },
         ":th":     { N: String(threshold) },
       },
-      ProjectionExpression: "PK, SK",
+      ProjectionExpression: "PK, SK, postId, numericPostId, postedAt, doublePostStatus, autoPostGroupId, #st, secondStageWanted",
+      ExpressionAttributeNames: { "#st": "status" },
       ScanIndexForward: false,
       Limit: 50
     }));
@@ -3283,7 +3292,8 @@ async function runSecondStageForAccount(acct: any, userId = DEFAULT_USER_ID, set
         ":th":     { N: String(threshold) },
       },
       FilterExpression: "accountId = :acc AND postedAt <= :th",
-      ProjectionExpression: "PK, SK",
+      ProjectionExpression: "PK, SK, postId, numericPostId, postedAt, doublePostStatus, autoPostGroupId, #st, secondStageWanted",
+      ExpressionAttributeNames: { "#st": "status" },
       Limit: 50
     }));
   }
@@ -3302,27 +3312,22 @@ async function runSecondStageForAccount(acct: any, userId = DEFAULT_USER_ID, set
     return debugMode ? { posted2: 0, debug: { reason: "no_candidate", threshold, delayMin } } : { posted2: 0 };
   }
 
+  // [FIX] 2026-01-26: N+1問題解決 - Query結果を直接使用、GetItemCommand削除
   // 直近から本体を取得して条件判定
   let pk = "", sk = "", firstPostId = "", firstPostedAt = "";
   let found: any = null;
   const debugTried: any[] = [];
   for (const it of (q.Items || [])) {
     const kpk = getS(it.PK) || '', ksk = getS(it.SK) || '';
-    const full = await ddb.send(new GetItemCommand({
-      TableName: TBL_SCHEDULED,
-      Key: { PK: { S: kpk }, SK: { S: ksk } },
-      ProjectionExpression: "postId, numericPostId, postedAt, doublePostStatus, autoPostGroupId, #st, secondStageWanted",
-      ExpressionAttributeNames: { "#st": "status" }
-    }));
-    const f = full.Item || {};
-    const st = getS(f.status) || "";
-    const dp = getS(f.doublePostStatus) || "";
-    const apg = getS(f.autoPostGroupId) || "";
-    const pid = getS(f.postId) || "";
-    const nid = getS(f.numericPostId) || "";
-    const pat = getN(f.postedAt) || "";
+    // Query結果に必要な属性がすべて含まれているので、直接使用
+    const st = getS(it.status) || "";
+    const dp = getS(it.doublePostStatus) || "";
+    const apg = getS(it.autoPostGroupId) || "";
+    const pid = getS(it.postId) || "";
+    const nid = getS(it.numericPostId) || "";
+    const pat = getN(it.postedAt) || "";
     // secondStageWanted を尊重：存在すれば true のもののみ対象、未指定なら従来通り
-    const ssw = (typeof f.secondStageWanted !== 'undefined') ? (f.secondStageWanted?.BOOL === true || String(f.secondStageWanted?.S || '').toLowerCase() === 'true') : undefined;
+    const ssw = (typeof it.secondStageWanted !== 'undefined') ? (it.secondStageWanted?.BOOL === true || String(it.secondStageWanted?.S || '').toLowerCase() === 'true') : undefined;
     // Require explicit secondStageWanted === true to be eligible.
     const ok = st === "posted" && pid && (!dp || dp !== "done") && apg.includes("自動投稿") && Number(pat || 0) <= threshold && (ssw === true);
     if (debugMode && debugTried.length < 5) debugTried.push({ ksk, st, dp, apg, pid, nid, pat, ok });
@@ -3525,7 +3530,8 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
         IndexName: GSI_NEEDS_BY_NEXTGEN,
         KeyConditionExpression: "needsContentAccount = :acc AND nextGenerateAt <= :now",
         ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
-        ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, generateLockedAt",
+        ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, generateLockedAt, theme, #type",
+        ExpressionAttributeNames: { "#type": "type" },
         ScanIndexForward: true,
         Limit: fetchLimit
       }));
@@ -3543,7 +3549,8 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
         IndexName: GSI_SCH_BY_ACC_TIME,
         KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
         ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
-        ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts",
+        ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, theme, #type",
+        ExpressionAttributeNames: { "#type": "type" },
         ScanIndexForward: true,
         Limit: fetchLimit
       }));
@@ -3551,19 +3558,14 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
 
     const items = (q.Items || []);
     
-
-    // Prefetch full items so we can sort by scheduledAt (oldest first)
+    // [FIX] 2026-01-26: N+1問題解決 - Query結果を直接使用、GetItemCommand削除
     const candidates: any[] = [];
     for (const it of items) {
       const pk = getS(it.PK) || '';
       const sk = getS(it.SK) || '';
-      try {
-        const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } } }));
-        const rec = unmarshall(full.Item || {});
-        candidates.push({ pk, sk, rec });
-      } catch (e) {
-        
-      }
+      // Query結果に必要な属性がすべて含まれているので、unmarshallして直接使用
+      const rec = unmarshall(it);
+      candidates.push({ pk, sk, rec });
     }
 
     // Sort by scheduledAt ascending (oldest first)
@@ -3627,12 +3629,8 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
           try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_DONE', payload: { accountId: acct.accountId, pk, sk, generated: 1 } }); } catch(_) {}
         } else {
           try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL', payload: { accountId: acct.accountId, pk, sk } }); } catch(_) {}
-          // dump full scheduled item and recent logs for debugging
-          try {
-            const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } } }));
-            const item = unmarshall(full.Item || {});
-            try { (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL_SCHEDULED_FULL', payload: { pk, sk, item } }); } catch(_) {}
-          } catch (_) {}
+          // [FIX] 2026-01-26: debug時のGetItemCommand削除、既にメモリ上のrecを使用
+          try { (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL_SCHEDULED_FULL', payload: { pk, sk, item: rec } }); } catch(_) {}
           try {
             const q = await ddb.send(new QueryCommand({ TableName: TBL_LOGS, KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)', ExpressionAttributeValues: { ':pk': { S: pk }, ':pfx': { S: 'LOG#' } }, Limit: 10, ScanIndexForward: false }));
             const logs = (q.Items || []).map(i => unmarshall(i));
