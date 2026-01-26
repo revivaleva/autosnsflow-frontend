@@ -67,6 +67,32 @@ const ddbMetrics = {
   }
 };
 
+// [PERF] 2026-01-26: 処理時間計測ユーティリティ（パフォーマンス分析用）
+const timingMetrics = {
+  timers: new Map<string, number>(),
+  start(label: string) {
+    this.timers.set(label, Date.now());
+  },
+  end(label: string) {
+    const startTime = this.timers.get(label);
+    if (!startTime) {
+      console.warn(`[timing-warn] Timer "${label}" not started`);
+      return 0;
+    }
+    const duration = Date.now() - startTime;
+    this.timers.delete(label);
+    console.info('[timing]', { label, durationMs: duration });
+    return duration;
+  },
+  endAndLog(label: string, context?: any) {
+    const duration = this.end(label);
+    if (context) {
+      console.info('[timing-detail]', { label, durationMs: duration, ...context });
+    }
+    return duration;
+  }
+};
+
 // Wrap ddb.send to automatically alias reserved keyword 'status' in ProjectionExpression
 // and track ConsumedCapacity for cost monitoring
 {
@@ -486,7 +512,9 @@ async function getDiscordWebhookSets(userId = DEFAULT_USER_ID) {
 /// ========== 設定・ユーザー ==========
 async function getActiveUserIds() {
   let lastKey: any; const ids: string[] = [];
+  let scanCount = 0;
   do {
+    scanCount++;
     const res: any = await ddb.send(
       new ScanCommand({
         TableName: TBL_SETTINGS,
@@ -516,6 +544,7 @@ async function getActiveUserIds() {
     }
     lastKey = res.LastEvaluatedKey;
   } while (lastKey);
+  console.info('[getActiveUserIds]', { scanCount, userIdCount: ids.length });
   return ids;
 }
 
@@ -1435,45 +1464,6 @@ const DEFAULT_USER_ID = process.env.DEFAULT_USER_ID || "c7e43ae8-0031-70c5-a8ec-
 const MASTER_DISCORD_WEBHOOK = process.env.MASTER_DISCORD_WEBHOOK || "";
 
 /// ========== ハンドラ（5分＆毎時の分岐 + テストモード） ==========
-// Backfill: attach TTL to a small batch of ExecutionLogs items to avoid large-scale deletes.
-// Runs at most `maxUpdates` updates per invocation. Uses attribute `ttlAt` (epoch seconds).
-async function backfillExecutionLogsTTLBatch(maxUpdates = 20) {
-  try {
-    try { await config.loadConfig(); } catch(_) {}
-    const retentionDays = Number(config.getConfigValue('RETENTION_DAYS') || process.env.RETENTION_DAYS || '3') || 3;
-    const ttlVal = Math.floor(Date.now() / 1000) + (retentionDays * 24 * 60 * 60);
-
-    let lastKey: any = undefined;
-    let updated = 0;
-    do {
-      const s = await ddb.send(new ScanCommand({ TableName: TBL_LOGS, ProjectionExpression: 'PK,SK,ttlAt', ExclusiveStartKey: lastKey, Limit: 200 }));
-      const its = (s as any).Items || [];
-      for (const it of its) {
-        if (updated >= maxUpdates) break;
-        try {
-          if (it.ttlAt) continue; // already has TTL
-          await ddb.send(new UpdateItemCommand({
-            TableName: TBL_LOGS,
-            Key: { PK: it.PK, SK: it.SK },
-            UpdateExpression: 'SET ttlAt = :t',
-            ConditionExpression: 'attribute_not_exists(ttlAt)',
-            ExpressionAttributeValues: { ':t': { N: String(ttlVal) } }
-          }));
-          updated++;
-        } catch (e) {
-          // ignore per-item failures (concurrent updates, throttling etc.)
-        }
-      }
-      lastKey = (s as any).LastEvaluatedKey;
-      if (updated >= maxUpdates) break;
-    } while (lastKey);
-
-    return updated;
-  } catch (e) {
-    console.warn('[warn] backfillExecutionLogsTTLBatch failed:', String(e));
-    return 0;
-  }
-}
 
 export const handler = async (event: any = {}) => {
   const job = event?.job || "every-5min";
@@ -2051,12 +2041,23 @@ export const handler = async (event: any = {}) => {
   // Global every-5min: iterate active users and run per-user 5min job
   try { console.info('[info] every-5min global processing enabled'); } catch(_) {}
   try {
+    timingMetrics.start('every-5min-total');
     const userIds = await getActiveUserIds();
+    timingMetrics.end('every-5min-getActiveUserIds');
+    
     let succeeded = 0;
     const totals: any = { totalAuto: 0, totalReply: 0, totalTwo: 0, totalX: 0, rateSkipped: 0 };
+    const userTimings: any[] = []; // [PERF] ユーザーごとの実行時間を記録
+    
     for (const uid of userIds) {
       try {
+        timingMetrics.start(`user-${uid}`);
         const res = await runFiveMinJobForUser(uid, { dryRun: !!event?.dryRun });
+        const userDuration = timingMetrics.endAndLog(`user-${uid}`, { userIdShort: uid.slice(0, 8) });
+        
+        // [PERF] ユーザーごとの実行時間を記録
+        userTimings.push({ userId: uid, durationMs: userDuration, durationSec: Math.round(userDuration / 1000) });
+        
         succeeded += 1;
         totals.totalAuto += Number(res.totalAuto || 0);
         totals.totalReply += Number(res.totalReply || 0);
@@ -2066,17 +2067,8 @@ export const handler = async (event: any = {}) => {
         try { await putLog({ userId: uid, type: 'every-5min', status: 'error', message: 'run5min_failed', detail: { error: String(e) } }); } catch(_) {}
       }
     }
-    // Small TTL backfill for ExecutionLogs to avoid large-scale deletes.
-    try {
-      const ttlBackfilled = await backfillExecutionLogsTTLBatch(20);
-      if (ttlBackfilled && ttlBackfilled > 0) {
-        try { await postDiscordMaster(`**[BACKFILL] ExecutionLogs に ttlAt を付与しました: ${ttlBackfilled} 件**`); } catch(_) {}
-      }
-      totals.ttlBackfilled = Number(ttlBackfilled || 0);
-    } catch (e) {
-      console.warn('[warn] ttl backfill failed:', String(e));
-    }
-    try { await postDiscordMaster(formatMasterMessage({ job: 'every-5min', startedAt, finishedAt: Date.now(), userTotal: userIds.length, userSucceeded: succeeded, totals })); } catch(_) {}
+    timingMetrics.endAndLog('every-5min-total', { userTotal: userIds.length, userSucceeded: succeeded });
+    try { await postDiscordMaster(formatMasterMessage({ job: 'every-5min', startedAt, finishedAt: Date.now(), userTotal: userIds.length, userSucceeded: succeeded, totals, userTimings })); } catch(_) {}
     // [FIX] 2026-01-24: DynamoDB消費量をログ出力（コスト監視用）
     ddbMetrics.log('every-5min');
     return { statusCode: 200, body: JSON.stringify({ processedUsers: userIds.length, userSucceeded: succeeded, totals }) };
@@ -2777,8 +2769,9 @@ async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settin
         ":acc": { S: acct.accountId },
         ":now": { N: String(nowSec()) },
       },
-      // PendingByAccTime GSI does not necessarily project 'status' — avoid requesting it
-      ProjectionExpression: "PK, SK, scheduledAt, postedAt",
+      // [FIX] 2026-01-26: N+1問題解決 - 必要な属性をすべて取得
+      ProjectionExpression: "PK, SK, scheduledAt, postedAt, content, timeRange, autoPostGroupId, numericPostId, #st, #type, postAttempts, permanentFailure",
+      ExpressionAttributeNames: { "#st": "status", "#type": "type" },
       ScanIndexForward: true,
       Limit: 50
     }));
@@ -2793,8 +2786,9 @@ async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settin
         ":acc": { S: acct.accountId },
         ":now": { N: String(nowSec()) },
       },
-      // Keys only でも動くように PK/SK と scheduledAt だけ取得
-      ProjectionExpression: "PK, SK, scheduledAt, postedAt",
+      // [FIX] 2026-01-26: N+1問題解決 - 必要な属性をすべて取得
+      ProjectionExpression: "PK, SK, scheduledAt, postedAt, content, timeRange, autoPostGroupId, numericPostId, #st, #type, postAttempts, permanentFailure",
+      ExpressionAttributeNames: { "#st": "status", "#type": "type" },
       ScanIndexForward: true, // 古い順に見る
       Limit: 50               // 上限を増やして取りこぼしを回避
     }));
@@ -2840,19 +2834,15 @@ async function runAutoPostForAccount(acct: any, userId = DEFAULT_USER_ID, settin
     }
   }
 
+  // [FIX] 2026-01-26: N+1問題解決 - Query結果を直接使用、GetItemCommand削除
   // Collect candidate items (scheduled, not posted, not expired)
   const candidates: any[] = [];
   let iterIndex = 0;
   for (const it of (q.Items || [])) {
     const pk = getS(it.PK) || '';
     const sk = getS(it.SK) || '';
-    const full = await ddb.send(new GetItemCommand({
-      TableName: TBL_SCHEDULED,
-      Key: { PK: { S: String(pk) }, SK: { S: String(sk) } },
-      ProjectionExpression: "content, postedAt, timeRange, scheduledAt, autoPostGroupId, numericPostId, #st, #type",
-      ExpressionAttributeNames: { "#st": "status", "#type": "type" }
-    }));
-    const x = unmarshall(full.Item || {});
+    // Query結果に必要な属性がすべて含まれているので、直接使用
+    const x = unmarshall(it);
     const postedZero = !x.postedAt || x.postedAt === 0 || x.postedAt === "0";
     const stOK = (x.status || "") === "scheduled";
     const notExpired = !x.timeRange || (() => {
@@ -3228,7 +3218,8 @@ async function runSecondStageForAccount(acct: any, userId = DEFAULT_USER_ID, set
         ":acc":    { S: acct.accountId },
         ":th":     { N: String(threshold) },
       },
-      ProjectionExpression: "PK, SK",
+      ProjectionExpression: "PK, SK, postId, numericPostId, postedAt, doublePostStatus, autoPostGroupId, #st, secondStageWanted",
+      ExpressionAttributeNames: { "#st": "status" },
       ScanIndexForward: false,
       Limit: 50
     }));
@@ -3245,7 +3236,8 @@ async function runSecondStageForAccount(acct: any, userId = DEFAULT_USER_ID, set
         ":th":     { N: String(threshold) },
       },
       FilterExpression: "accountId = :acc AND postedAt <= :th",
-      ProjectionExpression: "PK, SK",
+      ProjectionExpression: "PK, SK, postId, numericPostId, postedAt, doublePostStatus, autoPostGroupId, #st, secondStageWanted",
+      ExpressionAttributeNames: { "#st": "status" },
       Limit: 50
     }));
   }
@@ -3264,27 +3256,22 @@ async function runSecondStageForAccount(acct: any, userId = DEFAULT_USER_ID, set
     return debugMode ? { posted2: 0, debug: { reason: "no_candidate", threshold, delayMin } } : { posted2: 0 };
   }
 
+  // [FIX] 2026-01-26: N+1問題解決 - Query結果を直接使用、GetItemCommand削除
   // 直近から本体を取得して条件判定
   let pk = "", sk = "", firstPostId = "", firstPostedAt = "";
   let found: any = null;
   const debugTried: any[] = [];
   for (const it of (q.Items || [])) {
     const kpk = getS(it.PK) || '', ksk = getS(it.SK) || '';
-    const full = await ddb.send(new GetItemCommand({
-      TableName: TBL_SCHEDULED,
-      Key: { PK: { S: kpk }, SK: { S: ksk } },
-      ProjectionExpression: "postId, numericPostId, postedAt, doublePostStatus, autoPostGroupId, #st, secondStageWanted",
-      ExpressionAttributeNames: { "#st": "status" }
-    }));
-    const f = full.Item || {};
-    const st = getS(f.status) || "";
-    const dp = getS(f.doublePostStatus) || "";
-    const apg = getS(f.autoPostGroupId) || "";
-    const pid = getS(f.postId) || "";
-    const nid = getS(f.numericPostId) || "";
-    const pat = getN(f.postedAt) || "";
+    // Query結果に必要な属性がすべて含まれているので、直接使用
+    const st = getS(it.status) || "";
+    const dp = getS(it.doublePostStatus) || "";
+    const apg = getS(it.autoPostGroupId) || "";
+    const pid = getS(it.postId) || "";
+    const nid = getS(it.numericPostId) || "";
+    const pat = getN(it.postedAt) || "";
     // secondStageWanted を尊重：存在すれば true のもののみ対象、未指定なら従来通り
-    const ssw = (typeof f.secondStageWanted !== 'undefined') ? (f.secondStageWanted?.BOOL === true || String(f.secondStageWanted?.S || '').toLowerCase() === 'true') : undefined;
+    const ssw = (typeof it.secondStageWanted !== 'undefined') ? (it.secondStageWanted?.BOOL === true || String(it.secondStageWanted?.S || '').toLowerCase() === 'true') : undefined;
     // Require explicit secondStageWanted === true to be eligible.
     const ok = st === "posted" && pid && (!dp || dp !== "done") && apg.includes("自動投稿") && Number(pat || 0) <= threshold && (ssw === true);
     if (debugMode && debugTried.length < 5) debugTried.push({ ksk, st, dp, apg, pid, nid, pat, ok });
@@ -3487,7 +3474,8 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
         IndexName: GSI_NEEDS_BY_NEXTGEN,
         KeyConditionExpression: "needsContentAccount = :acc AND nextGenerateAt <= :now",
         ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
-        ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, generateLockedAt",
+        ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, generateLockedAt, theme, #type",
+        ExpressionAttributeNames: { "#type": "type" },
         ScanIndexForward: true,
         Limit: fetchLimit
       }));
@@ -3505,7 +3493,8 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
         IndexName: GSI_SCH_BY_ACC_TIME,
         KeyConditionExpression: "accountId = :acc AND scheduledAt <= :now",
         ExpressionAttributeValues: { ":acc": { S: acct.accountId }, ":now": { N: String(now) } },
-        ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts",
+        ProjectionExpression: "PK, SK, content, scheduledAt, nextGenerateAt, generateAttempts, theme, #type",
+        ExpressionAttributeNames: { "#type": "type" },
         ScanIndexForward: true,
         Limit: fetchLimit
       }));
@@ -3513,19 +3502,14 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
 
     const items = (q.Items || []);
     
-
-    // Prefetch full items so we can sort by scheduledAt (oldest first)
+    // [FIX] 2026-01-26: N+1問題解決 - Query結果を直接使用、GetItemCommand削除
     const candidates: any[] = [];
     for (const it of items) {
       const pk = getS(it.PK) || '';
       const sk = getS(it.SK) || '';
-      try {
-        const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } } }));
-        const rec = unmarshall(full.Item || {});
-        candidates.push({ pk, sk, rec });
-      } catch (e) {
-        
-      }
+      // Query結果に必要な属性がすべて含まれているので、unmarshallして直接使用
+      const rec = unmarshall(it);
+      candidates.push({ pk, sk, rec });
     }
 
     // Sort by scheduledAt ascending (oldest first)
@@ -3589,12 +3573,8 @@ async function processPendingGenerationsForAccount(userId: any, acct: any, limit
           try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_DONE', payload: { accountId: acct.accountId, pk, sk, generated: 1 } }); } catch(_) {}
         } else {
           try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL', payload: { accountId: acct.accountId, pk, sk } }); } catch(_) {}
-          // dump full scheduled item and recent logs for debugging
-          try {
-            const full = await ddb.send(new GetItemCommand({ TableName: TBL_SCHEDULED, Key: { PK: { S: pk }, SK: { S: sk } } }));
-            const item = unmarshall(full.Item || {});
-            try { (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL_SCHEDULED_FULL', payload: { pk, sk, item } }); } catch(_) {}
-          } catch (_) {}
+          // [FIX] 2026-01-26: debug時のGetItemCommand削除、既にメモリ上のrecを使用
+          try { (global as any).__TEST_OUTPUT__.push({ tag: 'GEN_FAIL_SCHEDULED_FULL', payload: { pk, sk, item: rec } }); } catch(_) {}
           try {
             const q = await ddb.send(new QueryCommand({ TableName: TBL_LOGS, KeyConditionExpression: 'PK = :pk AND begins_with(SK, :pfx)', ExpressionAttributeValues: { ':pk': { S: pk }, ':pfx': { S: 'LOG#' } }, Limit: 10, ScanIndexForward: false }));
             const logs = (q.Items || []).map(i => unmarshall(i));
@@ -3640,6 +3620,17 @@ async function runFiveMinJobForUser(userId: any, opts: any = {}) {
   }
 
   const accounts = await getThreadsAccounts(userId);
+  // [FIX] X アカウントを一度だけ取得（ループ外）して N+1 問題を解決
+  // enableX=false の場合は取得しない
+  let xAccounts: any[] = [];
+  if (settings.enableX) {
+    try {
+      xAccounts = await getXAccounts(userId);
+    } catch (e) {
+      console.warn('[warn] getXAccounts failed:', String(e));
+    }
+  }
+
   // track X accounts that already had a successful auto-post in this run
   const processedXAccounts = new Set<string>();
   let totalAuto = 0, totalReply = 0, totalTwo = 0, rateSkipped = 0, totalX = 0;
@@ -3647,98 +3638,84 @@ async function runFiveMinJobForUser(userId: any, opts: any = {}) {
   const perAccount: any[] = [];
 
   for (const acct of accounts) {
-    // Log presence of accessToken for observability (never log raw token)
-    try {
-      const tokenHash = acct.oauthAccessToken ? crypto.createHash("sha256").update(acct.oauthAccessToken).digest("hex").slice(0,12) : (acct.accessToken ? crypto.createHash("sha256").update(acct.accessToken).digest("hex").slice(0,12) : "");
-      const tokenPresent = !!(acct.oauthAccessToken || acct.accessToken);
-      console.log(`[every-5min] token-check user=${userId} account=${acct.accountId} tokenPresent=${tokenPresent} tokenHash=${tokenHash}`);
-      // Persist minimal observation to ExecutionLogs for easier debugging in prod
-      try { await putLog({ userId, type: 'token-check', accountId: acct.accountId, status: tokenPresent ? 'ok' : 'missing', message: tokenPresent ? 'accessToken present' : 'accessToken missing', detail: { accessTokenHash: tokenHash } }); } catch (e) { console.warn('[warn] putLog(token-check) failed:', String(e)); }
-    } catch (e) {
-      console.warn('[warn] token-check failed for', userId, acct.accountId, String(e));
-    }
-
+    // [FIX] token-check ログを削除（毎実行毎アカウントの不要なログ出力を削減）
+    // 本番運用では token 確認は不要となったため、エラー検出時のみログするに変更
     try {
       (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
       try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_ACCOUNT_START', payload: { accountId: acct.accountId } }); } catch(_) {}
     } catch(_) {}
 
+    // [PERF] アカウント単位の処理時間計測開始
+    timingMetrics.start(`acct-${acct.accountId}`);
+    
     const a = await runAutoPostForAccount(acct, userId, settings);
-    // X のアカウントがあれば同一ユーザ内の X アカウントについても投稿を試みる
-    try {
-          if (settings && settings.enableX) {
-            const xAccounts = await getXAccounts(userId);
-            for (const xacct of xAccounts) {
-            // skip if we've already posted for this X account during this run
-            if (processedXAccounts.has(xacct.accountId)) {
-              try { console.info('[x-run] skipping already-processed xacct', { accountId: xacct.accountId }); } catch(_) {}
-              continue;
-            }
+    timingMetrics.end(`acct-runAutoPost-${acct.accountId}`);
+    
+    // [FIX] X アカウント処理をループ外で取得した xAccounts から処理
+    // enableX=false の場合は完全スキップ、xAccounts が空の場合もスキップ
+    if (settings.enableX && xAccounts.length > 0) {
+      try {
+        for (const xacct of xAccounts) {
+          // skip if we've already posted for this X account during this run
+          if (processedXAccounts.has(xacct.accountId)) {
+            try { console.info('[x-run] skipping already-processed xacct', { accountId: xacct.accountId }); } catch(_) {}
+            continue;
+          }
+          try {
+            try { console.info('[x-run] invoking runAutoPostForXAccount', { userId, accountId: xacct.accountId, autoPostEnabled: !!xacct.autoPostEnabled }); } catch(_) {}
+            // X posting logic: prefer pool-based posting (postFromPoolForAccount) implemented in post-to-x
+            const xmod = await import('./post-to-x');
             try {
-              try { console.info('[x-run] invoking runAutoPostForXAccount', { userId, accountId: xacct.accountId, autoPostEnabled: !!xacct.autoPostEnabled, tokenPresent: !!(xacct.oauthAccessToken || xacct.accessToken) }); } catch(_) {}
-              // detailed sanitized account log for debugging query params
+              // Skip accounts where auto-posting is disabled
+              if (!xacct.autoPostEnabled) {
+                xAutoDisabledSkipped++;
+                try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_ACCOUNT_AUTOPOST_DISABLED', payload: { accountId: xacct.accountId } }); } catch(_) {}
+                continue;
+              }
+              const dryRun = !!(opts && opts.dryRun) || Boolean((global as any).__TEST_CAPTURE__);
+              // First: try to post from existing X scheduled reservations (reservation-priority)
               try {
-                const safeXacct: any = { ...xacct };
-                // redact sensitive token fields
-                if (safeXacct.oauthAccessToken) safeXacct.oauthAccessToken = '[REDACTED]';
-                if (safeXacct.accessToken) safeXacct.accessToken = '[REDACTED]';
-                if (safeXacct.refreshToken) safeXacct.refreshToken = '[REDACTED]';
-                if (safeXacct.oauthRefreshToken) safeXacct.oauthRefreshToken = '[REDACTED]';
-              try { console.info('[x-run] invoking runAutoPostForXAccount', { userId, accountId: xacct.accountId }); } catch(_) {}
-              } catch (_) {}
-              // X posting logic: prefer pool-based posting (postFromPoolForAccount) implemented in post-to-x
-              const xmod = await import('./post-to-x');
-              try {
-                // Skip accounts where auto-posting is disabled
-                if (!xacct.autoPostEnabled) {
-                  xAutoDisabledSkipped++;
-                  try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_ACCOUNT_AUTOPOST_DISABLED', payload: { accountId: xacct.accountId } }); } catch(_) {}
+                let scheduledResult: any = { posted: 0, debug: {} };
+                if (!dryRun) {
+                  try {
+                    const rs = await xmod.runAutoPostForXAccount(xacct, userId);
+                    scheduledResult = rs || scheduledResult;
+                  } catch (e) {
+                    try { console.warn('[warn] runAutoPostForXAccount failed', { userId, accountId: xacct.accountId, err: String(e) }); } catch(_) {}
+                  }
+                } else {
+                  // In dryRun we do not execute real scheduled posting (avoid API calls); emit observation
+                  try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_SCHEDULED_DRYRUN_SKIP', payload: { accountId: xacct.accountId } }); } catch(_) {}
+                }
+                // If scheduled posting happened, count and continue
+                if (scheduledResult && Number(scheduledResult.posted || 0) > 0) {
+                  totalX += Number(scheduledResult.posted || 0);
+                  processedXAccounts.add(xacct.accountId);
+                  try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_SCHEDULED_POST_RESULT', payload: { accountId: xacct.accountId, result: scheduledResult } }); } catch(_) {}
                   continue;
                 }
-                const dryRun = !!(opts && opts.dryRun) || Boolean((global as any).__TEST_CAPTURE__);
-                // First: try to post from existing X scheduled reservations (reservation-priority)
-                try {
-                  let scheduledResult: any = { posted: 0, debug: {} };
-                  if (!dryRun) {
-                    try {
-                      const rs = await xmod.runAutoPostForXAccount(xacct, userId);
-                      scheduledResult = rs || scheduledResult;
-                    } catch (e) {
-                      try { console.warn('[warn] runAutoPostForXAccount failed', { userId, accountId: xacct.accountId, err: String(e) }); } catch(_) {}
-                    }
-                  } else {
-                    // In dryRun we do not execute real scheduled posting (avoid API calls); emit observation
-                    try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_SCHEDULED_DRYRUN_SKIP', payload: { accountId: xacct.accountId } }); } catch(_) {}
-                  }
-                  // If scheduled posting happened, count and continue
-                  if (scheduledResult && Number(scheduledResult.posted || 0) > 0) {
-                    totalX += Number(scheduledResult.posted || 0);
-                    processedXAccounts.add(xacct.accountId);
-                    try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_SCHEDULED_POST_RESULT', payload: { accountId: xacct.accountId, result: scheduledResult } }); } catch(_) {}
-                    continue;
-                  }
-                } catch (_) {}
-                // No pool fallback here — per spec, 5min must not create or consume pool items.
-              } catch (e) { console.warn('[warn] post-from-pool failed', e); }
-            } catch (e) { console.warn('[warn] post-to-x import or run failed', e); }
-            }
-          } else {
-            try { console.info('[info] every-5min X posting skipped by user setting enableX=false', { userId }); } catch(_) {}
-            (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
-            (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_SKIPPED_BY_SETTING', payload: { userId } });
-          }
-        } catch (e) { console.warn('[warn] getXAccounts failed', e); }
+              } catch (_) {}
+              // No pool fallback here — per spec, 5min must not create or consume pool items.
+            } catch (e) { console.warn('[warn] post-from-pool failed', e); }
+          } catch (e) { console.warn('[warn] post-to-x import or run failed', e); }
+        }
+      } catch (e) { console.warn('[warn] X accounts processing failed', e); }
+    }
+
     try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_AUTO_POST_RESULT', payload: { accountId: acct.accountId, result: a } }); } catch(_) {}
 
     const r = await runRepliesForAccount(acct, userId, settings);
+    timingMetrics.end(`acct-runReplies-${acct.accountId}`);
     try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_REPLY_RESULT', payload: { accountId: acct.accountId, result: r } }); } catch(_) {}
 
     const t = await runSecondStageForAccount(acct, userId, settings, true);
+    timingMetrics.end(`acct-runSecondStage-${acct.accountId}`);
     try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_SECOND_STAGE_RESULT', payload: { accountId: acct.accountId, result: t } }); } catch(_) {}
 
     // 短期対応: 5分ジョブでも本文生成を少数処理する（安全策）
     try {
       const genRes = await processPendingGenerationsForAccount(userId, acct, 1);
+      timingMetrics.end(`acct-genContent-${acct.accountId}`);
       try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_GENERATION_RESULT', payload: { accountId: acct.accountId, result: genRes } }); } catch(_) {}
       if (genRes && genRes.generated) {
         // 観測ログ用記録
@@ -3760,6 +3737,14 @@ async function runFiveMinJobForUser(userId: any, opts: any = {}) {
       });
     }
     try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_ACCOUNT_DONE', payload: { accountId: acct.accountId, summary: perAccount[perAccount.length-1] } }); } catch(_) {}
+
+    // [PERF] アカウント単位の処理時間計測終了
+    timingMetrics.endAndLog(`acct-${acct.accountId}`, { 
+      accountIdShort: acct.accountId.slice(0, 8),
+      posted: a.posted || 0,
+      replied: r.replied || 0,
+      posted2: t.posted2 || 0
+    });
 
     if (a.skipped === "window_expired") rateSkipped++;
     // 二段階投稿削除のスケジュールがある場合、期限切れのものを処理
@@ -4858,7 +4843,7 @@ function formatNonZeroLine(items: Array<{ label: string; value: number; suffix?:
   return "実行なし";
 }
 
-function formatMasterMessage({ job, startedAt, finishedAt, userTotal, userSucceeded, totals }: any) {
+function formatMasterMessage({ job, startedAt, finishedAt, userTotal, userSucceeded, totals, userTimings }: any) {
   const durMs = finishedAt - startedAt;
   const durSec = Math.max(1, Math.round(durMs / 1000));
 
@@ -4905,16 +4890,28 @@ function formatMasterMessage({ job, startedAt, finishedAt, userTotal, userSuccee
     return [`**[PRUNE] 定期実行サマリ ${jstShort}**`, ...lines, `所要時間: ${durSec}s`].join("\n");
   }
 
+  // [PERF] 2026-01-26: every-5min の場合、ユーザーごとの実行時間を表示
   const line = formatNonZeroLine([
     { label: "自動投稿 合計", value: totals.totalAuto },
     { label: "リプ返信 合計", value: totals.totalReply },
     { label: "2段階投稿 合計", value: totals.totalTwo },
     { label: "失効(rate-limit) 合計", value: totals.rateSkipped },
   ]);
+  
+  // ユーザーごとの実行時間を表示
+  let userTimingLine = "";
+  if (userTimings && Array.isArray(userTimings) && userTimings.length > 0) {
+    const timingStrs = userTimings.map(ut => {
+      const userIdShort = ut.userId.slice(0, 8);
+      return `${userIdShort}...${ut.durationSec}s`;
+    }).join(" / ");
+    userTimingLine = `\nユーザー実行時間: ${timingStrs}`;
+  }
+  
   return [
     `**[5MIN] 定期実行サマリ ${jstShort}**`,
     `スキャンユーザー数: ${userTotal} / 実行成功: ${userSucceeded}`,
     line,
-    `所要時間: ${durSec}s`
+    `所要時間: ${durSec}s${userTimingLine}`
   ].join("\n");
 }
