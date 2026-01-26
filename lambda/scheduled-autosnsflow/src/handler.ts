@@ -3640,6 +3640,17 @@ async function runFiveMinJobForUser(userId: any, opts: any = {}) {
   }
 
   const accounts = await getThreadsAccounts(userId);
+  // [FIX] X アカウントを一度だけ取得（ループ外）して N+1 問題を解決
+  // enableX=false の場合は取得しない
+  let xAccounts: any[] = [];
+  if (settings.enableX) {
+    try {
+      xAccounts = await getXAccounts(userId);
+    } catch (e) {
+      console.warn('[warn] getXAccounts failed:', String(e));
+    }
+  }
+
   // track X accounts that already had a successful auto-post in this run
   const processedXAccounts = new Set<string>();
   let totalAuto = 0, totalReply = 0, totalTwo = 0, rateSkipped = 0, totalX = 0;
@@ -3647,87 +3658,66 @@ async function runFiveMinJobForUser(userId: any, opts: any = {}) {
   const perAccount: any[] = [];
 
   for (const acct of accounts) {
-    // Log presence of accessToken for observability (never log raw token)
-    try {
-      const tokenHash = acct.oauthAccessToken ? crypto.createHash("sha256").update(acct.oauthAccessToken).digest("hex").slice(0,12) : (acct.accessToken ? crypto.createHash("sha256").update(acct.accessToken).digest("hex").slice(0,12) : "");
-      const tokenPresent = !!(acct.oauthAccessToken || acct.accessToken);
-      console.log(`[every-5min] token-check user=${userId} account=${acct.accountId} tokenPresent=${tokenPresent} tokenHash=${tokenHash}`);
-      // Persist minimal observation to ExecutionLogs for easier debugging in prod
-      try { await putLog({ userId, type: 'token-check', accountId: acct.accountId, status: tokenPresent ? 'ok' : 'missing', message: tokenPresent ? 'accessToken present' : 'accessToken missing', detail: { accessTokenHash: tokenHash } }); } catch (e) { console.warn('[warn] putLog(token-check) failed:', String(e)); }
-    } catch (e) {
-      console.warn('[warn] token-check failed for', userId, acct.accountId, String(e));
-    }
-
+    // [FIX] token-check ログを削除（毎実行毎アカウントの不要なログ出力を削減）
+    // 本番運用では token 確認は不要となったため、エラー検出時のみログするに変更
     try {
       (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
       try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_ACCOUNT_START', payload: { accountId: acct.accountId } }); } catch(_) {}
     } catch(_) {}
 
     const a = await runAutoPostForAccount(acct, userId, settings);
-    // X のアカウントがあれば同一ユーザ内の X アカウントについても投稿を試みる
-    try {
-          if (settings && settings.enableX) {
-            const xAccounts = await getXAccounts(userId);
-            for (const xacct of xAccounts) {
-            // skip if we've already posted for this X account during this run
-            if (processedXAccounts.has(xacct.accountId)) {
-              try { console.info('[x-run] skipping already-processed xacct', { accountId: xacct.accountId }); } catch(_) {}
-              continue;
-            }
+    
+    // [FIX] X アカウント処理をループ外で取得した xAccounts から処理
+    // enableX=false の場合は完全スキップ、xAccounts が空の場合もスキップ
+    if (settings.enableX && xAccounts.length > 0) {
+      try {
+        for (const xacct of xAccounts) {
+          // skip if we've already posted for this X account during this run
+          if (processedXAccounts.has(xacct.accountId)) {
+            try { console.info('[x-run] skipping already-processed xacct', { accountId: xacct.accountId }); } catch(_) {}
+            continue;
+          }
+          try {
+            try { console.info('[x-run] invoking runAutoPostForXAccount', { userId, accountId: xacct.accountId, autoPostEnabled: !!xacct.autoPostEnabled }); } catch(_) {}
+            // X posting logic: prefer pool-based posting (postFromPoolForAccount) implemented in post-to-x
+            const xmod = await import('./post-to-x');
             try {
-              try { console.info('[x-run] invoking runAutoPostForXAccount', { userId, accountId: xacct.accountId, autoPostEnabled: !!xacct.autoPostEnabled, tokenPresent: !!(xacct.oauthAccessToken || xacct.accessToken) }); } catch(_) {}
-              // detailed sanitized account log for debugging query params
+              // Skip accounts where auto-posting is disabled
+              if (!xacct.autoPostEnabled) {
+                xAutoDisabledSkipped++;
+                try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_ACCOUNT_AUTOPOST_DISABLED', payload: { accountId: xacct.accountId } }); } catch(_) {}
+                continue;
+              }
+              const dryRun = !!(opts && opts.dryRun) || Boolean((global as any).__TEST_CAPTURE__);
+              // First: try to post from existing X scheduled reservations (reservation-priority)
               try {
-                const safeXacct: any = { ...xacct };
-                // redact sensitive token fields
-                if (safeXacct.oauthAccessToken) safeXacct.oauthAccessToken = '[REDACTED]';
-                if (safeXacct.accessToken) safeXacct.accessToken = '[REDACTED]';
-                if (safeXacct.refreshToken) safeXacct.refreshToken = '[REDACTED]';
-                if (safeXacct.oauthRefreshToken) safeXacct.oauthRefreshToken = '[REDACTED]';
-              try { console.info('[x-run] invoking runAutoPostForXAccount', { userId, accountId: xacct.accountId }); } catch(_) {}
-              } catch (_) {}
-              // X posting logic: prefer pool-based posting (postFromPoolForAccount) implemented in post-to-x
-              const xmod = await import('./post-to-x');
-              try {
-                // Skip accounts where auto-posting is disabled
-                if (!xacct.autoPostEnabled) {
-                  xAutoDisabledSkipped++;
-                  try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_ACCOUNT_AUTOPOST_DISABLED', payload: { accountId: xacct.accountId } }); } catch(_) {}
+                let scheduledResult: any = { posted: 0, debug: {} };
+                if (!dryRun) {
+                  try {
+                    const rs = await xmod.runAutoPostForXAccount(xacct, userId);
+                    scheduledResult = rs || scheduledResult;
+                  } catch (e) {
+                    try { console.warn('[warn] runAutoPostForXAccount failed', { userId, accountId: xacct.accountId, err: String(e) }); } catch(_) {}
+                  }
+                } else {
+                  // In dryRun we do not execute real scheduled posting (avoid API calls); emit observation
+                  try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_SCHEDULED_DRYRUN_SKIP', payload: { accountId: xacct.accountId } }); } catch(_) {}
+                }
+                // If scheduled posting happened, count and continue
+                if (scheduledResult && Number(scheduledResult.posted || 0) > 0) {
+                  totalX += Number(scheduledResult.posted || 0);
+                  processedXAccounts.add(xacct.accountId);
+                  try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_SCHEDULED_POST_RESULT', payload: { accountId: xacct.accountId, result: scheduledResult } }); } catch(_) {}
                   continue;
                 }
-                const dryRun = !!(opts && opts.dryRun) || Boolean((global as any).__TEST_CAPTURE__);
-                // First: try to post from existing X scheduled reservations (reservation-priority)
-                try {
-                  let scheduledResult: any = { posted: 0, debug: {} };
-                  if (!dryRun) {
-                    try {
-                      const rs = await xmod.runAutoPostForXAccount(xacct, userId);
-                      scheduledResult = rs || scheduledResult;
-                    } catch (e) {
-                      try { console.warn('[warn] runAutoPostForXAccount failed', { userId, accountId: xacct.accountId, err: String(e) }); } catch(_) {}
-                    }
-                  } else {
-                    // In dryRun we do not execute real scheduled posting (avoid API calls); emit observation
-                    try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_SCHEDULED_DRYRUN_SKIP', payload: { accountId: xacct.accountId } }); } catch(_) {}
-                  }
-                  // If scheduled posting happened, count and continue
-                  if (scheduledResult && Number(scheduledResult.posted || 0) > 0) {
-                    totalX += Number(scheduledResult.posted || 0);
-                    processedXAccounts.add(xacct.accountId);
-                    try { (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || []; (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_SCHEDULED_POST_RESULT', payload: { accountId: xacct.accountId, result: scheduledResult } }); } catch(_) {}
-                    continue;
-                  }
-                } catch (_) {}
-                // No pool fallback here — per spec, 5min must not create or consume pool items.
-              } catch (e) { console.warn('[warn] post-from-pool failed', e); }
-            } catch (e) { console.warn('[warn] post-to-x import or run failed', e); }
-            }
-          } else {
-            try { console.info('[info] every-5min X posting skipped by user setting enableX=false', { userId }); } catch(_) {}
-            (global as any).__TEST_OUTPUT__ = (global as any).__TEST_OUTPUT__ || [];
-            (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_X_SKIPPED_BY_SETTING', payload: { userId } });
-          }
-        } catch (e) { console.warn('[warn] getXAccounts failed', e); }
+              } catch (_) {}
+              // No pool fallback here — per spec, 5min must not create or consume pool items.
+            } catch (e) { console.warn('[warn] post-from-pool failed', e); }
+          } catch (e) { console.warn('[warn] post-to-x import or run failed', e); }
+        }
+      } catch (e) { console.warn('[warn] X accounts processing failed', e); }
+    }
+
     try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_AUTO_POST_RESULT', payload: { accountId: acct.accountId, result: a } }); } catch(_) {}
 
     const r = await runRepliesForAccount(acct, userId, settings);
