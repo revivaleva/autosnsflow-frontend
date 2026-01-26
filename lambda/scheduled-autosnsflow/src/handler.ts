@@ -1464,50 +1464,6 @@ const DEFAULT_USER_ID = process.env.DEFAULT_USER_ID || "c7e43ae8-0031-70c5-a8ec-
 const MASTER_DISCORD_WEBHOOK = process.env.MASTER_DISCORD_WEBHOOK || "";
 
 /// ========== ハンドラ（5分＆毎時の分岐 + テストモード） ==========
-// Backfill: attach TTL to a small batch of ExecutionLogs items to avoid large-scale deletes.
-// Runs at most `maxUpdates` updates per invocation. Uses attribute `ttlAt` (epoch seconds).
-async function backfillExecutionLogsTTLBatch(maxUpdates = 20) {
-  try {
-    try { await config.loadConfig(); } catch(_) {}
-    const retentionDays = Number(config.getConfigValue('RETENTION_DAYS') || process.env.RETENTION_DAYS || '3') || 3;
-    const ttlVal = Math.floor(Date.now() / 1000) + (retentionDays * 24 * 60 * 60);
-
-    let lastKey: any = undefined;
-    let updated = 0;
-    let scanCount = 0;
-    let itemsScanned = 0;
-    do {
-      scanCount++;
-      const s = await ddb.send(new ScanCommand({ TableName: TBL_LOGS, ProjectionExpression: 'PK,SK,ttlAt', ExclusiveStartKey: lastKey, Limit: 200 }));
-      const its = (s as any).Items || [];
-      itemsScanned += its.length;
-      for (const it of its) {
-        if (updated >= maxUpdates) break;
-        try {
-          if (it.ttlAt) continue; // already has TTL
-          await ddb.send(new UpdateItemCommand({
-            TableName: TBL_LOGS,
-            Key: { PK: it.PK, SK: it.SK },
-            UpdateExpression: 'SET ttlAt = :t',
-            ConditionExpression: 'attribute_not_exists(ttlAt)',
-            ExpressionAttributeValues: { ':t': { N: String(ttlVal) } }
-          }));
-          updated++;
-        } catch (e) {
-          // ignore per-item failures (concurrent updates, throttling etc.)
-        }
-      }
-      lastKey = (s as any).LastEvaluatedKey;
-      if (updated >= maxUpdates) break;
-    } while (lastKey);
-
-    console.info('[backfillExecutionLogsTTLBatch]', { scanCount, itemsScanned, updated, maxUpdates });
-    return updated;
-  } catch (e) {
-    console.warn('[warn] backfillExecutionLogsTTLBatch failed:', String(e));
-    return 0;
-  }
-}
 
 export const handler = async (event: any = {}) => {
   const job = event?.job || "every-5min";
@@ -2110,18 +2066,6 @@ export const handler = async (event: any = {}) => {
       } catch (e) {
         try { await putLog({ userId: uid, type: 'every-5min', status: 'error', message: 'run5min_failed', detail: { error: String(e) } }); } catch(_) {}
       }
-    }
-    // Small TTL backfill for ExecutionLogs to avoid large-scale deletes.
-    try {
-      timingMetrics.start('every-5min-ttl-backfill');
-      const ttlBackfilled = await backfillExecutionLogsTTLBatch(20);
-      timingMetrics.endAndLog('every-5min-ttl-backfill', { updated: ttlBackfilled || 0 });
-      if (ttlBackfilled && ttlBackfilled > 0) {
-        try { await postDiscordMaster(`**[BACKFILL] ExecutionLogs に ttlAt を付与しました: ${ttlBackfilled} 件**`); } catch(_) {}
-      }
-      totals.ttlBackfilled = Number(ttlBackfilled || 0);
-    } catch (e) {
-      console.warn('[warn] ttl backfill failed:', String(e));
     }
     timingMetrics.endAndLog('every-5min-total', { userTotal: userIds.length, userSucceeded: succeeded });
     try { await postDiscordMaster(formatMasterMessage({ job: 'every-5min', startedAt, finishedAt: Date.now(), userTotal: userIds.length, userSucceeded: succeeded, totals, userTimings })); } catch(_) {}
