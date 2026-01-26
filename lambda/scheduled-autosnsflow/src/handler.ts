@@ -67,6 +67,32 @@ const ddbMetrics = {
   }
 };
 
+// [PERF] 2026-01-26: 処理時間計測ユーティリティ（パフォーマンス分析用）
+const timingMetrics = {
+  timers: new Map<string, number>(),
+  start(label: string) {
+    this.timers.set(label, Date.now());
+  },
+  end(label: string) {
+    const startTime = this.timers.get(label);
+    if (!startTime) {
+      console.warn(`[timing-warn] Timer "${label}" not started`);
+      return 0;
+    }
+    const duration = Date.now() - startTime;
+    this.timers.delete(label);
+    console.info('[timing]', { label, durationMs: duration });
+    return duration;
+  },
+  endAndLog(label: string, context?: any) {
+    const duration = this.end(label);
+    if (context) {
+      console.info('[timing-detail]', { label, durationMs: duration, ...context });
+    }
+    return duration;
+  }
+};
+
 // Wrap ddb.send to automatically alias reserved keyword 'status' in ProjectionExpression
 // and track ConsumedCapacity for cost monitoring
 {
@@ -2051,12 +2077,23 @@ export const handler = async (event: any = {}) => {
   // Global every-5min: iterate active users and run per-user 5min job
   try { console.info('[info] every-5min global processing enabled'); } catch(_) {}
   try {
+    timingMetrics.start('every-5min-total');
     const userIds = await getActiveUserIds();
+    timingMetrics.end('every-5min-getActiveUserIds');
+    
     let succeeded = 0;
     const totals: any = { totalAuto: 0, totalReply: 0, totalTwo: 0, totalX: 0, rateSkipped: 0 };
+    const userTimings: any[] = []; // [PERF] ユーザーごとの実行時間を記録
+    
     for (const uid of userIds) {
       try {
+        timingMetrics.start(`user-${uid}`);
         const res = await runFiveMinJobForUser(uid, { dryRun: !!event?.dryRun });
+        const userDuration = timingMetrics.endAndLog(`user-${uid}`, { userIdShort: uid.slice(0, 8) });
+        
+        // [PERF] ユーザーごとの実行時間を記録
+        userTimings.push({ userId: uid, durationMs: userDuration, durationSec: Math.round(userDuration / 1000) });
+        
         succeeded += 1;
         totals.totalAuto += Number(res.totalAuto || 0);
         totals.totalReply += Number(res.totalReply || 0);
@@ -2076,7 +2113,8 @@ export const handler = async (event: any = {}) => {
     } catch (e) {
       console.warn('[warn] ttl backfill failed:', String(e));
     }
-    try { await postDiscordMaster(formatMasterMessage({ job: 'every-5min', startedAt, finishedAt: Date.now(), userTotal: userIds.length, userSucceeded: succeeded, totals })); } catch(_) {}
+    timingMetrics.endAndLog('every-5min-total', { userTotal: userIds.length, userSucceeded: succeeded });
+    try { await postDiscordMaster(formatMasterMessage({ job: 'every-5min', startedAt, finishedAt: Date.now(), userTotal: userIds.length, userSucceeded: succeeded, totals, userTimings })); } catch(_) {}
     // [FIX] 2026-01-24: DynamoDB消費量をログ出力（コスト監視用）
     ddbMetrics.log('every-5min');
     return { statusCode: 200, body: JSON.stringify({ processedUsers: userIds.length, userSucceeded: succeeded, totals }) };
@@ -3665,7 +3703,11 @@ async function runFiveMinJobForUser(userId: any, opts: any = {}) {
       try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_ACCOUNT_START', payload: { accountId: acct.accountId } }); } catch(_) {}
     } catch(_) {}
 
+    // [PERF] アカウント単位の処理時間計測開始
+    timingMetrics.start(`acct-${acct.accountId}`);
+    
     const a = await runAutoPostForAccount(acct, userId, settings);
+    timingMetrics.end(`acct-runAutoPost-${acct.accountId}`);
     
     // [FIX] X アカウント処理をループ外で取得した xAccounts から処理
     // enableX=false の場合は完全スキップ、xAccounts が空の場合もスキップ
@@ -3721,14 +3763,17 @@ async function runFiveMinJobForUser(userId: any, opts: any = {}) {
     try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_AUTO_POST_RESULT', payload: { accountId: acct.accountId, result: a } }); } catch(_) {}
 
     const r = await runRepliesForAccount(acct, userId, settings);
+    timingMetrics.end(`acct-runReplies-${acct.accountId}`);
     try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_REPLY_RESULT', payload: { accountId: acct.accountId, result: r } }); } catch(_) {}
 
     const t = await runSecondStageForAccount(acct, userId, settings, true);
+    timingMetrics.end(`acct-runSecondStage-${acct.accountId}`);
     try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_SECOND_STAGE_RESULT', payload: { accountId: acct.accountId, result: t } }); } catch(_) {}
 
     // 短期対応: 5分ジョブでも本文生成を少数処理する（安全策）
     try {
       const genRes = await processPendingGenerationsForAccount(userId, acct, 1);
+      timingMetrics.end(`acct-genContent-${acct.accountId}`);
       try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_GENERATION_RESULT', payload: { accountId: acct.accountId, result: genRes } }); } catch(_) {}
       if (genRes && genRes.generated) {
         // 観測ログ用記録
@@ -3750,6 +3795,14 @@ async function runFiveMinJobForUser(userId: any, opts: any = {}) {
       });
     }
     try { (global as any).__TEST_OUTPUT__.push({ tag: 'RUN5_ACCOUNT_DONE', payload: { accountId: acct.accountId, summary: perAccount[perAccount.length-1] } }); } catch(_) {}
+
+    // [PERF] アカウント単位の処理時間計測終了
+    timingMetrics.endAndLog(`acct-${acct.accountId}`, { 
+      accountIdShort: acct.accountId.slice(0, 8),
+      posted: a.posted || 0,
+      replied: r.replied || 0,
+      posted2: t.posted2 || 0
+    });
 
     if (a.skipped === "window_expired") rateSkipped++;
     // 二段階投稿削除のスケジュールがある場合、期限切れのものを処理
@@ -4848,7 +4901,7 @@ function formatNonZeroLine(items: Array<{ label: string; value: number; suffix?:
   return "実行なし";
 }
 
-function formatMasterMessage({ job, startedAt, finishedAt, userTotal, userSucceeded, totals }: any) {
+function formatMasterMessage({ job, startedAt, finishedAt, userTotal, userSucceeded, totals, userTimings }: any) {
   const durMs = finishedAt - startedAt;
   const durSec = Math.max(1, Math.round(durMs / 1000));
 
@@ -4895,16 +4948,28 @@ function formatMasterMessage({ job, startedAt, finishedAt, userTotal, userSuccee
     return [`**[PRUNE] 定期実行サマリ ${jstShort}**`, ...lines, `所要時間: ${durSec}s`].join("\n");
   }
 
+  // [PERF] 2026-01-26: every-5min の場合、ユーザーごとの実行時間を表示
   const line = formatNonZeroLine([
     { label: "自動投稿 合計", value: totals.totalAuto },
     { label: "リプ返信 合計", value: totals.totalReply },
     { label: "2段階投稿 合計", value: totals.totalTwo },
     { label: "失効(rate-limit) 合計", value: totals.rateSkipped },
   ]);
+  
+  // ユーザーごとの実行時間を表示
+  let userTimingLine = "";
+  if (userTimings && Array.isArray(userTimings) && userTimings.length > 0) {
+    const timingStrs = userTimings.map(ut => {
+      const userIdShort = ut.userId.slice(0, 8);
+      return `${userIdShort}...${ut.durationSec}s`;
+    }).join(" / ");
+    userTimingLine = `\nユーザー実行時間: ${timingStrs}`;
+  }
+  
   return [
     `**[5MIN] 定期実行サマリ ${jstShort}**`,
     `スキャンユーザー数: ${userTotal} / 実行成功: ${userSucceeded}`,
     line,
-    `所要時間: ${durSec}s`
+    `所要時間: ${durSec}s${userTimingLine}`
   ].join("\n");
 }
